@@ -1,0 +1,46 @@
+diff --git a/zombie/iso/IsoGridSquare.java b/zombie/iso/IsoGridSquare.java
+index 4f21a12..4cc128d 100644
+--- a/zombie/iso/IsoGridSquare.java
++++ b/zombie/iso/IsoGridSquare.java
+@@ -5708,7 +5708,7 @@ public final class IsoGridSquare {
+    }
+ 
+    public IsoGameCharacter FindFriend(IsoGameCharacter var1, int var2, Stack<IsoGameCharacter> var3) {
+-      Stack var4 = new Stack();
++      Stack<IsoGameCharacter> var4 = new Stack<>();
+ 
+       for (int var5 = 0; var5 < var1.getLocalList().size(); var5++) {
+          IsoMovingObject var6 = var1.getLocalList().get(var5);
+@@ -7212,7 +7212,7 @@ public final class IsoGridSquare {
+                   Vector2 var7 = tempo;
+                   float var8 = tempo2.getLength();
+                   tempo2.normalize();
+-                  if (var2 instanceof IsoSurvivor) {
++                  if ((Object)var2 instanceof IsoSurvivor) {
+                      var2.setForwardDirection(var7);
+                      var4.angleX = var7.x;
+                      var4.angleY = var7.y;
+@@ -7477,6 +7477,7 @@ public final class IsoGridSquare {
+    }
+ 
+    public boolean isCouldSee(int var1) {
++      if (zombie.admin_xray.AdminXray.losOverride) return true;
+       return this.lighting[var1].bCouldSee();
+    }
+ 
+@@ -7485,6 +7486,7 @@ public final class IsoGridSquare {
+    }
+ 
+    public boolean isCanSee(int var1) {
++      if (zombie.admin_xray.AdminXray.losOverride) return true;
+       return this.lighting[var1].bCanSee();
+    }
+ 
+@@ -7737,6 +7739,7 @@ public final class IsoGridSquare {
+    }
+ 
+    public boolean getCanSee(int var1) {
++      if (zombie.admin_xray.AdminXray.losOverride) return true;
+       return this.lighting[var1].bCanSee();
+    }
+ 

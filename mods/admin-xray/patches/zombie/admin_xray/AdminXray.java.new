@@ -1,0 +1,16 @@
+package zombie.admin_xray;
+
+import zombie.characters.IsoPlayer;
+import zombie.core.Core;
+
+public final class AdminXray {
+    public static boolean losOverride = false;
+
+    private AdminXray() {
+    }
+
+    public static boolean canToggle() {
+        IsoPlayer p = IsoPlayer.getInstance();
+        return p != null && (!p.isAccessLevel("None") || Core.bDebug);
+    }
+}

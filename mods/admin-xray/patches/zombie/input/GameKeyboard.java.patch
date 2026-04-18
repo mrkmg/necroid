@@ -1,0 +1,19 @@
+diff --git a/zombie/input/GameKeyboard.java b/zombie/input/GameKeyboard.java
+index 8d51c85..e2a584b 100644
+--- a/zombie/input/GameKeyboard.java
++++ b/zombie/input/GameKeyboard.java
+@@ -31,6 +31,14 @@ public final class GameKeyboard {
+          for (int var2 = 1; var2 < var0; var2++) {
+             bLastDown[var2] = bDown[var2];
+             bDown[var2] = s_keyboardStateCache.getState().isKeyDown(var2);
++            if (bDown[var2] && !bLastDown[var2] && !bEatKey[var2]
++               && var2 == org.lwjglx.input.Keyboard.KEY_F9
++               && zombie.admin_xray.AdminXray.canToggle()) {
++               zombie.admin_xray.AdminXray.losOverride = !zombie.admin_xray.AdminXray.losOverride;
++               bEatKey[var2] = true;
++               continue;
++            }
++
+             if (!bDown[var2] && bLastDown[var2]) {
+                if (bEatKey[var2]) {
+                   bEatKey[var2] = false;

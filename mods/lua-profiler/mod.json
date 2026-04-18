@@ -1,0 +1,8 @@
+{
+  "name": "lua-profiler",
+  "description": "Per-mod, per-event Lua callback profiler. Exposes LuaProfilerStart/Stop/Dump globals.",
+  "version": "0.1.0",
+  "createdAt": "2026-04-18T18:19:06.3316469Z",
+  "updatedAt": "2026-04-18T18:51:44.7709507Z",
+  "pristineSnapshot": "e643ef03f92c55b9408e0e736a530acd13a40fa9e391acf5dee23c2efdecd246"
+}

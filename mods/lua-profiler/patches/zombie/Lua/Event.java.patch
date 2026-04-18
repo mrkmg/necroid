@@ -1,0 +1,55 @@
+diff --git a/zombie/Lua/Event.java b/zombie/Lua/Event.java
+index 533c333..69001da 100644
+--- a/zombie/Lua/Event.java
++++ b/zombie/Lua/Event.java
+@@ -24,31 +24,31 @@ public final class Event {
+    public boolean trigger(KahluaTable var1, LuaCaller var2, Object[] var3) {
+       if (this.callbacks.isEmpty()) {
+          return false;
+-      } else if (DebugOptions.instance.Checks.SlowLuaEvents.getValue()) {
+-         for (int var12 = 0; var12 < this.callbacks.size(); var12++) {
++      } else {
++         boolean slowChecks = DebugOptions.instance.Checks.SlowLuaEvents.getValue();
++         for (int i = 0; i < this.callbacks.size(); i++) {
++            LuaClosure cb = this.callbacks.get(i);
++            long t0 = System.nanoTime();
+             try {
+-               LuaClosure var5 = this.callbacks.get(var12);
+-               long var6 = System.nanoTime();
+-               var2.protectedCallVoid(LuaManager.thread, var5, var3);
+-               double var8 = (System.nanoTime() - var6) / 1000000.0;
+-               if (var8 > 250.0) {
+-                  DebugLog.Lua.warn("SLOW Lua event callback %s %s %dms", var5.prototype.file, var5, (int)var8);
+-               }
+-            } catch (Exception var10) {
+-               ExceptionLogger.logException(var10);
++               var2.protectedCallVoid(LuaManager.thread, cb, var3);
++            } catch (Exception ex) {
++               ExceptionLogger.logException(ex);
+             }
+-         }
++            long dt = System.nanoTime() - t0;
+ 
+-         return true;
+-      } else {
+-         for (int var4 = 0; var4 < this.callbacks.size(); var4++) {
+             try {
+-               var2.protectedCallVoid(LuaManager.thread, this.callbacks.get(var4), var3);
+-            } catch (Exception var11) {
+-               ExceptionLogger.logException(var11);
++               LuaProfiler.record(this.name, cb, dt);
++            } catch (Throwable profilerErr) {
++               // never let the profiler break event dispatch
+             }
+-         }
+ 
++            if (slowChecks) {
++               double ms = dt / 1000000.0;
++               if (ms > 250.0) {
++                  DebugLog.Lua.warn("SLOW Lua event callback %s %s %dms", cb.prototype.file, cb, (int) ms);
++               }
++            }
++         }
+          return true;
+       }
+    }
