@@ -69,7 +69,7 @@ def read_config(root: Path, required: bool = True) -> ModConfig:
         if required:
             raise ConfigError(
                 f"no config at {path}\n"
-                f"    run `pz-java-modder init` to create it, or write one manually."
+                f"    run `necroid init` to create it, or write one manually."
             )
         return ModConfig(_path=path)
     try:

@@ -1,165 +1,212 @@
-# PZ Mod Work
+<p align="center">
+  <img src="assets/necroid.png" width="240" alt="Necroid"/>
+</p>
 
-Cross-platform workspace for editing decompiled Project Zomboid classes and overwriting them in the Steam install. Supports both the **client** (Project Zomboid) and the **dedicated server** (Project Zomboid Dedicated Server).
+<h1 align="center">Necroid</h1>
 
-**Only your local Steam install is ever modified** — nothing PZ-owned is distributed in this repo. A fresh clone contains the Python tool, mod patches, and docs; everything PZ-owned (jars, classes, decompiled sources) is reconstructed locally from your own Steam install by `pz-java-modder init`.
+<p align="center"><em>Beyond Workshop.</em></p>
 
-## First-time setup
+<p align="center">
+  Mods for <strong>Project Zomboid</strong> that reach parts Steam Workshop can't.
+</p>
 
-Install the toolchain:
+---
 
-| Tool | Windows (`winget`) | macOS (`brew`) | Linux |
-|---|---|---|---|
-| Git | `winget install --id Git.Git -e` | `brew install git` | `apt install git` |
-| JDK 17+ | `winget install EclipseAdoptium.Temurin.17.JDK` | `brew install --cask temurin@17` | `apt install openjdk-17-jdk` |
-| Python 3.10+ | `winget install Python.Python.3.12` | (preinstalled) | (preinstalled or `apt install python3`) |
+## What is this?
 
-Own a Steam copy of Project Zomboid (client, dedicated server, or both).
+You know how Steam Workshop is great, until you want the zombies to see further, or the admin X-ray to actually work, or a new mod that rewrites how the map loads? Workshop mods can only touch scripts and assets. They can't touch the Java engine underneath. Necroid can.
+
+Necroid ships a bundle of Java-level mods for Project Zomboid plus a small app to install and uninstall them cleanly. Everything is reversible — you can always put the game back exactly how Steam shipped it.
+
+## Install
+
+1. Install these one-time prerequisites:
+
+   | Tool | Windows (`winget`) | macOS (`brew`) | Linux |
+   |---|---|---|---|
+   | Git | `winget install --id Git.Git -e` | `brew install git` | `apt install git` |
+   | JDK 17+ | `winget install EclipseAdoptium.Temurin.17.JDK` | `brew install --cask temurin@17` | `apt install openjdk-17-jdk` |
+
+2. Download the latest release for your OS from <https://github.com/mrkmg/necroid/releases> and unzip anywhere you like.
+3. Double-click **necroid** (or `necroid.exe` on Windows). The Necroid window opens.
+
+   > **Windows:** if Project Zomboid is installed under `C:\Program Files (x86)\`, right-click **necroid.exe** → **Run as administrator**. That path is read-only otherwise, and Necroid needs to write new class files there.
+
+## Using Necroid
+
+On first launch, click **Init / Resync** in the top-right. Necroid finds your Steam install, makes a pristine copy of the vanilla Java classes, downloads the decompiler, and sets up the mod workspace. Takes about a minute. You only do this once (and again after a Project Zomboid update).
+
+Then:
+
+- Check the boxes next to the mods you want.
+- Click **Install**.
+- Launch Project Zomboid as usual.
+
+To roll back, click **Uninstall** — the game goes back to exactly how Steam shipped it.
+
+The mod list updates automatically. If something drifted (e.g. Steam ran a "Verify Integrity of Game Files" pass and reverted everything), just click **Install** again.
+
+## Troubleshooting
+
+- **"javac not found"** — install JDK 17+ (see the table above) and restart Necroid.
+- **Permission errors on Windows** — close Necroid, right-click **necroid.exe** → **Run as administrator**.
+- **Mods disappeared after a Steam update** — expected. Steam's "Verify Integrity of Game Files" silently reverts everything. Click **Install** in Necroid again.
+- **Mod marked STALE after a Project Zomboid update** — the game changed underneath the mod. Click **Init / Resync**, then reinstall your mods. If the mod still won't apply, wait for an updated release.
+- **Wrong Project Zomboid install path detected** — edit `data/.mod-config.json` in the Necroid folder and set `clientPzInstall` to your actual install path.
+
+---
+
+## For server operators
+
+Necroid also supports the **Project Zomboid Dedicated Server** (Steam app `380870`, or a local `./pzserver/` install). Each target (client vs. server) has its own workspace, its own install state, and its own set of mods. A mod is authored for one target; the tool hard-errors if you try to apply a client mod to a server install (or vice-versa).
+
+Bootstrap the server profile alongside the client (or instead of it):
 
 ```bash
-git clone <this-repo> PZ-Mod-Work
-cd PZ-Mod-Work
-python -m pz_java_modder init                    # client (default)
-python -m pz_java_modder --target server init    # optional: dedicated server
+./necroid --target server init
 ```
 
-`init` does everything in one shot (≈1 min per target):
-
-1. Locate the PZ install (Steam default path, `data/.mod-config.json`, or `--pz-install '...'`).
-2. Check `git`, `java`, `javac`, `jar` are on PATH.
-3. Download `data/tools/vineflower.jar` (Vineflower 1.11.1).
-4. Copy PZ top-level `*.jar` → `data/<target>/libs/`.
-5. Copy PZ class subtrees (`zombie`, `astar`, `com`, `de`, `fmod`, `javax`, `org`, `se`) → `data/<target>/classes-original/`.
-6. Re-jar each subtree into `data/<target>/libs/classpath-originals/<name>.jar` for `-classpath` use.
-7. Write `data/.mod-config.json`.
-8. Decompile `classes-original/zombie` → `data/<target>/src-pristine/zombie` via Vineflower.
-9. Scaffold `data/mods/` + `data/<target>/.mod-state.json`.
-
-Pass `--force` to redo each step (e.g. after a PZ update — though `resync-pristine` is the fuller recipe).
-
-## The short version
+Then run any command with `--target server`, or the single-dash shorthand `-server`:
 
 ```bash
-# CLI (devs, scripting)
-pz-java-modder list                                  # all mods (tagged client/server)
-pz-java-modder new my-mod -d "does a thing"          # scaffold mods/my-mod/
-pz-java-modder enter my-mod                          # src/ ← pristine + my-mod's patches
-# …edit under data/client/src/zombie/…
-pz-java-modder capture my-mod                        # rewrite patches from working tree
-pz-java-modder install my-mod                        # compile + atomic install
-pz-java-modder uninstall                             # restore everything
-pz-java-modder verify                                # re-hash installed files
-
-# GUI (end users)
-pz-java-modder --gui                                 # client
-pz-java-modder --gui -server                         # dedicated server
+./necroid --target server list
+./necroid --target server install my-server-mod
+./necroid --gui -server                   # GUI in server mode
 ```
 
-During development, use the `python -m pz_java_modder` form from the repo root (or `pip install -e pz-java-modder/` to put `pz-java-modder` on PATH).
+All the client troubleshooting applies equally to the server profile.
 
-For distribution, run `python pz-java-modder/packaging/build_dist.py` to produce a `dist/` folder containing a self-contained binary plus the bundled mods directory — hand that to anyone who doesn't want to install Python themselves.
+## CLI reference
 
-## Layout
+Most people never need this — install mods from the GUI and move on. If you're automating, scripting, or running headless on a dedicated-server box, here's the full surface:
 
-Directories marked **(local-only)** are produced by `init` from your Steam install and excluded from git.
+```bash
+necroid list                         # all mods (off-target rows tagged *client / *server)
+necroid install <mod1> [mod2 ...]    # compile + install, stacking multiple mods
+necroid uninstall                    # restore everything
+necroid uninstall <mod>              # remove one from the stack, rebuild the rest
+necroid status                       # working tree vs pristine + installed stack
+necroid status <mod>                 # per-mod patch applicability
+necroid verify                       # re-hash installed files to detect drift
+necroid resync-pristine              # after a PZ update: refresh the vanilla baseline
+necroid new <name> -d "..."          # scaffold a new mod
+necroid enter <mod1> [mod2 ...]      # reset working tree, apply a mod stack for editing
+necroid capture <mod>                # diff working tree vs pristine, rewrite patches
+necroid diff <mod>                   # print a mod's patches to stdout
+necroid reset                        # mirror pristine -> working tree, clear enter state
+```
+
+All target-aware commands accept `--target {client,server}` (or `-server` shorthand). Default comes from `data/.mod-config.json` `defaultTarget`, falling back to `client`.
+
+---
+
+## For developers
+
+### Repo layout
 
 ```
-PZ-Mod-Work/
-├── pz-java-modder/                   # Python source (tracked)
-│   ├── pyproject.toml
-│   ├── pz_java_modder/               # package
-│   └── packaging/build_dist.py       # PyInstaller builder
+necroid/                              # this repo
+├── pyproject.toml
+├── necroid/                          # Python package (CLI, GUI, commands)
+├── packaging/build_dist.py           # PyInstaller builder
+├── assets/                           # brand assets (logo, derived icons)
 ├── data/
-│   ├── .mod-config.json              # (local-only) clientPzInstall, serverPzInstall, defaultTarget
 │   ├── mods/                         # tracked — the portable patch-set library
 │   │   └── <name>/{mod.json, patches/}
-│   ├── tools/                        # (local-only) vineflower.jar
-│   ├── client/                       # (local-only) per-target PZ-sourced content
-│   │   ├── src/                      # Vineflower output; reset by `enter`
+│   ├── .mod-config.json              # local-only, written by `init`
+│   ├── tools/vineflower.jar          # local-only
+│   ├── client/                       # local-only, per-target PZ-sourced content
+│   │   ├── src/                      # editable working tree (reset by `enter`)
 │   │   ├── src-pristine/             # frozen pristine decompile
 │   │   ├── classes-original/         # verbatim PZ classes
-│   │   ├── libs/                     # verbatim PZ jars + classpath-originals/
+│   │   ├── libs/                     # PZ jars + classpath-originals/
 │   │   ├── build/                    # javac output + staging
-│   │   ├── .mod-state.json           # install tracking
-│   │   └── .mod-enter.json           # current entered stack
-│   └── server/                       # (local-only) same shape as client/
-├── dist/                             # (local-only) output of build_dist.py
+│   │   ├── .mod-state.json
+│   │   └── .mod-enter.json
+│   └── server/                       # same shape as client/
+├── dist/                             # local-only, output of build_dist.py
 ├── CLAUDE.md, README.md
 └── .gitignore
 ```
 
-Every mod is a directory of unified diffs against `src-pristine/`, plus a `mod.json` declaring `target: "client" | "server"`. The `patches/` subtree mirrors the package layout: e.g. `mods/lua-profiler/patches/zombie/Lua/Event.java.patch`. `.java.new` is a full replacement file for new classes; `.java.delete` marks a file for removal.
+Local-only directories are reconstructed from the user's own Steam install by `necroid init`. Nothing PZ-owned ships through git.
 
-## Modding workflow
-
-PZ loads its Java classes from a loose class tree at the install root (`<steam>/common/ProjectZomboid/{zombie,astar,se,...}` for the client, `common/Project Zomboid Dedicated Server/...` for the server). The mod mechanism is: **compile your modified sources, then overwrite the `.class` files in the install.** PZ has no Java-mod loader reading jars from the Mods folder, so direct overwrite is the simplest working path.
-
-`classes-original/` holds a pristine binary copy of every shipped `.class`; `src-pristine/` holds a pristine textual decompile. Install/uninstall use the binary copy; diff/capture/merge use the textual copy. All of this is per-target — editing a server class goes into `data/server/src/...`, installs to the dedicated-server install, and is tracked in `data/server/.mod-state.json`.
+### Dev setup
 
 ```bash
-pz-java-modder new my-mod -d "..."                   # scaffold mods/my-mod/
-pz-java-modder enter my-mod                          # reset src/, apply patches; edit in src/zombie/
-pz-java-modder capture my-mod                        # rewrite patches from working tree
-pz-java-modder install my-mod                        # stage + compile + copy to PZ install (needs write access)
-pz-java-modder install mod-a mod-b                   # stack — 3-way merges, conflicts abort install
-pz-java-modder uninstall                             # restore whatever the last install wrote
+git clone https://github.com/mrkmg/necroid
+cd necroid
+pip install -e .                      # puts `necroid` on PATH
+necroid init
 ```
 
-Install is atomic — staging or compile failures never touch the PZ install. Running Steam's "Verify Integrity of Game Files" will revert installed overrides — just re-install.
+During development, `python -m necroid` works equivalently from the repo root.
 
-### Write access to the PZ install
-
-- **Windows + Program Files:** run your terminal as Administrator. The GUI detects `PermissionError` and offers a "Relaunch as admin" button.
-- **Linux / macOS:** the default Steam paths (`~/.steam/steam/...`, `~/Library/Application Support/Steam/...`) are user-writable. No elevation needed.
-
-### Target-mismatch rules
-
-- `install foo` / `enter foo` / `capture foo` / `diff foo` whose mod's `target` differs from the active profile → **hard error** (retry with `--target <other>`).
-- `install` with no named mods → silently filters to active target.
-- `list` / `status` show all mods; off-target rows are marked with a `*` prefix (e.g. `*server`).
-- GUI in client mode **hides** server-target mods; server-launched GUI hides client ones.
-
-## Don't try to compile the whole tree
-
-Decompiled Java rarely round-trips cleanly (lambdas, generics erasure, obfuscation artifacts). The installer compiles only the files a mod touches. If you're calling `javac` by hand for a sanity check, pass only the specific files you edited.
-
-`pz-java-modder` deliberately does not set `-sourcepath`: with a sourcepath, `javac` would try to recompile sibling decompiled files on demand and fail. Every non-modified symbol resolves from the original class jars in `libs/classpath-originals/`.
-
-## After a PZ update
+### Authoring a mod
 
 ```bash
-pz-java-modder resync-pristine                      # client
-pz-java-modder --target server resync-pristine      # server
+necroid new my-mod -d "does a thing"     # scaffold data/mods/my-mod/
+necroid enter my-mod                     # reset src/, apply patches
+# ...edit under data/<target>/src/zombie/...
+necroid capture my-mod                   # rewrite patches from working tree
+necroid install my-mod                   # compile + install; play-test
 ```
 
-Re-runs the `init` flow with `--force` (refreshing `classes-original/`, `libs/`, `libs/classpath-originals/`, and `src-pristine/`), then re-fingerprints every mod against the new pristine. Any mod whose patches no longer apply is reported as STALE — re-enter and recapture those one at a time.
+For a stack (`enter mod-a mod-b`), captures always write to the **last** mod in the entered stack. To edit an upstream mod in a stack, re-enter with it last, or enter it alone.
 
-## Building a distributable
+After a PZ update, run `necroid resync-pristine` and `enter` each STALE mod to resolve the new conflicts.
+
+### Building a release
+
+Tag-driven. GitHub Actions ([.github/workflows/release.yml](.github/workflows/release.yml)) builds on Windows/Linux/macOS runners and publishes the release:
+
+```bash
+# 1. Bump the version in BOTH files (they must match or CI fails):
+#       necroid/__init__.py    -> __version__ = "X.Y.Z"
+#       pyproject.toml         -> version = "X.Y.Z"
+# 2. Commit, tag, push:
+git commit -am "Release vX.Y.Z"
+git tag vX.Y.Z
+git push && git push --tags
+```
+
+The workflow fans out to five runners and attaches five zips to the release:
+
+- `necroid-vX.Y.Z-windows-x64.zip`
+- `necroid-vX.Y.Z-linux-x64.zip`
+- `necroid-vX.Y.Z-linux-arm64.zip`
+- `necroid-vX.Y.Z-macos-x64.zip` (Intel Macs)
+- `necroid-vX.Y.Z-macos-arm64.zip` (Apple Silicon)
+
+Each zip unpacks to `necroid(.exe)` + `data/mods/` + `README.txt`. Release notes are auto-generated from commits since the previous tag.
+
+For a local build on the current OS (no tag, no release):
 
 ```bash
 pip install pyinstaller
-python pz-java-modder/packaging/build_dist.py
+python packaging/build_dist.py
+# produces dist/necroid(.exe) + dist/data/mods/ + dist/README.txt
+# plus dist-archives/necroid-vX.Y.Z-<platform>-<arch>.zip
 ```
 
-Produces `dist/pz-java-modder(.exe)` + `dist/data/mods/` + `dist/README.txt`. PyInstaller can't cross-compile; run the build on each OS you care about. Vineflower is bundled into the binary and self-extracts on first run — the end user only needs `git` and a JDK 17.
+PyInstaller does not cross-compile — `build_dist.py` produces only the current-OS binary. Vineflower is bundled into the binary; at runtime `data/tools/vineflower.jar` auto-downloads if missing. End users only need Git and a JDK 17.
 
-## What's tracked and what's not
+macOS builds are unsigned; users will see a Gatekeeper warning on first launch (right-click → Open to bypass). Apple Developer ID signing / notarization is not in scope yet.
 
-Tracked:
-- `pz-java-modder/` (Python source)
-- `data/mods/` (patch-set library; the portable artifact)
-- `CLAUDE.md`, `README.md`, `.gitignore`
+### Regenerating brand assets
 
-Local-only (gitignored):
-- `data/client/`, `data/server/` (per-target PZ-sourced content)
-- `data/tools/*` (except `.gitkeep`)
-- `data/.mod-config.json`
-- `dist/`, `pz-java-modder/build/`, `pz-java-modder/dist/`
-- Python caches
+Source of truth: `assets/necroid.png`. Derived files (`necroid-mark-256.png`, `necroid-icon-256.png`, `necroid-icon.ico`) are committed. To regenerate after a logo edit:
 
-## Notes
+```bash
+bash assets/build-assets.sh           # requires ImageMagick (`magick` on PATH)
+```
 
-- `classes-original/` is the binary source of truth for "vanilla" — `install`/`uninstall` use it to restore original `.class` files, and it's also re-jarred into `libs/classpath-originals/` so `javac -cp` can link against unmodified siblings.
-- Non-`zombie` class trees (`astar`, `com`, `de`, `fmod`, `javax`, `org`, `se`) are re-jarred for classpath use but **not** decompiled by default. To mod one of those, run Vineflower against its `classes-original/<subtree>` directly — `init` currently only decompiles `zombie`.
-- Java 17 target is enforced via `--release 17` so the output runs on PZ's bundled JRE 17.
-- Older PowerShell-era workspaces are preserved at the `v1-final` git tag. The rewrite removed `mod.ps1`, `build.ps1`, and `lib/mod-lib.ps1`.
+End users and the release build do **not** need ImageMagick.
+
+### Architecture deep-dive
+
+See [CLAUDE.md](CLAUDE.md) for: directory roles, install atomicity, javac constraints, target-mismatch rules, the PZ update flow, and what looks like bugs but isn't (decompiler quirks).
+
+### License
+
+[Unlicense](https://unlicense.org) — public domain.

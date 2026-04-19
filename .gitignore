@@ -1,5 +1,5 @@
 # -----------------------------------------------------------------------------
-# Per-profile PZ-sourced content (populated by `pz-java-modder init`).
+# Per-profile PZ-sourced content (populated by `necroid init`).
 # Never commit — each user rebuilds from their own Steam install.
 # -----------------------------------------------------------------------------
 /data/client/
@@ -20,9 +20,16 @@
 # Build output (PyInstaller + wheels)
 # -----------------------------------------------------------------------------
 /dist/
-/pz-java-modder/build/
-/pz-java-modder/dist/
-/pz-java-modder/*.egg-info/
+/dist-archives/
+/build/
+/*.egg-info/
+
+# -----------------------------------------------------------------------------
+# Ephemeral assets generated at build time (macOS icns needs iconutil,
+# so it's regenerated per build rather than committed).
+# -----------------------------------------------------------------------------
+/assets/necroid-icon.icns
+/assets/necroid-icon.iconset/
 
 # -----------------------------------------------------------------------------
 # Python

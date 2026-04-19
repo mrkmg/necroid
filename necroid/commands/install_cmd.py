@@ -16,7 +16,7 @@ def run(args) -> int:
     p = args.profile
     names: list[str] = list(args.mods or [])
     if not names:
-        raise SystemExit("usage: pz-java-modder install <mod1> [mod2 ...]")
+        raise SystemExit("usage: necroid install <mod1> [mod2 ...]")
 
     # Validate all named mods exist and target matches active profile.
     for name in names:

@@ -15,6 +15,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from . import __version__
 from . import logging_util as log
 from .config import read_config
 from .errors import ConfigError, PzModderError
@@ -30,6 +31,7 @@ from .commands import (
     reset as reset_cmd,
     resync_pristine as resync_cmd,
     status as status_cmd,
+    test as test_cmd,
     uninstall as uninstall_cmd,
     verify as verify_cmd,
 )
@@ -37,9 +39,11 @@ from .commands import (
 
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="pz-java-modder",
-        description="Diff-based Java mod manager for Project Zomboid (client and dedicated server).",
+        prog="necroid",
+        description="Necroid — Beyond Workshop. Diff-based Java mod manager for Project Zomboid (client and dedicated server).",
     )
+    p.add_argument("-V", "--version", action="version",
+                   version=f"necroid {__version__}")
     p.add_argument("--target", choices=("client", "server"), default=None,
                    help="target profile (default: config.defaultTarget or 'client')")
     # GUI convention: -server (single dash) flips to server mode when launching GUI.
@@ -82,6 +86,8 @@ def _build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("uninstall", help="restore everything, or remove named mods and rebuild")
     s.add_argument("mods", nargs="*")
 
+    sub.add_parser("test", help="compile changed + new .java files in src/ (no install)")
+
     sub.add_parser("verify", help="re-hash installed files, report drift")
     sub.add_parser("resync-pristine", help="after a PZ update: regenerate pristine, check mods")
 
@@ -99,6 +105,7 @@ _HANDLERS = {
     "reset": reset_cmd.run,
     "install": install_cmd.run,
     "uninstall": uninstall_cmd.run,
+    "test": test_cmd.run,
     "verify": verify_cmd.run,
     "resync-pristine": resync_cmd.run,
 }

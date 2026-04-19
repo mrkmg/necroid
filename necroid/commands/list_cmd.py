@@ -8,7 +8,7 @@ def run(args) -> int:
     profile = args.profile
     mods = list_mods(profile.mods_dir)
     if not mods:
-        print("(no mods defined; run `pz-java-modder new <name>`)")
+        print("(no mods defined; run `necroid new <name>`)")
         return 0
     hdr = "{:<24} {:<8} {:>5} {:>4} {:>4}  {}".format(
         "MOD", "TARGET", "PATCH", "NEW", "DEL", "DESCRIPTION")

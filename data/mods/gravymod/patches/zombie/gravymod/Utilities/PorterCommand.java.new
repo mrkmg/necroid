@@ -1,0 +1,221 @@
+package zombie.gravymod.Utilities;
+
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.lang.reflect.Field;
+import java.nio.ByteBuffer;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.util.ArrayList;
+
+import zombie.core.Core;
+import zombie.core.logger.ExceptionLogger;
+import zombie.debug.DebugLog;
+import zombie.savefile.ServerPlayerDB;
+
+public class PorterCommand {
+	public static String execute(String direction, String username)
+	{
+		switch (direction)
+		{
+		case "in":
+			return in(username);
+		case "ex":
+			return ex(username);
+		default:
+			return "Invalid direction. [in|ex]";
+		}
+	}
+	
+	private static String in(String username) {
+		try {
+			if (username.contains(",")) {
+				String[] usernames = username.split(",");
+				for (int i = 0; i < usernames.length; i++) {
+					DebugLog.log(doImport(usernames[i]));
+				}
+				return "Import Finished";
+			}
+			
+			return doImport(username);
+		} catch (Throwable e) {
+			ExceptionLogger.logException(e);
+			return "Something went wrong";
+		}
+	}
+	
+	private static String ex(String username) {
+		try {			
+			if (username.contains(",")) {
+				String[] usernames = username.split(",");
+				for (int i = 0; i < usernames.length; i++) {
+					DebugLog.log(doExport(usernames[i]));
+				}
+				return "Export Finished";
+			}
+			
+			if (username.startsWith("*")) {
+		        ArrayList<String> usernames = new ArrayList<String>();
+		        Connection conn = getConnection();
+		        String query = "SELECT username FROM networkPlayers";
+		        if (username.equals("*alive")) {
+		        	query += " WHERE isDead=0";
+		        }
+		        ResultSet rs = conn.createStatement().executeQuery(query);
+		        while (rs.next())
+		        	usernames.add(rs.getString(1));
+		        rs.close();
+		        for (int i = 0; i < usernames.size(); i++) {
+		        	DebugLog.log(doExport(usernames.get(i)));
+		        }
+		        return "Export All Complete";
+			}
+			
+			return doExport(username);
+		} catch (Throwable e) {
+			ExceptionLogger.logException(e);
+			return "Something went wrong";
+		}
+	}
+    
+    private static String doImport(String username) throws Throwable
+    {
+    	PreparedStatement statement = null;
+        try {
+	        Connection conn = getConnection();
+	        DebugLog.log("Importing player " + username + " to players.db");
+	        
+	        String path = null;
+	        if (System.getProperty("os.name").toLowerCase().contains("windows")) {
+	        	path = "C:\\player-mover\\";
+	        } else if (System.getProperty("os.name").toLowerCase().contains("linux")) {
+	        	path = "/opt/player-mover/";
+	        } else {
+	        	return "Unsupported";
+	        }
+	        	
+	        FileInputStream file = new FileInputStream(path + username + ".bin");
+	        byte[] headerBytes = new byte[20];
+	        file.read(headerBytes, 0, 20);
+	        ByteBuffer headerBuffer = ByteBuffer.wrap(headerBytes);
+	        float x = headerBuffer.getFloat();
+	        float y = headerBuffer.getFloat();
+	        float z = headerBuffer.getFloat();
+	        int w = headerBuffer.getInt();
+	        int len = headerBuffer.getInt();
+	        DebugLog.log("Read Header, reading " + len + " bytes of data");
+	        byte[] data = new byte[len];
+	        file.read(data, 0, len);
+	        file.close();
+	        
+	        statement = conn.prepareStatement("SELECT id FROM networkPlayers WHERE username=?");
+	        statement.setString(1, username);
+	        ResultSet rs = statement.executeQuery();
+	        
+	        if (rs.next())
+	        {
+	        	int id = rs.getInt(1);
+	        	statement.close();
+	        	statement = conn.prepareStatement("UPDATE networkPlayers SET x=?, y=?, z=?, worldVersion=?, data=?, isDead=? WHERE id=?");
+	            statement.setFloat(1, x);
+	            statement.setFloat(2, y);
+	            statement.setFloat(3, z);
+	            statement.setInt(4, w);
+	            statement.setBytes(5, data);
+	            statement.setBoolean(6, false);
+	            statement.setInt(7, id);
+	            int rows = statement.executeUpdate();
+	            if (rows == 0)
+	            {
+	            	statement.close();
+	            	return "Failed to import "+username+" to existing player";
+	            }
+	        }
+	        else
+	        {
+	        	statement.close();
+	        	statement = conn.prepareStatement("INSERT INTO networkPlayers(world,username,steamid, playerIndex,name,x,y,z,worldversion,isDead,data) VALUES(?,?,?,?,?,?,?,?,?,?,?)");
+	        	statement.setString(1, Core.GameSaveWorld);
+	        	statement.setString(2, username);
+	        	statement.setString(3, "");
+	        	statement.setInt(4, 0);
+	        	statement.setString(5, username);
+	        	statement.setFloat(6, x);
+	        	statement.setFloat(7, y);
+	        	statement.setFloat(8, z);
+	        	statement.setInt(9, w);
+	        	statement.setBoolean(10, false);
+	        	statement.setBytes(11, data);
+	            int rows = statement.executeUpdate();
+	            if (rows == 0)
+	            {
+	            	statement.close();
+	            	return "Failed to import "+username+" as new player";
+	            }
+	        }
+	        
+	        conn.commit();
+	        return username + " was imported.";
+	    } catch (Exception e)
+	    {
+	    	ExceptionLogger.logException(e);
+	    	if (statement != null)
+	    		statement.close();
+	    	return "There was an error";
+	    }
+    }
+    
+    private static String doExport(String username) throws Throwable
+    {
+    	PreparedStatement statement = null;
+        try {
+            Connection conn = getConnection();
+            statement = conn.prepareStatement("SELECT x, y, z, worldVersion, data FROM networkPlayers where username = ?");
+            statement.setString(1, username);
+            ResultSet rs = statement.executeQuery();
+            if (!rs.next())
+            	return username + " not found";
+            float x = rs.getFloat(1);
+            float y = rs.getFloat(2);
+            float z = rs.getFloat(3);
+            int w = rs.getInt(4);
+            byte[] d = rs.getBytes(5);
+            statement.close();
+            statement = null;
+
+	        String path = null;
+	        if (System.getProperty("os.name").toLowerCase().contains("windows")) {
+	        	path = "C:\\player-mover\\";
+	        } else if (System.getProperty("os.name").toLowerCase().contains("linux")) {
+	        	path = "/opt/player-mover/";
+	        } else {
+	        	return "Unsupported";
+	        }
+	        
+            FileOutputStream file = new FileOutputStream(path + username + ".bin", false);
+            file.write(ByteBuffer.allocate(4).putFloat(x).array());
+            file.write(ByteBuffer.allocate(4).putFloat(y).array());
+            file.write(ByteBuffer.allocate(4).putFloat(z).array());
+            file.write(ByteBuffer.allocate(4).putInt(w).array());
+            file.write(ByteBuffer.allocate(4).putInt(d.length).array());
+            file.write(d);
+            file.close();
+            return username + " was exported";
+        } catch (Exception e) {
+        	ExceptionLogger.logException(e);
+        	if (statement != null)
+        		statement.close();
+        	return "There as an error";
+        }
+    }
+
+	private static Connection getConnection() throws Throwable {
+		Class<ServerPlayerDB> c = ServerPlayerDB.class;
+		Field f = c.getDeclaredField("conn");
+		f.setAccessible(true);
+		ServerPlayerDB instance = ServerPlayerDB.getInstance();
+		Connection conn = (Connection)f.get(instance);
+		return conn;
+	}
+}

@@ -13,7 +13,7 @@ def run(args) -> int:
     p = args.profile
     stack: list[str] = list(args.mods)
     if not stack:
-        raise SystemExit("usage: pz-java-modder enter <mod1> [mod2 ...]")
+        raise SystemExit("usage: necroid enter <mod1> [mod2 ...]")
     for name in stack:
         md = ensure_mod_exists(p.mods_dir, name)
         mj = read_mod_json(md)

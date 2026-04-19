@@ -1,0 +1,89 @@
+package zombie.gravymod;
+
+import java.io.File;
+import java.io.FileWriter;
+import java.lang.reflect.Field;
+
+import zombie.Lua.LuaManager;
+import zombie.Lua.LuaEventManager;
+import zombie.commands.CommandBase;
+import zombie.network.GameServer;
+import zombie.network.chat.ChatServer;
+
+public class GravyMain {
+	public static boolean DoLuaTiming = false;
+	public static double LuaSlow = 50.0D; 
+
+	public static void main(String[] args) throws Throwable {
+		System.out.println("GravyMod: Initialing");
+		overrideCommands();
+		Loader loader = new Loader();
+		loader.start();
+		writePid(args);
+		System.out.println("GravyMod: Finished, booting PZ GameServer");
+		GameServer.main(args);
+		
+	}
+	
+	private static void writePid(String[] args) throws Throwable {
+		String servername = "servertest";
+		for (int i = 0; i < args.length; i++) {
+			String arg = args[i];
+			if (arg.equals("-servername") && i+1 < args.length) {
+				servername = args[i+1];
+				break;
+			}
+		}
+		String pidfile = servername + ".pid";
+		System.out.println("GravyMod: Writing pid to " + pidfile);
+		File file = new File(pidfile);
+		FileWriter fw = new FileWriter(file, false);
+		fw.write(getPID());
+		fw.close();
+		file.deleteOnExit();
+	}
+
+	private static void overrideCommands() throws Throwable {
+		System.out.println("GravyMod: Overriding Commands");
+		Class<CommandBase> c = CommandBase.class;
+		Field f = c.getDeclaredField("childrenClasses");
+		f.setAccessible(true);
+		@SuppressWarnings("rawtypes")
+		Class[] existing = (Class[])f.get(null);
+		existing[29] = GutilCommand.class;
+	}
+	
+	private static void afterInit() {
+		System.out.println("GravyMod: Adding Custom Lua Commands");
+		LuaManager.exposer.exposeGlobalFunctions(new GravyLua());
+		LuaEventManager.AddEvent("LoadGridsquare50");
+	}
+	
+	private static String getPID() {
+		String processName = java.lang.management.ManagementFactory.getRuntimeMXBean().getName();
+		return processName.split("@")[0];
+	}
+	
+	private static class Loader extends Thread {
+		@Override
+		public void run() {
+			try {
+				System.out.println("GravyMod: Starting Loader Thread");
+				while (!IsReady()) {
+					Thread.sleep(100);
+				}
+				GravyMain.afterInit();
+				System.out.println("GravyMod: Exiting Loader Thread");
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+		}
+		
+		private boolean IsReady() 
+		{
+			synchronized (ChatServer.class) {
+				return ChatServer.isInited();
+			}
+		}
+	}
+}

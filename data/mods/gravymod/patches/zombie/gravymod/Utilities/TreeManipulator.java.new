@@ -1,0 +1,261 @@
+package zombie.gravymod.Utilities;
+
+import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.Arrays;
+
+import zombie.debug.DebugLog;
+import zombie.erosion.ErosionData;
+import zombie.erosion.ErosionMain;
+import zombie.erosion.ErosionRegions;
+import zombie.erosion.ErosionWorld;
+import zombie.erosion.ErosionData.Chunk;
+import zombie.erosion.categories.ErosionCategory;
+import zombie.erosion.categories.NatureTrees;
+import zombie.iso.IsoChunk;
+import zombie.iso.IsoGridSquare;
+import zombie.iso.IsoObject;
+import zombie.iso.SpriteDetails.IsoObjectType;
+import zombie.iso.objects.IsoTree;
+import zombie.util.list.PZArrayList;
+
+public class TreeManipulator {
+	private static ArrayList<String> treeNames = new ArrayList<String>(Arrays.asList(
+		"American Holly",
+		"Canadian Hemlock",
+		"Virginia Pine",
+		"Riverbirch",
+		"Cockspur Hawthorn",
+		"Dogwood",
+		"Carolina Silverbell",
+		"Yellowwood",
+		"Eastern Redbud",
+		"Redmaple",
+		"American Linden"
+	));
+	
+	private static String[] treeSprites = new String[] {
+		"e_americanholly_1",
+		"e_canadianhemlock_1",
+		"e_virginiapine_1",
+		"e_riverbirch_1",
+		"e_cockspurhawthorn_1",
+		"e_dogwood_1",
+		"e_carolinasilverbell_1",
+		"e_yellowwood_1",
+		"e_easternredbud_1",
+		"e_redmaple_1",
+		"e_americanlinden_1",
+	};
+	
+	public static boolean spawnTree(IsoGridSquare gs, String name, int stage) throws Throwable {
+		int treeIdx = treeNames.indexOf(name);
+		if (treeIdx < 0) {
+			DebugLog.log("[spawnTree] Unknown Tree");
+			return false;
+		}
+		
+		if (gs == null || gs.chunk == null || gs.getZ() != 0)
+			return false;
+		
+		// Check for existing tree
+		PZArrayList<IsoObject> objects = gs.getObjects();
+		for (int i = 0; i < objects.size(); i++)
+		{
+			IsoObject obj = objects.get(i);
+			if (obj.getType() == IsoObjectType.tree)
+			{
+				DebugLog.log("[spawnTree] Tree already exists in square");
+				return false;
+			}
+		}
+		
+		// get needed references from game
+		ErosionMain erosionMain = ErosionMain.getInstance();
+		IsoChunk isoChunk = gs.getChunk();
+		Chunk chunk = isoChunk.getErosionData();
+		ErosionData.Square erosionDataSquare = gs.getErosionData();
+		ErosionWorld erosionWorld = getWorld(erosionMain);
+		int eTicks = getETicks(erosionMain);
+		
+		if (erosionWorld == null) {
+			DebugLog.log("[spawnTree] ErosionWorld not found");
+			return false;
+		}
+		
+		// Add a tree to the square
+		String sprite = treeSprites[treeIdx] + "_0";
+		IsoTree tree = new IsoTree(gs, sprite);
+		gs.AddTileObject(tree);
+	
+		// Make sure ErosionWorld knows about the tree
+		erosionWorld.validateSpawn(gs, erosionDataSquare, chunk);
+		
+		// Get and update the data for that square
+		ErosionCategory.Data treeData = getTreeData(erosionDataSquare);
+		if (treeData == null) {
+			DebugLog.log("[spawnTree] ErosionCategory.Data not found");
+			return false;
+		}
+		setTreeData(treeData, treeIdx, stage, eTicks);
+        
+		// Force ErosionWorld to process the square
+		erosionWorld.update(gs, erosionDataSquare, chunk, eTicks);
+		
+		// Transmit the new tree
+		objects = gs.getObjects();
+		for (int i = 0; i < objects.size(); i++)
+		{
+			IsoObject obj = objects.get(i);
+			if (obj.getType() == IsoObjectType.tree)
+				obj.transmitCompleteItemToClients();
+		}
+		
+        return true;
+	}
+	
+	public static boolean growTree(IsoGridSquare gs) throws Throwable
+	{
+		if (gs == null || gs.chunk == null)
+		{
+			DebugLog.log("growTree: Missing GridSquare");
+			return false;
+		}
+		
+		try {
+			IsoObject foundTree = null;
+			PZArrayList<IsoObject> objects = gs.getObjects();
+			for (int i = 0; i < objects.size(); i++)
+			{
+				IsoObject obj = objects.get(i);
+				if (obj.getType() == IsoObjectType.tree)
+				{
+					foundTree = obj;
+					break;
+				}
+			}
+			if (foundTree == null)
+				return false;
+	
+			ErosionMain erosionMain = ErosionMain.getInstance();
+			IsoChunk isoChunk = gs.getChunk();
+			Chunk chunk = isoChunk.getErosionData();
+			ErosionData.Square erosionDataSquare = gs.getErosionData();
+			ErosionWorld erosionWorld = getWorld(erosionMain);
+			int eTicks = getETicks(erosionMain);
+			ErosionCategory.Data treeData = getTreeData(erosionDataSquare);
+			
+			if (treeData.stage >= 5)
+				return false;
+			
+			setTreeStage(treeData, treeData.stage + 1, eTicks);
+			// Force ErosionWorld to process the square
+			erosionWorld.update(gs, erosionDataSquare, chunk, eTicks);
+			
+			gs.transmitRemoveItemFromSquareOnServer(foundTree);
+			// Transmit the new tree
+			objects = gs.getObjects();
+			for (int i = 0; i < objects.size(); i++)
+			{
+				IsoObject obj = objects.get(i);
+				if (obj.getType() == IsoObjectType.tree)
+					obj.transmitCompleteItemToClients();
+			}
+			return true;
+		}
+		catch (Throwable ex)
+		{
+			DebugLog.log("growTree failed: " + ex);
+		    java.io.StringWriter sw = new java.io.StringWriter();
+		    java.io.PrintWriter pw = new java.io.PrintWriter(sw);
+		    ex.printStackTrace(pw);
+		    pw.flush();
+		    DebugLog.log(sw.toString());
+		    return false;
+		}
+	}
+	
+	@SuppressWarnings("rawtypes")
+	private static void setTreeData(ErosionCategory.Data data, int treeIdx, int stage, int eTicks) throws Throwable 
+	{		
+		Class<NatureTrees> cls = NatureTrees.class;
+		Class[] classes = cls.getDeclaredClasses();
+		boolean didSet = false;
+		for (int i = 0; i < classes.length; i++)
+		{
+			Class c = classes[i];
+			if (c.getName() == "zombie.erosion.categories.NatureTrees$CategoryData") {
+				Field f = c.getDeclaredField("gameObj");
+				f.setAccessible(true);
+				f.setInt(data, treeIdx);
+				f = c.getDeclaredField("spawnTime");
+				f.setAccessible(true);
+				f.setInt(data, eTicks - (10 * stage) - 1); // should calculate to the current stage
+				f = c.getDeclaredField("maxStage");
+				f.setAccessible(true);
+				f.setInt(data, 5);
+				didSet = true;
+				break;
+			}
+		}
+		if (!didSet) {
+			DebugLog.log("[spawnTree] couldn't set some data");
+		}
+		data.stage = stage;
+		data.doNothing = false;
+		data.hasSpawned = false;
+	}
+
+	@SuppressWarnings("rawtypes")
+	private static void setTreeStage(ErosionCategory.Data data, int stage, int eTicks) throws Throwable {
+		Class<NatureTrees> cls = NatureTrees.class;
+		Class[] classes = cls.getDeclaredClasses();
+		boolean didSet = false;
+		for (int i = 0; i < classes.length; i++)
+		{
+			Class c = classes[i];
+			if (c.getName() == "zombie.erosion.categories.NatureTrees$CategoryData") {
+				Field f = c.getDeclaredField("spawnTime");
+				f.setAccessible(true);
+				f.setInt(data, eTicks - (10 * stage) - 1); // should calculate to the current stage
+				f = c.getDeclaredField("maxStage");
+				f.setAccessible(true);
+				f.setInt(data, 5);
+				didSet = true;
+				break;
+			}
+		}
+		if (!didSet) {
+			DebugLog.log("[spawnTree] couldn't set some data");
+		}
+		data.stage = stage;
+		data.doNothing = false;
+		data.hasSpawned = false;
+	}
+	
+	private static ErosionCategory.Data getTreeData(ErosionData.Square sq) {
+		if (sq.regions != null) {
+			for(int i = 0; i < sq.regions.size(); ++i) {
+				ErosionCategory.Data ecd = (ErosionCategory.Data)sq.regions.get(i);
+				if (ecd.regionID == ErosionRegions.REGION_NATURE && ecd.categoryID == ErosionRegions.CATEGORY_TREES) {
+					return ecd;
+				}
+			}
+		}
+		return null;
+	}
+	
+	private static ErosionWorld getWorld(ErosionMain em) throws Throwable {
+		Class<ErosionMain> cls = ErosionMain.class;
+		Field fld = cls.getDeclaredField("World");
+		fld.setAccessible(true);
+		return (ErosionWorld)fld.get(em);
+	}
+	
+	private static int getETicks(ErosionMain em) throws Throwable {
+		Class<ErosionMain> cls = ErosionMain.class;
+		Field fld = cls.getDeclaredField("eTicks");
+		fld.setAccessible(true);
+		return fld.getInt(em);
+	}
+}

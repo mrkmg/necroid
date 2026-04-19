@@ -143,7 +143,7 @@ def run(args) -> int:
     for name, path in found.items():
         log.info(f"{name}: {path}")
 
-    log.step(f"step 3/9: vineflower.jar (v{__import__('pz_java_modder.decompile', fromlist=['VINEFLOWER_VERSION']).VINEFLOWER_VERSION})")
+    log.step(f"step 3/9: vineflower.jar (v{__import__('necroid.decompile', fromlist=['VINEFLOWER_VERSION']).VINEFLOWER_VERSION})")
     ensure_vineflower(root / "data" / "tools", force=args.force)
 
     # Build the profile now that PZ install is known.
@@ -187,5 +187,5 @@ def run(args) -> int:
         log.info(f"created {profile.state_file}")
 
     log.success(f"init [{target}] complete.")
-    log.info(f"next: pz-java-modder --target {target} new <mod-name>  then  capture <mod-name>")
+    log.info(f"next: necroid --target {target} new <mod-name>  then  capture <mod-name>")
     return 0

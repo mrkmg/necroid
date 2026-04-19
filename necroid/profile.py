@@ -17,11 +17,11 @@ Target = Literal["client", "server"]
 
 
 def find_root(start: Path | None = None) -> Path:
-    """Walk up from `start` (default cwd) looking for `data/` or `pz-java-modder/`.
+    """Walk up from `start` (default cwd) looking for `data/` or `necroid/`.
     Falls back to `start` if nothing matches."""
     p = (start or Path.cwd()).resolve()
     for candidate in (p, *p.parents):
-        if (candidate / "data").is_dir() or (candidate / "pz-java-modder").is_dir():
+        if (candidate / "data").is_dir() or (candidate / "necroid").is_dir():
             return candidate
     return p
 
@@ -87,7 +87,7 @@ def load_profile(root: Path, target: Target | str, cfg: ModConfig | None = None,
         field = "clientPzInstall" if target == "client" else "serverPzInstall"
         raise ConfigError(
             f"{field} not set in {cfg.path}\n"
-            f"    re-run `pz-java-modder init --target {target}` or edit the config."
+            f"    re-run `necroid init --target {target}` or edit the config."
         )
     override_raw = cfg.originals_dir_override.get(target) if cfg.originals_dir_override else None
     override: Path | None = None
@@ -110,7 +110,7 @@ def require_pz_install(profile: Profile) -> Path:
         field = "clientPzInstall" if profile.target == "client" else "serverPzInstall"
         raise ConfigError(
             f"{field} not set in data/.mod-config.json\n"
-            f"    re-run `pz-java-modder --target {profile.target} init` or edit the config."
+            f"    re-run `necroid --target {profile.target} init` or edit the config."
         )
     if not profile.pz_install.exists():
         raise ConfigError(f"PZ install dir does not exist: {profile.pz_install}")

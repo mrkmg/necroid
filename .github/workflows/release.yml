@@ -1,0 +1,95 @@
+name: Release
+
+# Triggered by pushing a SemVer tag, e.g. `git tag v0.1.1 && git push --tags`.
+# Builds PyInstaller distributables on 5 runners (Windows x64, Linux x64/arm64,
+# macOS x64/arm64), then publishes a GitHub Release with all zips attached.
+#
+# Version source of truth: necroid/__init__.py __version__.
+# The version-check step hard-fails if the tag doesn't match __version__ --
+# forces bumping both together, avoiding mislabeled releases.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.suffix }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            suffix: windows-x64
+          - os: ubuntu-latest
+            suffix: linux-x64
+          - os: ubuntu-24.04-arm
+            suffix: linux-arm64
+          - os: macos-13
+            suffix: macos-x64
+          - os: macos-latest
+            suffix: macos-arm64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PyInstaller
+        run: python -m pip install --upgrade pip pyinstaller
+
+      - name: Verify tag matches necroid.__version__
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          tag_version="${tag#v}"
+          pkg_version=$(python -c "import necroid; print(necroid.__version__)")
+          echo "tag=$tag  tag_version=$tag_version  pkg_version=$pkg_version"
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "::error::Tag $tag does not match necroid.__version__ ($pkg_version). Bump necroid/__init__.py and pyproject.toml, then retag."
+            exit 1
+          fi
+
+      - name: Build distributable
+        run: python packaging/build_dist.py
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: necroid-${{ matrix.suffix }}
+          path: dist-archives/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten archives for release upload
+        run: |
+          mkdir -p release-assets
+          find artifacts -name '*.zip' -exec cp {} release-assets/ \;
+          ls -la release-assets/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: release-assets/*.zip
