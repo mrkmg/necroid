@@ -1,0 +1,115 @@
+diff --git a/zombie/radio/ZomboidRadio.java b/zombie/radio/ZomboidRadio.java
+index c273866..aa4ccee 100644
+--- a/zombie/radio/ZomboidRadio.java
++++ b/zombie/radio/ZomboidRadio.java
+@@ -187,7 +187,7 @@ public final class ZomboidRadio {
+          zombie.GameWindow.WriteString(var1.bb, (String)var3.getKey());
+          var1.putInt(((Map)var3.getValue()).size());
+ 
+-         for (Entry var5 : ((Map)var3.getValue()).entrySet()) {
++         for (Entry var5 : (java.util.Set<Entry>)((Map)var3.getValue()).entrySet()) {
+             var1.putInt((Integer)var5.getKey());
+             zombie.GameWindow.WriteString(var1.bb, (String)var5.getValue());
+          }
+@@ -750,13 +750,6 @@ public final class ZomboidRadio {
+    }
+ 
+    private String doDeviceRangeDistortion(String var1, int var2, int var3) {
+-      float var4 = var2 * 0.9F;
+-      if (var4 < var2 && var3 > var4) {
+-         float var5 = 100.0F * ((var3 - var4) / (var2 - var4));
+-         var1 = this.scrambleString(var1, (int)var5, false);
+-         this.hasAppliedRangeDistortion = true;
+-      }
+-
+       return var1;
+    }
+ 
+@@ -774,12 +767,7 @@ public final class ZomboidRadio {
+    }
+ 
+    private String applyWeatherInterference(String var1, int var2) {
+-      if (ClimateManager.getInstance().getWeatherInterference() <= 0.0F) {
+-         return var1;
+-      } else {
+-         int var3 = (int)(ClimateManager.getInstance().getWeatherInterference() * 100.0F);
+-         return this.scrambleString(var1, var3, var2 == -1);
+-      }
++      return var1;
+    }
+ 
+    private String scrambleString(String var1, int var2, boolean var3) {
+@@ -788,72 +776,7 @@ public final class ZomboidRadio {
+ 
+    public String scrambleString(String var1, int var2, boolean var3, String var4) {
+       this.hasAppliedInterference = false;
+-      StringBuilder var5 = this.stringBuilder;
+-      var5.setLength(0);
+-      if (var2 <= 0) {
+-         return var1;
+-      } else if (var2 >= 100) {
+-         return var4 != null ? var4 : this.getRandomBzztFzzt();
+-      } else {
+-         this.hasAppliedInterference = true;
+-         if (var3) {
+-            char[] var6 = var1.toCharArray();
+-            boolean var7 = false;
+-            boolean var8 = false;
+-            String var9 = "";
+-
+-            for (int var10 = 0; var10 < var6.length; var10++) {
+-               char var11 = var6[var10];
+-               if (var8) {
+-                  var9 = var9 + var11;
+-                  if (var11 == ']') {
+-                     var5.append(var9);
+-                     var9 = "";
+-                     var8 = false;
+-                  }
+-               } else if (var11 == '[' || Character.isWhitespace(var11) && var10 > 0 && !Character.isWhitespace(var6[var10 - 1])) {
+-                  int var12 = Rand.Next(100);
+-                  if (var12 > var2) {
+-                     var5.append(var9).append(" ");
+-                     var7 = false;
+-                  } else if (!var7) {
+-                     var5.append(var4 != null ? var4 : this.getRandomBzztFzzt()).append(" ");
+-                     var7 = true;
+-                  }
+-
+-                  if (var11 == '[') {
+-                     var9 = "[";
+-                     var8 = true;
+-                  } else {
+-                     var9 = "";
+-                  }
+-               } else {
+-                  var9 = var9 + var11;
+-               }
+-            }
+-
+-            if (var9 != null && var9.length() > 0) {
+-               var5.append(var9);
+-            }
+-         } else {
+-            boolean var13 = false;
+-            String[] var14 = var1.split("\\s+");
+-
+-            for (int var15 = 0; var15 < var14.length; var15++) {
+-               String var16 = var14[var15];
+-               int var17 = Rand.Next(100);
+-               if (var17 > var2) {
+-                  var5.append(var16).append(" ");
+-                  var13 = false;
+-               } else if (!var13) {
+-                  var5.append(var4 != null ? var4 : this.getRandomBzztFzzt()).append(" ");
+-                  var13 = true;
+-               }
+-            }
+-         }
+-
+-         return var5.toString();
+-      }
++      return var1;
+    }
+ 
+    public void ReceiveTransmission(
