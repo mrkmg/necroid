@@ -11,12 +11,19 @@
       ./mod.ps1 enter my-mod                          # reset src/, apply my-mod's patches, start editing
       # ...edit files in src/zombie/...
       ./mod.ps1 capture my-mod                        # diff src/ vs src-pristine/ into my-mod's patches
-      ./mod.ps1 install my-mod                        # stage+compile+install .class files to PZ
-      ./mod.ps1 uninstall                             # restore everything install wrote
+      ./mod.ps1 install my-mod                        # add my-mod to installed stack, rebuild
+      ./mod.ps1 uninstall my-mod                      # remove my-mod from installed stack, rebuild
+      ./mod.ps1 uninstall                             # restore everything install wrote (full)
 
-    Multiple mods stack:
+    Install/uninstall are stack-additive:
+      ./mod.ps1 install x         # stack: [x]
+      ./mod.ps1 install y         # stack: [x, y]   (rebuilds from x + y)
+      ./mod.ps1 uninstall x       # stack: [y]      (rebuilds from y alone)
+      ./mod.ps1 uninstall         # stack: []       (full restore)
+
+    Multiple mods at once also work:
       ./mod.ps1 enter mod-a mod-b                     # apply both in order
-      ./mod.ps1 install mod-a mod-b                   # compile+install union of changes
+      ./mod.ps1 install mod-a mod-b                   # add both to stack, rebuild
 
     Requires git.exe on PATH (Git for Windows).
 
@@ -688,10 +695,37 @@ function Cmd-Diff {
 
 # -----------------------------------------------------------------------------
 # install — atomic stage+compile+install
+#
+# Cmd-Install is stack-additive: args are appended to the currently-installed
+# stack (deduped, order preserved). Use Cmd-Uninstall to remove mods.
+# Install-ModStack is the worker that takes an absolute stack and rebuilds.
 # -----------------------------------------------------------------------------
 function Cmd-Install {
+    param([string[]]$Names)
+    if (-not $Names -or $Names.Count -eq 0) { throw "usage: ./mod.ps1 install <mod1> [mod2 ...]" }
+    $c = Ensure-Initialized
+    foreach ($m in $Names) { [void](Ensure-ModExists $m) }
+
+    $state = Read-ModState -StateFile $c.StateFile
+    $current = @($state.stack)
+    $merged  = @($current)
+    foreach ($m in $Names) { if ($merged -notcontains $m) { $merged += $m } }
+
+    $added = @($Names | Where-Object { $current -notcontains $_ })
+    if ($added.Count -eq 0) {
+        Write-Host "stack already contains [$($Names -join ', ')] — rebuilding [$($merged -join ', ')]"
+    } else {
+        if ($current.Count -eq 0) {
+            Write-Host "installing fresh stack: [$($merged -join ', ')]"
+        } else {
+            Write-Host "adding [$($added -join ', ')] to current stack [$($current -join ', ')] -> [$($merged -join ', ')]"
+        }
+    }
+    Install-ModStack -Stack $merged
+}
+
+function Install-ModStack {
     param([string[]]$Stack)
-    if (-not $Stack -or $Stack.Count -eq 0) { throw "usage: ./mod.ps1 install <mod1> [mod2 ...]" }
     $c = Ensure-Initialized
     [void](Test-GitAvailable)
     foreach ($m in $Stack) { [void](Ensure-ModExists $m) }
@@ -826,21 +860,50 @@ function Restore-InstalledClasses {
 }
 
 # -----------------------------------------------------------------------------
-# uninstall — restore everything in state, clear state
+# uninstall — no args: restore everything, clear state.
+#             args: remove named mods from current stack and rebuild remainder.
 # -----------------------------------------------------------------------------
 function Cmd-Uninstall {
+    param([string[]]$Names)
     $c = Ensure-Initialized
     $state = Read-ModState -StateFile $c.StateFile
-    if (-not $state.installed -or $state.installed.Count -eq 0) {
-        Write-Host "nothing installed."
+
+    if (-not $Names -or $Names.Count -eq 0) {
+        if (-not $state.installed -or $state.installed.Count -eq 0) {
+            Write-Host "nothing installed."
+            return
+        }
+        Write-Host "uninstall: restoring $($state.installed.Count) class file(s)"
+        Restore-InstalledClasses -Cfg $c
+        Write-ModState -StateFile $c.StateFile -State ([pscustomobject]@{
+            version = 1; stack = @(); installedAt = $null; installed = @()
+        })
+        Write-Host "done."
         return
     }
-    Write-Host "uninstall: restoring $($state.installed.Count) class file(s)"
-    Restore-InstalledClasses -Cfg $c
-    Write-ModState -StateFile $c.StateFile -State ([pscustomobject]@{
-        version = 1; stack = @(); installedAt = $null; installed = @()
-    })
-    Write-Host "done."
+
+    $current = @($state.stack)
+    if ($current.Count -eq 0) {
+        throw "no mods installed; cannot remove [$($Names -join ', ')]"
+    }
+    $missing = @($Names | Where-Object { $current -notcontains $_ })
+    if ($missing.Count -gt 0) {
+        throw "mod(s) not in installed stack [$($current -join ', ')]: $($missing -join ', ')"
+    }
+    $remainder = @($current | Where-Object { $Names -notcontains $_ })
+
+    if ($remainder.Count -eq 0) {
+        Write-Host "removing [$($Names -join ', ')] empties the stack — full uninstall"
+        Restore-InstalledClasses -Cfg $c
+        Write-ModState -StateFile $c.StateFile -State ([pscustomobject]@{
+            version = 1; stack = @(); installedAt = $null; installed = @()
+        })
+        Write-Host "done."
+        return
+    }
+
+    Write-Host "removing [$($Names -join ', ')] from stack [$($current -join ', ')] -> rebuilding [$($remainder -join ', ')]"
+    Install-ModStack -Stack $remainder
 }
 
 # -----------------------------------------------------------------------------
@@ -929,8 +992,8 @@ switch ($Command) {
     'capture'           { Cmd-Capture -Name (Get-RestArg 0) }
     'diff'              { Cmd-Diff   -Name (Get-RestArg 0) }
     'reset'             { Cmd-Reset }
-    'install'           { Cmd-Install -Stack $Rest }
-    'uninstall'         { Cmd-Uninstall }
+    'install'           { Cmd-Install -Names $Rest }
+    'uninstall'         { Cmd-Uninstall -Names $Rest }
     'verify'            { Cmd-Verify }
     'resync-pristine'   { Cmd-ResyncPristine }
     'help'              { Get-Help $PSCommandPath -Detailed }

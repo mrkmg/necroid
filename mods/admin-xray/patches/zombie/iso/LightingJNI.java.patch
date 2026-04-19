@@ -1,0 +1,53 @@
+diff --git a/zombie/iso/LightingJNI.java b/zombie/iso/LightingJNI.java
+index d7d977d..51d1e2a 100644
+--- a/zombie/iso/LightingJNI.java
++++ b/zombie/iso/LightingJNI.java
+@@ -811,6 +811,7 @@ public final class LightingJNI {
+ 
+       @Override
+       public int lightverts(int var1) {
++         if (zombie.admin_xray.AdminXray.losOverride) return zombie.admin_xray.AdminXray.FULL_VERT_LIGHT;
+          return this.cacheVertLight[var1];
+       }
+ 
+@@ -831,34 +832,40 @@ public final class LightingJNI {
+ 
+       @Override
+       public boolean bSeen() {
++         if (zombie.admin_xray.AdminXray.losOverride) return true;
+          this.update();
+          return (this.vis & 1) != 0;
+       }
+ 
+       @Override
+       public boolean bCanSee() {
++         if (zombie.admin_xray.AdminXray.losOverride) return true;
+          this.update();
+          return (this.vis & 2) != 0;
+       }
+ 
+       @Override
+       public boolean bCouldSee() {
++         if (zombie.admin_xray.AdminXray.losOverride) return true;
+          this.update();
+          return (this.vis & 4) != 0;
+       }
+ 
+       @Override
+       public float darkMulti() {
++         if (zombie.admin_xray.AdminXray.losOverride) return 1.0F;
+          return this.cacheDarkMulti;
+       }
+ 
+       @Override
+       public float targetDarkMulti() {
++         if (zombie.admin_xray.AdminXray.losOverride) return 1.0F;
+          return this.cacheTargetDarkMulti;
+       }
+ 
+       @Override
+       public ColorInfo lightInfo() {
++         if (zombie.admin_xray.AdminXray.losOverride) return zombie.admin_xray.AdminXray.WHITE;
+          this.update();
+          return this.lightInfo;
+       }

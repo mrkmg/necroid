@@ -212,19 +212,36 @@ function Write-UnifiedDiff {
 # Windows paths in --directory (treats "C:" as part of the path), so we cd to
 # $WorkDir and apply without --directory; patch headers like a/zombie/Lua/Event.java
 # resolve relative to CWD.
+#
+# When $WorkDir lives inside a parent git repo (e.g. ./build/stage-src under a
+# repo-rooted PZ-Mod-Work), `git apply` will silently skip the patch because the
+# `diff --git a/.. b/..` + `index ...` header makes it consult the repo index for
+# files that don't exist there. Workaround: strip those metadata lines so git
+# falls back to plain `--- file.orig` / `+++ file.new` resolution against CWD.
 function Invoke-GitApplyFile {
     param(
         [string]$PatchFile,
         [string]$WorkDir,
         [string]$RelPath
     )
-    Push-Location -LiteralPath $WorkDir
+    $tmp = [System.IO.Path]::GetTempFileName()
     try {
-        $null = & git.exe -c 'core.autocrlf=false' apply --whitespace=nowarn -- $PatchFile 2>&1
-        $code = $LASTEXITCODE
-        $global:LASTEXITCODE = 0
-        return ($code -eq 0)
-    } finally { Pop-Location }
+        $stripped = (Get-Content -LiteralPath $PatchFile) | Where-Object {
+            $_ -notmatch '^diff --git ' -and $_ -notmatch '^index [0-9a-f]+\.\.[0-9a-f]+'
+        }
+        # WriteAllLines uses Environment.NewLine (\r\n) which corrupts LF patches
+        # against LF source. Join with LF explicitly.
+        [System.IO.File]::WriteAllText($tmp, (($stripped -join "`n") + "`n"), [System.Text.UTF8Encoding]::new($false))
+        Push-Location -LiteralPath $WorkDir
+        try {
+            $null = & git.exe -c 'core.autocrlf=false' apply --whitespace=nowarn -- $tmp 2>&1
+            $code = $LASTEXITCODE
+            $global:LASTEXITCODE = 0
+            return ($code -eq 0)
+        } finally { Pop-Location }
+    } finally {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # 3-way merge of <current> with <incoming> against <base>. Modifies $Current in place.

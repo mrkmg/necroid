@@ -1,5 +1,5 @@
 diff --git a/zombie/iso/IsoGridSquare.java b/zombie/iso/IsoGridSquare.java
-index 4f21a12..4cc128d 100644
+index 4f21a12..0276aef 100644
 --- a/zombie/iso/IsoGridSquare.java
 +++ b/zombie/iso/IsoGridSquare.java
 @@ -5708,7 +5708,7 @@ public final class IsoGridSquare {
@@ -43,4 +43,50 @@ index 4f21a12..4cc128d 100644
 +      if (zombie.admin_xray.AdminXray.losOverride) return true;
        return this.lighting[var1].bCanSee();
     }
+ 
+@@ -8633,6 +8636,7 @@ public final class IsoGridSquare {
+ 
+       @Override
+       public int lightverts(int var1) {
++         if (zombie.admin_xray.AdminXray.losOverride) return zombie.admin_xray.AdminXray.FULL_VERT_LIGHT;
+          return this.lightverts[var1];
+       }
+ 
+@@ -8653,31 +8657,37 @@ public final class IsoGridSquare {
+ 
+       @Override
+       public boolean bSeen() {
++         if (zombie.admin_xray.AdminXray.losOverride) return true;
+          return this.bSeen;
+       }
+ 
+       @Override
+       public boolean bCanSee() {
++         if (zombie.admin_xray.AdminXray.losOverride) return true;
+          return this.bCanSee;
+       }
+ 
+       @Override
+       public boolean bCouldSee() {
++         if (zombie.admin_xray.AdminXray.losOverride) return true;
+          return this.bCouldSee;
+       }
+ 
+       @Override
+       public float darkMulti() {
++         if (zombie.admin_xray.AdminXray.losOverride) return 1.0F;
+          return this.darkMulti;
+       }
+ 
+       @Override
+       public float targetDarkMulti() {
++         if (zombie.admin_xray.AdminXray.losOverride) return 1.0F;
+          return this.targetDarkMulti;
+       }
+ 
+       @Override
+       public ColorInfo lightInfo() {
++         if (zombie.admin_xray.AdminXray.losOverride) return zombie.admin_xray.AdminXray.WHITE;
+          return this.lightInfo;
+       }
  
