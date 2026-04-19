@@ -7,16 +7,20 @@
 <p align="center"><em>Beyond Workshop.</em></p>
 
 <p align="center">
-  Mods for <strong>Project Zomboid</strong> that reach parts Steam Workshop can't.
+  Java Mods for <strong>Project Zomboid</strong> that reach parts Steam Workshop can't.
 </p>
 
 ---
 
 ## What is this?
 
-You know how Steam Workshop is great, until you want the zombies to see further, or the admin X-ray to actually work, or a new mod that rewrites how the map loads? Workshop mods can only touch scripts and assets. They can't touch the Java engine underneath. Necroid can.
+You know how Steam Workshop is great, until you want change how radios work, have an admin X-ray that actually works, or a write a new mod that rewrites how the map loads? Workshop mods can only touch lua scripts and assets. They can't touch the Java engine underneath. Necroid can.
 
 Necroid ships a bundle of Java-level mods for Project Zomboid plus a small app to install and uninstall them cleanly. Everything is reversible — you can always put the game back exactly how Steam shipped it.
+
+<p align="center">
+  <img src="assets/necroid-screenshot-v0.2.0.png" alt="Necroid GUI"/>
+</p>
 
 ## Install
 
@@ -99,6 +103,16 @@ necroid reset                        # mirror pristine -> working tree, clear en
 All target-aware commands accept `--target {client,server}` (or `-server` shorthand). Default comes from `data/.mod-config.json` `defaultTarget`, falling back to `client`.
 
 ---
+
+---
+
+## Why is this different?
+
+Necroid is a diff-based mod manager. It works by making a pristine copy of the vanilla Java classes, then applying mods as patches on top. To uninstall, it just deletes the patched classes and copies the pristine ones back in. No file-level patching, no bytecode rewriting, no classloader shenanigans.
+
+Necroid does not ship any Project Zomboid files, bytecode, or decompiled sources. This ensures Necroid is legally safe and provides a very easy way to update these mods for small version changes in PZ. When PZ updates, just refresh the pristine baseline and re-apply the patches. If the update is small, the patches will mostly apply cleanly with a few manual tweaks. If the update is large, the patches won't apply at all, but you can still use them as a reference for what changed and how to fix it.. then make a PR with the fixes :-)
+
+Finally, it's safer for end users. No random .class files downloaded from the internet that you just have to trust. All mods in necroid are source-code, reviewable, and built locally on your machine.
 
 ## For developers
 
