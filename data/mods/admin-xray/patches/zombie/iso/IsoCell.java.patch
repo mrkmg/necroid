@@ -1,0 +1,32 @@
+diff --git a/zombie/iso/IsoCell.java b/zombie/iso/IsoCell.java
+index ba4d3e3..c762ede 100644
+--- a/zombie/iso/IsoCell.java
++++ b/zombie/iso/IsoCell.java
+@@ -1748,6 +1748,8 @@ public final class IsoCell {
+          IsoGridSquare var4 = var3.current;
+          if (var4.getZ() >= var1.getZ()) {
+             return false;
++         } else if (zombie.admin_xray.AdminXray.losOverride) {
++            return true;
+          } else if (!PerformanceSettings.NewRoofHiding) {
+             return this.bHideFloors[var2] && var1.getZ() >= this.maxZ;
+          } else {
+@@ -3426,7 +3428,7 @@ public final class IsoCell {
+             }
+          }
+ 
+-         if (this.bHideFloors[var1]) {
++         if (this.bHideFloors[var1] && !zombie.admin_xray.AdminXray.losOverride) {
+             this.maxZ = (int)IsoCamera.CamCharacter.getZ() + 1;
+          }
+       }
+@@ -3690,7 +3692,8 @@ public final class IsoCell {
+ 
+       if (IsoCamera.CamCharacter != null
+          && IsoCamera.CamCharacter.getCurrentSquare() != null
+-         && IsoCamera.CamCharacter.getCurrentSquare().getProperties().Is(IsoFlagType.hidewalls)) {
++         && IsoCamera.CamCharacter.getCurrentSquare().getProperties().Is(IsoFlagType.hidewalls)
++         && !zombie.admin_xray.AdminXray.losOverride) {
+          this.maxZ = (int)IsoCamera.CamCharacter.getZ() + 1;
+       }
+ 

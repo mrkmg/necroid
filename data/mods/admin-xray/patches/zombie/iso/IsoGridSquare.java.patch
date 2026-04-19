@@ -1,8 +1,16 @@
 diff --git a/zombie/iso/IsoGridSquare.java b/zombie/iso/IsoGridSquare.java
-index 4f21a12..0276aef 100644
+index 4f21a12..8ed36e2 100644
 --- a/zombie/iso/IsoGridSquare.java
 +++ b/zombie/iso/IsoGridSquare.java
-@@ -5708,7 +5708,7 @@ public final class IsoGridSquare {
+@@ -307,6 +307,7 @@ public final class IsoGridSquare {
+    }
+ 
+    public boolean getPlayerCutawayFlag(int var1, long var2) {
++      if (zombie.admin_xray.AdminXray.losOverride) return true;
+       return var2 > this.playerCutawayFlagLockUntilTimes[var1] ? this.targetPlayerCutawayFlags[var1] : this.playerCutawayFlags[var1];
+    }
+ 
+@@ -5708,7 +5709,7 @@ public final class IsoGridSquare {
     }
  
     public IsoGameCharacter FindFriend(IsoGameCharacter var1, int var2, Stack<IsoGameCharacter> var3) {
@@ -11,7 +19,7 @@ index 4f21a12..0276aef 100644
  
        for (int var5 = 0; var5 < var1.getLocalList().size(); var5++) {
           IsoMovingObject var6 = var1.getLocalList().get(var5);
-@@ -7212,7 +7212,7 @@ public final class IsoGridSquare {
+@@ -7212,7 +7213,7 @@ public final class IsoGridSquare {
                    Vector2 var7 = tempo;
                    float var8 = tempo2.getLength();
                    tempo2.normalize();
@@ -20,7 +28,7 @@ index 4f21a12..0276aef 100644
                       var2.setForwardDirection(var7);
                       var4.angleX = var7.x;
                       var4.angleY = var7.y;
-@@ -7477,6 +7477,7 @@ public final class IsoGridSquare {
+@@ -7477,6 +7478,7 @@ public final class IsoGridSquare {
     }
  
     public boolean isCouldSee(int var1) {
@@ -28,7 +36,7 @@ index 4f21a12..0276aef 100644
        return this.lighting[var1].bCouldSee();
     }
  
-@@ -7485,6 +7486,7 @@ public final class IsoGridSquare {
+@@ -7485,6 +7487,7 @@ public final class IsoGridSquare {
     }
  
     public boolean isCanSee(int var1) {
@@ -36,7 +44,7 @@ index 4f21a12..0276aef 100644
        return this.lighting[var1].bCanSee();
     }
  
-@@ -7737,6 +7739,7 @@ public final class IsoGridSquare {
+@@ -7737,6 +7740,7 @@ public final class IsoGridSquare {
     }
  
     public boolean getCanSee(int var1) {
@@ -44,7 +52,7 @@ index 4f21a12..0276aef 100644
        return this.lighting[var1].bCanSee();
     }
  
-@@ -8633,6 +8636,7 @@ public final class IsoGridSquare {
+@@ -8633,6 +8637,7 @@ public final class IsoGridSquare {
  
        @Override
        public int lightverts(int var1) {
@@ -52,7 +60,7 @@ index 4f21a12..0276aef 100644
           return this.lightverts[var1];
        }
  
-@@ -8653,31 +8657,37 @@ public final class IsoGridSquare {
+@@ -8653,31 +8658,37 @@ public final class IsoGridSquare {
  
        @Override
        public boolean bSeen() {
