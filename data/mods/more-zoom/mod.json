@@ -1,5 +1,6 @@
 {
   "name": "more-zoom",
+  "target": "client",
   "description": "Adds one extra zoom-out (300%) and one extra zoom-in (25%) level.",
   "version": "0.1.0",
   "createdAt": "2026-04-19T03:30:47.6167521Z",

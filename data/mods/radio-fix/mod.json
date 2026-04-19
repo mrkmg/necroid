@@ -1,5 +1,6 @@
 {
   "name": "radio-fix",
+  "target": "client",
   "description": "Remove weather-based radio interference.",
   "version": "0.1.0",
   "createdAt": "2026-04-19T03:44:02.2730598Z",

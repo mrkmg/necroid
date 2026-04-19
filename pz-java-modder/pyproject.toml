@@ -1,0 +1,17 @@
+[project]
+name = "pz-java-modder"
+version = "0.1.0"
+description = "Diff-based Java mod manager for Project Zomboid (client and dedicated server)."
+requires-python = ">=3.10"
+authors = [{ name = "Kevin Gravier", email = "kevin@mrkmg.com" }]
+license = { text = "Unlicense" }
+
+[project.scripts]
+pz-java-modder = "pz_java_modder.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["pz_java_modder", "pz_java_modder.commands"]
