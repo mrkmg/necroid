@@ -1,0 +1,37 @@
+diff --git a/zombie/core/textures/MultiTextureFBO2.java b/zombie/core/textures/MultiTextureFBO2.java
+index fb6aa3c..a5d0546 100644
+--- a/zombie/core/textures/MultiTextureFBO2.java
++++ b/zombie/core/textures/MultiTextureFBO2.java
+@@ -17,7 +17,7 @@ import zombie.network.ServerGUI;
+ import zombie.util.Type;
+ 
+ public final class MultiTextureFBO2 {
+-   private final float[] zoomLevelsDefault = new float[]{2.5F, 2.25F, 2.0F, 1.75F, 1.5F, 1.25F, 1.0F, 0.75F, 0.5F};
++   private final float[] zoomLevelsDefault = new float[]{3.0F, 2.5F, 2.25F, 2.0F, 1.75F, 1.5F, 1.25F, 1.0F, 0.75F, 0.5F, 0.25F};
+    private float[] zoomLevels;
+    public TextureFBO Current;
+    public volatile TextureFBO FBOrendered = null;
+@@ -66,7 +66,7 @@ public final class MultiTextureFBO2 {
+       if (var1 != null && !var1.isEmpty()) {
+          String[] var2 = var1.split(";");
+          if (var2.length != 0) {
+-            ArrayList var3 = new ArrayList();
++            ArrayList<Integer> var3 = new ArrayList<>();
+ 
+             for (String var7 : var2) {
+                if (!var7.isEmpty()) {
+@@ -90,6 +90,14 @@ public final class MultiTextureFBO2 {
+                var3.add(100);
+             }
+ 
++            if (!var3.contains(300)) {
++               var3.add(300);
++            }
++
++            if (!var3.contains(25)) {
++               var3.add(25);
++            }
++
+             var3.sort((var0, var1x) -> var1x - var0);
+             this.zoomLevels = new float[var3.size()];
+ 
