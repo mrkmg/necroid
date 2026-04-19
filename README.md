@@ -149,6 +149,7 @@ necroid new my-mod -d "does a thing"     # scaffold data/mods/my-mod/
 necroid enter my-mod                     # reset src/, apply patches
 # ...edit under data/<target>/src/zombie/...
 necroid capture my-mod                   # rewrite patches from working tree
+necroid test                             # javac-only compile, no install (fast sanity check)
 necroid install my-mod                   # compile + install; play-test
 ```
 

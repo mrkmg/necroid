@@ -64,7 +64,8 @@ There are **no tests and no linter** for the PZ-decompiled code — it's decompi
 2. `necroid enter my-mod` — mirrors pristine into `data/<target>/src/` and applies my-mod's patches (none yet for a fresh mod). Working tree is now "entered" on my-mod (recorded in `data/<target>/.mod-enter.json`).
 3. Edit files under `data/<target>/src/zombie/`. Only touch files you intend to ship — every diff vs pristine becomes a patch.
 4. `necroid capture my-mod` — diffs `src/` against `src-pristine/` and writes `.java.patch` / `.java.new` / `.java.delete` under `data/mods/my-mod/patches/`. Safe to run repeatedly.
-5. `necroid install my-mod` — compile + install; play-test.
+5. `necroid test` — javac-only compile of the currently-entered working tree into `data/<target>/build/classes/`. No install, no staging, no PZ-install writes. Fastest way to catch compile errors before touching the game. Run it anytime between edits.
+6. `necroid install my-mod` — compile + install; play-test.
 
 ### Updating an existing mod
 
@@ -81,6 +82,7 @@ There are **no tests and no linter** for the PZ-decompiled code — it's decompi
 - `necroid uninstall` — restore every class file the last install wrote back to its `classes-original/` version.
 - `necroid uninstall my-mod` — remove one from the stack and rebuild the rest.
 - `necroid verify` — re-hash installed files against `.mod-state.json`.
+- `necroid test` — compile the entered working tree via javac into `data/<target>/build/classes/` without installing. Green here means `install` will compile; runtime correctness is still on the play-test.
 - Installing a different stack implicitly uninstalls the prior stack — no manual uninstall needed before switching.
 - Steam "Verify Integrity of Game Files" silently reverts overrides. Re-run `install` to restore.
 
