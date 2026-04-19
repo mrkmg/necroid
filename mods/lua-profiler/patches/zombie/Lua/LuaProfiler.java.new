@@ -4,19 +4,25 @@ import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
 
+import se.krka.kahlua.vm.Coroutine;
 import se.krka.kahlua.vm.JavaFunction;
 import se.krka.kahlua.vm.KahluaTable;
+import se.krka.kahlua.vm.KahluaTableIterator;
+import se.krka.kahlua.vm.KahluaThread;
 import se.krka.kahlua.vm.LuaCallFrame;
 import se.krka.kahlua.vm.LuaClosure;
 import se.krka.kahlua.vm.Platform;
@@ -25,92 +31,148 @@ import zombie.ZomboidFileSystem;
 import zombie.debug.DebugLog;
 
 /**
- * Per-mod, per-event Lua callback profiler.
+ * Per-mod Lua profiler with three modes:
+ *   "event"   — (default) wraps Event.trigger, per event+closure timings.
+ *   "builtin" — flips Kahlua's hidden doProfiling flag, reads profileEntries.
+ *   "sample"  — background thread samples currentCoroutine's call stack at
+ *               configurable interval; produces per-function+line aggregate
+ *               plus chrome-trace samples/stackFrames flame graph JSON.
  *
- * Aggregate mode: always-on counters, ~100ns overhead/callback.
- * Trace mode: on-demand time-boxed Chrome Trace Event recorder for speedscope/chrome://tracing.
- *
- * Exposed to Lua as globals (set up on first {@link #record}):
- *   LuaProfilerStart(seconds)  -- begin trace recording for N seconds
- *   LuaProfilerStop()          -- stop trace recording early
- *   LuaProfilerDump()          -- write aggregate CSV and current trace JSON
- *   LuaProfilerReset()         -- zero aggregate counters
+ * Globals (registered lazily on first {@link #record}):
+ *   LuaProfilerStart(seconds)
+ *   LuaProfilerStop()
+ *   LuaProfilerDump()
+ *   LuaProfilerReset()
+ *   LuaProfilerEnable() / LuaProfilerDisable()        -- aggregate (event mode)
+ *   LuaProfilerMode("event"|"builtin"|"sample")
+ *   LuaProfilerFilter({ mods = {...}, files = {...} })
+ *   LuaProfilerSampleInterval(microseconds)
  */
 public final class LuaProfiler {
-   // Holds the env table we last registered against. If LuaManager.env is replaced
-   // (which happens on every LuaManager.init/reset), this reference no longer matches
-   // and we re-register so the new env also sees the globals.
+   public static final int MODE_EVENT = 0;
+   public static final int MODE_BUILTIN = 1;
+   public static final int MODE_SAMPLE = 2;
+
+   private static volatile int mode = MODE_EVENT;
+
+   // filter — null or empty == "allow all". Allowlists are OR'd when set.
+   private static volatile Set<String> filterMods = null;
+   private static volatile Set<String> filterFiles = null;
+
+   // sampler
+   private static volatile long sampleIntervalNs = 1_000_000L; // 1 ms default
+   private static volatile Thread samplerThread = null;
+   private static volatile boolean samplerRun = false;
+
+   // If LuaManager.env is replaced (LuaManager.init/reset builds a fresh env),
+   // this reference no longer matches and we re-register against the new env.
    private static volatile KahluaTable registeredEnv = null;
    private static volatile boolean aggregateEnabled = true;
    private static volatile boolean traceEnabled = false;
    private static volatile long traceDeadlineNs = 0L;
 
    private static final ConcurrentHashMap<Key, Stats> aggregate = new ConcurrentHashMap<>();
+   // Per-full-path mod resolution cache. Avoids normalizing/re-scanning on hot paths.
+   private static final ConcurrentHashMap<String, String> pathModCache = new ConcurrentHashMap<>();
 
-   // Bounded ring-ish buffer for trace events. We use a fixed array and cursor.
+   // Bounded ring-ish buffer for trace events (event mode).
    private static final int TRACE_CAPACITY = 500_000;
    private static final TraceEvent[] traceBuffer = new TraceEvent[TRACE_CAPACITY];
    private static final AtomicLong traceIndex = new AtomicLong(0L);
    private static volatile long traceStartWallUs = 0L;
    private static volatile long traceStartNs = 0L;
 
-   // filename -> modID (or "modA|modB" on collision).
-   private static volatile HashMap<String, String> fileToMod = null;
+   // Sample-mode aggregate + stack buffer.
+   private static final ConcurrentHashMap<SampleKey, Stats> sampleAgg = new ConcurrentHashMap<>();
+   private static final int SAMPLE_CAPACITY = 500_000;
+   private static final SampleRecord[] sampleBuffer = new SampleRecord[SAMPLE_CAPACITY];
+   private static final AtomicLong sampleIndex = new AtomicLong(0L);
+
+   // normalized-absolute-path -> modID. Same basename across mods no longer collides.
+   private static volatile HashMap<String, String> pathToMod = null;
+
+   // Reflection cache (populated lazily, per VM lifetime).
+   private static volatile Field fDoProfiling = null;
+   private static volatile Field fProfileEntries = null;
+   private static volatile Field fCallFrameStack = null;
+   private static volatile Field fCallFrameTop = null;
 
    private LuaProfiler() {}
 
-   /** Called by Event.trigger() for every Lua event callback. */
+   // ---------------- event-mode hook (called by Event.trigger) ----------------
+
    public static void record(String eventName, LuaClosure closure, long nanos) {
       KahluaTable currentEnv = LuaManager.env;
       if (currentEnv != null && currentEnv != registeredEnv) {
          register(LuaManager.platform, currentEnv);
       }
 
+      if (mode != MODE_EVENT) return;
+
       if (aggregateEnabled) {
          String file = safeFile(closure);
-         String mod = resolveMod(file);
-         Key k = new Key(eventName, mod, file, System.identityHashCode(closure));
-         Stats s = aggregate.get(k);
-         if (s == null) {
-            s = aggregate.computeIfAbsent(k, kk -> new Stats());
+         String fullPath = safeFullPath(closure);
+         String mod = resolveMod(fullPath);
+         if (filterAllows(mod, file)) {
+            Key k = new Key(eventName, mod, file, System.identityHashCode(closure));
+            Stats s = aggregate.get(k);
+            if (s == null) {
+               s = aggregate.computeIfAbsent(k, kk -> new Stats());
+            }
+            s.count.incrementAndGet();
+            s.totalNs.addAndGet(nanos);
+            long prev;
+            do {
+               prev = s.maxNs.get();
+               if (nanos <= prev) break;
+            } while (!s.maxNs.compareAndSet(prev, nanos));
          }
-         s.count.incrementAndGet();
-         s.totalNs.addAndGet(nanos);
-         // max: lock-free compare-and-set update
-         long prev;
-         do {
-            prev = s.maxNs.get();
-            if (nanos <= prev) break;
-         } while (!s.maxNs.compareAndSet(prev, nanos));
       }
 
       if (traceEnabled) {
          long now = System.nanoTime();
          if (now > traceDeadlineNs) {
-            // auto-stop + flush
             stopTrace();
             flushTrace();
          } else {
-            int idx = (int)(traceIndex.getAndIncrement());
+            int idx = (int) (traceIndex.getAndIncrement());
             if (idx < TRACE_CAPACITY) {
                String file = safeFile(closure);
-               String mod = resolveMod(file);
-               TraceEvent te = new TraceEvent();
-               te.eventName = eventName;
-               te.mod = mod;
-               te.file = file;
-               te.closureId = System.identityHashCode(closure);
-               te.startNs = now - nanos;
-               te.durNs = nanos;
-               traceBuffer[idx] = te;
+               String fullPath = safeFullPath(closure);
+               String mod = resolveMod(fullPath);
+               if (filterAllows(mod, file)) {
+                  TraceEvent te = new TraceEvent();
+                  te.eventName = eventName;
+                  te.mod = mod;
+                  te.file = file;
+                  te.closureId = System.identityHashCode(closure);
+                  te.startNs = now - nanos;
+                  te.durNs = nanos;
+                  traceBuffer[idx] = te;
+               }
+               // filtered-out: slot stays null; flushTrace skips nulls.
             } else {
-               // buffer full — auto-stop and flush.
                stopTrace();
                flushTrace();
             }
          }
       }
    }
+
+   // ---------------- filtering ----------------
+
+   private static boolean filterAllows(String mod, String file) {
+      Set<String> fm = filterMods;
+      Set<String> ff = filterFiles;
+      boolean hasMods = fm != null && !fm.isEmpty();
+      boolean hasFiles = ff != null && !ff.isEmpty();
+      if (!hasMods && !hasFiles) return true;
+      if (hasMods && mod != null && fm.contains(mod)) return true;
+      if (hasFiles && file != null && ff.contains(file)) return true;
+      return false;
+   }
+
+   // ---------------- closure metadata ----------------
 
    private static String safeFile(LuaClosure closure) {
       try {
@@ -121,21 +183,63 @@ public final class LuaProfiler {
       return "<unknown>";
    }
 
-   private static String resolveMod(String file) {
-      HashMap<String, String> map = fileToMod;
-      if (map == null) {
-         synchronized (LuaProfiler.class) {
-            if (fileToMod == null) {
-               fileToMod = buildFileToModMap();
-            }
-            map = fileToMod;
+   private static String safeFullPath(LuaClosure closure) {
+      try {
+         if (closure != null && closure.prototype != null && closure.prototype.filename != null) {
+            return closure.prototype.filename;
          }
-      }
-      String mod = map.get(file);
-      return mod != null ? mod : "<vanilla-or-unknown>";
+      } catch (Throwable ignore) {}
+      return null;
    }
 
-   private static HashMap<String, String> buildFileToModMap() {
+   private static String safeFunctionName(LuaClosure closure) {
+      try {
+         if (closure != null && closure.prototype != null) {
+            String n = closure.prototype.name;
+            if (n != null && !n.isEmpty()) return n;
+         }
+      } catch (Throwable ignore) {}
+      return "?";
+   }
+
+   private static int safeLine(LuaCallFrame frame, LuaClosure closure) {
+      try {
+         if (closure == null || closure.prototype == null) return -1;
+         int[] lines = closure.prototype.lines;
+         if (lines == null) return -1;
+         int pc = frame.pc;
+         if (pc < 0 || pc >= lines.length) return -1;
+         return lines[pc];
+      } catch (Throwable ignore) {
+         return -1;
+      }
+   }
+
+   private static String resolveMod(String fullPath) {
+      if (fullPath == null) return "<vanilla-or-unknown>";
+      String cached = pathModCache.get(fullPath);
+      if (cached != null) return cached;
+
+      HashMap<String, String> map = pathToMod;
+      if (map == null) {
+         synchronized (LuaProfiler.class) {
+            if (pathToMod == null) {
+               pathToMod = buildPathToModMap();
+            }
+            map = pathToMod;
+         }
+      }
+      String mod = map.get(normalizePath(fullPath));
+      if (mod == null) mod = "<vanilla-or-unknown>";
+      pathModCache.put(fullPath, mod);
+      return mod;
+   }
+
+   private static String normalizePath(String p) {
+      return p.replace('\\', '/').toLowerCase(Locale.ROOT);
+   }
+
+   private static HashMap<String, String> buildPathToModMap() {
       HashMap<String, String> result = new HashMap<>();
       try {
          ArrayList<String> modIds = ZomboidFileSystem.instance.getModIDs();
@@ -148,7 +252,7 @@ public final class LuaProfiler {
             walkLua(luaRoot, modId, result);
          }
       } catch (Throwable t) {
-         DebugLog.Lua.warn("LuaProfiler: failed to build file->mod map: " + t.getMessage());
+         DebugLog.Lua.warn("LuaProfiler: failed to build path->mod map: " + t.getMessage());
       }
       return result;
    }
@@ -160,31 +264,20 @@ public final class LuaProfiler {
          if (k.isDirectory()) {
             walkLua(k, modId, out);
          } else if (k.isFile() && k.getName().endsWith(".lua")) {
-            String name = k.getName();
-            String prev = out.get(name);
-            if (prev == null) {
-               out.put(name, modId);
-            } else if (!prev.contains(modId)) {
-               out.put(name, prev + "|" + modId);
-            }
+            out.put(normalizePath(k.getAbsolutePath()), modId);
          }
       }
    }
 
-   // ---------------- control surface ----------------
+   // ---------------- Lua globals ----------------
 
-   /**
-    * Registers the LuaProfiler* globals on the given env table.
-    * Invoked lazily from record() on first call and again whenever env is replaced
-    * (LuaManager.init/reset builds a fresh env). Synchronized so concurrent event
-    * threads don't double-register.
-    */
    public static synchronized void register(Platform platform, KahluaTable env) {
       if (env == null) return;
       if (env == registeredEnv) return;
       try {
-         // Also invalidate the file->mod cache — mod list can change across resets.
-         fileToMod = null;
+         // Mod list can change across resets — invalidate caches.
+         pathToMod = null;
+         pathModCache.clear();
 
          env.rawset("LuaProfilerStart", (JavaFunction) (frame, nargs) -> {
             int seconds = 30;
@@ -193,22 +286,22 @@ public final class LuaProfiler {
                if (a instanceof Double) seconds = ((Double) a).intValue();
                else if (a instanceof Number) seconds = ((Number) a).intValue();
             }
-            startTrace(seconds);
+            startProfile(seconds);
             return 0;
          });
          env.rawset("LuaProfilerStop", (JavaFunction) (frame, nargs) -> {
-            stopTrace();
-            flushTrace();
+            stopProfile();
             return 0;
          });
          env.rawset("LuaProfilerDump", (JavaFunction) (frame, nargs) -> {
-            dumpAggregate();
-            if (traceIndex.get() > 0) flushTrace();
+            dumpAll();
             return 0;
          });
          env.rawset("LuaProfilerReset", (JavaFunction) (frame, nargs) -> {
             aggregate.clear();
+            sampleAgg.clear();
             traceIndex.set(0);
+            sampleIndex.set(0);
             return 0;
          });
          env.rawset("LuaProfilerEnable", (JavaFunction) (frame, nargs) -> {
@@ -219,28 +312,368 @@ public final class LuaProfiler {
             aggregateEnabled = false;
             return 0;
          });
+         env.rawset("LuaProfilerMode", (JavaFunction) (frame, nargs) -> {
+            if (nargs > 0) {
+               Object a = frame.get(0);
+               if (a instanceof String) setMode((String) a);
+            }
+            return 0;
+         });
+         env.rawset("LuaProfilerFilter", (JavaFunction) (frame, nargs) -> {
+            if (nargs > 0) {
+               Object a = frame.get(0);
+               if (a instanceof KahluaTable) setFilter((KahluaTable) a);
+               else if (a == null) { filterMods = null; filterFiles = null; }
+            } else {
+               filterMods = null;
+               filterFiles = null;
+            }
+            return 0;
+         });
+         env.rawset("LuaProfilerSampleInterval", (JavaFunction) (frame, nargs) -> {
+            if (nargs > 0) {
+               Object a = frame.get(0);
+               long us = 1000L;
+               if (a instanceof Double) us = ((Double) a).longValue();
+               else if (a instanceof Number) us = ((Number) a).longValue();
+               if (us < 200L) us = 200L;
+               if (us > 10_000L) us = 10_000L;
+               sampleIntervalNs = us * 1_000L;
+               DebugLog.Lua.println("LuaProfiler: sample interval = " + us + " us");
+            }
+            return 0;
+         });
          registeredEnv = env;
-         DebugLog.Lua.println("LuaProfiler: registered globals (Start/Stop/Dump/Reset/Enable/Disable)");
+         DebugLog.Lua.println("LuaProfiler: registered globals (Start/Stop/Dump/Reset/Enable/Disable/Mode/Filter/SampleInterval)");
       } catch (Throwable t) {
          DebugLog.Lua.warn("LuaProfiler: register failed: " + t.getMessage());
       }
    }
 
-   private static void startTrace(int seconds) {
-      int clamped = Math.max(1, Math.min(seconds, 120));
+   private static void setMode(String m) {
+      if (m == null) return;
+      String lower = m.toLowerCase(Locale.ROOT);
+      switch (lower) {
+         case "event":   mode = MODE_EVENT;   break;
+         case "builtin": mode = MODE_BUILTIN; break;
+         case "sample":  mode = MODE_SAMPLE;  break;
+         default:
+            DebugLog.Lua.warn("LuaProfiler: unknown mode '" + m + "'");
+            return;
+      }
+      DebugLog.Lua.println("LuaProfiler: mode = " + lower);
+   }
+
+   private static void setFilter(KahluaTable t) {
+      Set<String> mods = new HashSet<>();
+      Set<String> files = new HashSet<>();
+      try {
+         Object rawMods = t.rawget("mods");
+         if (rawMods instanceof KahluaTable) collectStrings((KahluaTable) rawMods, mods);
+         Object rawFiles = t.rawget("files");
+         if (rawFiles instanceof KahluaTable) collectStrings((KahluaTable) rawFiles, files);
+      } catch (Throwable err) {
+         DebugLog.Lua.warn("LuaProfiler: setFilter failed: " + err.getMessage());
+         return;
+      }
+      filterMods = mods.isEmpty() ? null : mods;
+      filterFiles = files.isEmpty() ? null : files;
+      DebugLog.Lua.println("LuaProfiler: filter mods=" + mods + " files=" + files);
+   }
+
+   private static void collectStrings(KahluaTable t, Set<String> out) {
+      KahluaTableIterator it = t.iterator();
+      while (it.advance()) {
+         Object v = it.getValue();
+         if (v instanceof String) out.add((String) v);
+      }
+   }
+
+   // ---------------- start/stop dispatch ----------------
+
+   private static void startProfile(int seconds) {
+      int clamped = Math.max(1, Math.min(seconds, 300));
+      switch (mode) {
+         case MODE_EVENT:   startEventTrace(clamped); break;
+         case MODE_BUILTIN: startBuiltin();           break;
+         case MODE_SAMPLE:  startSampling(clamped);   break;
+      }
+   }
+
+   private static void stopProfile() {
+      switch (mode) {
+         case MODE_EVENT:
+            stopTrace();
+            flushTrace();
+            break;
+         case MODE_BUILTIN:
+            stopBuiltin();
+            break;
+         case MODE_SAMPLE:
+            stopSampling();
+            break;
+      }
+   }
+
+   private static void dumpAll() {
+      if (!aggregate.isEmpty()) dumpAggregate();
+      if (traceIndex.get() > 0) flushTrace();
+      if (mode == MODE_BUILTIN) dumpBuiltin();
+      if (!sampleAgg.isEmpty()) dumpSampleAggregate();
+      if (sampleIndex.get() > 0) flushSampleTrace();
+   }
+
+   // ---------------- event-mode trace ----------------
+
+   private static void startEventTrace(int seconds) {
       traceIndex.set(0);
       traceStartNs = System.nanoTime();
       traceStartWallUs = System.currentTimeMillis() * 1000L;
-      traceDeadlineNs = traceStartNs + (long) clamped * 1_000_000_000L;
+      traceDeadlineNs = traceStartNs + (long) seconds * 1_000_000_000L;
       traceEnabled = true;
-      DebugLog.Lua.println("LuaProfiler: trace started for " + clamped + "s");
+      DebugLog.Lua.println("LuaProfiler: event trace started for " + seconds + "s");
    }
 
    private static void stopTrace() {
       traceEnabled = false;
    }
 
-   // ---------------- output ----------------
+   // ---------------- builtin mode ----------------
+
+   private static Field fieldOrNull(Class<?> c, String name) {
+      try { Field f = c.getDeclaredField(name); f.setAccessible(true); return f; }
+      catch (Throwable t) { return null; }
+   }
+
+   private static Field getDoProfiling() {
+      Field f = fDoProfiling;
+      if (f == null) { f = fieldOrNull(KahluaThread.class, "doProfiling"); fDoProfiling = f; }
+      return f;
+   }
+
+   private static Field getProfileEntries() {
+      Field f = fProfileEntries;
+      if (f == null) { f = fieldOrNull(KahluaThread.class, "profileEntries"); fProfileEntries = f; }
+      return f;
+   }
+
+   private static void startBuiltin() {
+      KahluaThread t = LuaManager.thread;
+      if (t == null) { DebugLog.Lua.warn("LuaProfiler: builtin start — thread is null"); return; }
+      Field f = getDoProfiling();
+      if (f == null) { DebugLog.Lua.warn("LuaProfiler: builtin start — no doProfiling field"); return; }
+      try {
+         f.setBoolean(t, true);
+         DebugLog.Lua.println("LuaProfiler: builtin profiler ENABLED");
+      } catch (Throwable err) {
+         DebugLog.Lua.warn("LuaProfiler: builtin start failed: " + err.getMessage());
+      }
+   }
+
+   private static void stopBuiltin() {
+      KahluaThread t = LuaManager.thread;
+      if (t == null) return;
+      Field f = getDoProfiling();
+      if (f == null) return;
+      try {
+         f.setBoolean(t, false);
+         DebugLog.Lua.println("LuaProfiler: builtin profiler DISABLED");
+      } catch (Throwable err) {
+         DebugLog.Lua.warn("LuaProfiler: builtin stop failed: " + err.getMessage());
+      }
+   }
+
+   private static void dumpBuiltin() {
+      KahluaThread t = LuaManager.thread;
+      if (t == null) return;
+      Field f = getProfileEntries();
+      if (f == null) { DebugLog.Lua.warn("LuaProfiler: builtin dump — no profileEntries field"); return; }
+      List<?> entries;
+      try {
+         Object raw = f.get(t);
+         if (!(raw instanceof List)) return;
+         entries = new ArrayList<>((List<?>) raw);
+      } catch (Throwable err) {
+         DebugLog.Lua.warn("LuaProfiler: builtin dump read failed: " + err.getMessage());
+         return;
+      }
+
+      File out = new File(outDir(), "lua_profile_builtin_" + timestamp() + ".csv");
+      try (BufferedWriter w = new BufferedWriter(new FileWriter(out))) {
+         w.write("file,mod,total_ms\n");
+         // KahluaThread$Entry has public fields: String file; double time.
+         // Reflect so we don't need a compile-time dep on the inner class.
+         Field ffile = null;
+         Field ftime = null;
+         List<BuiltinRow> rows = new ArrayList<>();
+         for (Object o : entries) {
+            if (o == null) continue;
+            if (ffile == null) {
+               try { ffile = o.getClass().getField("file"); } catch (Throwable ignore) {}
+            }
+            if (ftime == null) {
+               try { ftime = o.getClass().getField("time"); } catch (Throwable ignore) {}
+            }
+            String file = null;
+            double timeMs = 0.0;
+            try {
+               if (ffile != null) file = (String) ffile.get(o);
+               if (ftime != null) timeMs = ftime.getDouble(o);
+            } catch (Throwable ignore) {}
+            if (file == null) continue;
+            String shortFile = basename(file);
+            String mod = resolveMod(file);
+            if (!filterAllows(mod, shortFile)) continue;
+            BuiltinRow r = new BuiltinRow();
+            r.file = file;
+            r.mod = mod;
+            r.totalMs = timeMs;
+            rows.add(r);
+         }
+         rows.sort(Comparator.comparingDouble((BuiltinRow r) -> r.totalMs).reversed());
+         for (BuiltinRow r : rows) {
+            w.write(csv(r.file) + "," + csv(r.mod) + ","
+                    + String.format(Locale.ROOT, "%.3f", r.totalMs) + "\n");
+         }
+         DebugLog.Lua.println("LuaProfiler: wrote " + out.getAbsolutePath() + " (" + rows.size() + " rows)");
+      } catch (IOException ioe) {
+         DebugLog.Lua.warn("LuaProfiler: builtin CSV write failed: " + ioe.getMessage());
+      }
+   }
+
+   private static String basename(String p) {
+      if (p == null) return null;
+      int s1 = p.lastIndexOf('/');
+      int s2 = p.lastIndexOf('\\');
+      int s = Math.max(s1, s2);
+      return s < 0 ? p : p.substring(s + 1);
+   }
+
+   // ---------------- sample mode ----------------
+
+   private static Field getCallFrameStack() {
+      Field f = fCallFrameStack;
+      if (f == null) { f = fieldOrNull(Coroutine.class, "callFrameStack"); fCallFrameStack = f; }
+      return f;
+   }
+
+   private static Field getCallFrameTop() {
+      Field f = fCallFrameTop;
+      if (f == null) { f = fieldOrNull(Coroutine.class, "callFrameTop"); fCallFrameTop = f; }
+      return f;
+   }
+
+   private static void startSampling(int seconds) {
+      if (samplerThread != null) {
+         DebugLog.Lua.warn("LuaProfiler: sampler already running");
+         return;
+      }
+      sampleIndex.set(0);
+      traceStartNs = System.nanoTime();
+      traceStartWallUs = System.currentTimeMillis() * 1000L;
+      final long deadlineNs = traceStartNs + (long) seconds * 1_000_000_000L;
+      samplerRun = true;
+      Thread t = new Thread(() -> samplerLoop(deadlineNs), "LuaProfiler-Sampler");
+      t.setDaemon(true);
+      t.setPriority(Thread.NORM_PRIORITY + 1);
+      samplerThread = t;
+      t.start();
+      DebugLog.Lua.println("LuaProfiler: sampling started for " + seconds + "s @ "
+              + (sampleIntervalNs / 1000) + "us");
+   }
+
+   private static void stopSampling() {
+      samplerRun = false;
+      Thread t = samplerThread;
+      if (t != null) {
+         try { t.join(500L); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+      }
+      samplerThread = null;
+      DebugLog.Lua.println("LuaProfiler: sampling stopped (" + sampleIndex.get() + " samples)");
+   }
+
+   private static void samplerLoop(long deadlineNs) {
+      final Field fStack = getCallFrameStack();
+      final Field fTop = getCallFrameTop();
+      if (fStack == null || fTop == null) {
+         DebugLog.Lua.warn("LuaProfiler: sampler abort — reflection unavailable");
+         samplerRun = false;
+         return;
+      }
+      while (samplerRun) {
+         long now = System.nanoTime();
+         if (now > deadlineNs) break;
+         try {
+            takeSample(fStack, fTop, now);
+         } catch (Throwable ignore) {
+            // racy reads — drop malformed sample and continue.
+         }
+         long sleep = sampleIntervalNs;
+         if (sleep > 0) LockSupport.parkNanos(sleep);
+      }
+      samplerRun = false;
+   }
+
+   private static void takeSample(Field fStack, Field fTop, long tsNs) throws IllegalAccessException {
+      KahluaThread th = LuaManager.thread;
+      if (th == null) return;
+      Coroutine co = th.currentCoroutine;
+      if (co == null) return;
+
+      Object rawStack = fStack.get(co);
+      if (!(rawStack instanceof LuaCallFrame[])) return;
+      LuaCallFrame[] frames = (LuaCallFrame[]) rawStack;
+      int top = fTop.getInt(co);
+      if (top <= 0 || top > frames.length) return;
+
+      SampleFrame[] stack = new SampleFrame[top];
+      int k = 0;
+      for (int i = 0; i < top; i++) {
+         LuaCallFrame f = frames[i];
+         if (f == null) continue;
+         LuaClosure c = f.closure;
+         if (c == null) continue; // skip Java-only frames
+         String full = safeFullPath(c);
+         String file = safeFile(c);
+         String mod = resolveMod(full);
+         if (!filterAllows(mod, file)) continue;
+         String fn = safeFunctionName(c);
+         int line = safeLine(f, c);
+
+         SampleFrame sf = new SampleFrame();
+         sf.mod = mod;
+         sf.file = file;
+         sf.fn = fn;
+         sf.line = line;
+         stack[k++] = sf;
+
+         // Aggregate every frame — gives CPU-inclusive counts. "Self time" is
+         // derivable post-hoc by subtracting child totals if needed.
+         SampleKey key = new SampleKey(mod, file, fn, line);
+         Stats s = sampleAgg.get(key);
+         if (s == null) s = sampleAgg.computeIfAbsent(key, kk -> new Stats());
+         s.count.incrementAndGet();
+      }
+      if (k == 0) return;
+
+      int idx = (int) sampleIndex.getAndIncrement();
+      if (idx < SAMPLE_CAPACITY) {
+         SampleRecord rec = new SampleRecord();
+         rec.tsNs = tsNs;
+         if (k == stack.length) {
+            rec.stack = stack;
+         } else {
+            SampleFrame[] trimmed = new SampleFrame[k];
+            System.arraycopy(stack, 0, trimmed, 0, k);
+            rec.stack = trimmed;
+         }
+         sampleBuffer[idx] = rec;
+      } else {
+         samplerRun = false;
+      }
+   }
+
+   // ---------------- output plumbing ----------------
 
    private static File outDir() {
       try {
@@ -281,9 +714,9 @@ public final class LuaProfiler {
             double maxMs = r.maxNs / 1_000_000.0;
             w.write(csv(r.event) + "," + csv(r.mod) + "," + csv(r.file) + "," + r.closureId
                     + "," + r.calls
-                    + "," + String.format("%.3f", totalMs)
-                    + "," + String.format("%.3f", meanUs)
-                    + "," + String.format("%.3f", maxMs)
+                    + "," + String.format(Locale.ROOT, "%.3f", totalMs)
+                    + "," + String.format(Locale.ROOT, "%.3f", meanUs)
+                    + "," + String.format(Locale.ROOT, "%.3f", maxMs)
                     + "\n");
          }
          DebugLog.Lua.println("LuaProfiler: wrote " + out.getAbsolutePath() + " (" + rows.size() + " rows)");
@@ -325,9 +758,105 @@ public final class LuaProfiler {
       } catch (IOException ioe) {
          DebugLog.Lua.warn("LuaProfiler: trace write failed: " + ioe.getMessage());
       }
-      // clear buffer entries to allow GC.
       for (int i = 0; i < count; i++) traceBuffer[i] = null;
       traceIndex.set(0);
+   }
+
+   private static void dumpSampleAggregate() {
+      File out = new File(outDir(), "lua_profile_sample_" + timestamp() + ".csv");
+      long totalSamples = 0L;
+      List<SampleRow> rows = new ArrayList<>(sampleAgg.size());
+      for (java.util.Map.Entry<SampleKey, Stats> e : sampleAgg.entrySet()) {
+         SampleRow r = new SampleRow();
+         r.key = e.getKey();
+         r.samples = e.getValue().count.get();
+         totalSamples += r.samples;
+         rows.add(r);
+      }
+      rows.sort(Comparator.comparingLong((SampleRow r) -> r.samples).reversed());
+      try (BufferedWriter w = new BufferedWriter(new FileWriter(out))) {
+         w.write("mod,file,function,line,samples,pct\n");
+         for (SampleRow r : rows) {
+            double pct = totalSamples > 0 ? (r.samples * 100.0 / totalSamples) : 0.0;
+            w.write(csv(r.key.mod) + "," + csv(r.key.file) + "," + csv(r.key.fn) + ","
+                    + r.key.line + "," + r.samples + ","
+                    + String.format(Locale.ROOT, "%.2f", pct) + "\n");
+         }
+         DebugLog.Lua.println("LuaProfiler: wrote " + out.getAbsolutePath() + " (" + rows.size() + " rows)");
+      } catch (IOException ioe) {
+         DebugLog.Lua.warn("LuaProfiler: sample CSV write failed: " + ioe.getMessage());
+      }
+      sampleAgg.clear();
+   }
+
+   private static void flushSampleTrace() {
+      int count = (int) Math.min(sampleIndex.get(), (long) SAMPLE_CAPACITY);
+      if (count == 0) return;
+      File out = new File(outDir(), "lua_profile_sample_trace_" + timestamp() + ".json");
+
+      // chrome://tracing "samples" + "stackFrames" format (renders as flamegraph).
+      HashMap<String, Integer> frameIds = new HashMap<>();
+      ArrayList<String> frameNames = new ArrayList<>();
+      ArrayList<Integer> frameParents = new ArrayList<>();
+      int[] leafIds = new int[count];
+      long originNs = traceStartNs;
+      long originWallUs = traceStartWallUs;
+      for (int i = 0; i < count; i++) {
+         SampleRecord rec = sampleBuffer[i];
+         if (rec == null || rec.stack == null || rec.stack.length == 0) {
+            leafIds[i] = -1;
+            continue;
+         }
+         int parent = -1;
+         int leaf = -1;
+         for (SampleFrame sf : rec.stack) {
+            String name = sf.fn + "@" + sf.file + (sf.line > 0 ? ":" + sf.line : "");
+            String key = parent + "|" + name;
+            Integer id = frameIds.get(key);
+            if (id == null) {
+               id = frameNames.size();
+               frameIds.put(key, id);
+               frameNames.add(name);
+               frameParents.add(parent);
+            }
+            parent = id;
+            leaf = id;
+         }
+         leafIds[i] = leaf;
+      }
+
+      try (BufferedWriter w = new BufferedWriter(new FileWriter(out))) {
+         w.write("{\"traceEvents\":[],\"stackFrames\":{");
+         boolean first = true;
+         for (int i = 0; i < frameNames.size(); i++) {
+            if (!first) w.write(",");
+            first = false;
+            w.write("\"" + i + "\":{\"name\":" + jstr(frameNames.get(i)));
+            int p = frameParents.get(i);
+            if (p >= 0) w.write(",\"parent\":\"" + p + "\"");
+            w.write("}");
+         }
+         w.write("},\"samples\":[");
+         first = true;
+         long durUs = Math.max(1L, sampleIntervalNs / 1000L);
+         for (int i = 0; i < count; i++) {
+            SampleRecord rec = sampleBuffer[i];
+            if (rec == null || leafIds[i] < 0) continue;
+            if (!first) w.write(",");
+            first = false;
+            long tsUs = originWallUs + (rec.tsNs - originNs) / 1000L;
+            w.write("{\"cpu\":0,\"name\":\"cpu\",\"ts\":" + tsUs
+                    + ",\"pid\":\"lua\",\"tid\":\"sampler\",\"sf\":\"" + leafIds[i]
+                    + "\",\"weight\":" + durUs + "}");
+         }
+         w.write("],\"displayTimeUnit\":\"ms\"}");
+         DebugLog.Lua.println("LuaProfiler: wrote " + out.getAbsolutePath() + " ("
+                 + count + " samples, " + frameNames.size() + " frames)");
+      } catch (IOException ioe) {
+         DebugLog.Lua.warn("LuaProfiler: sample trace write failed: " + ioe.getMessage());
+      }
+      for (int i = 0; i < count; i++) sampleBuffer[i] = null;
+      sampleIndex.set(0);
    }
 
    private static String csv(String s) {
@@ -390,6 +919,34 @@ public final class LuaProfiler {
       }
    }
 
+   private static final class SampleKey {
+      final String mod;
+      final String file;
+      final String fn;
+      final int line;
+      final int hash;
+
+      SampleKey(String mod, String file, String fn, int line) {
+         this.mod = mod == null ? "" : mod;
+         this.file = file == null ? "" : file;
+         this.fn = fn == null ? "" : fn;
+         this.line = line;
+         int h = this.mod.hashCode();
+         h = 31 * h + this.file.hashCode();
+         h = 31 * h + this.fn.hashCode();
+         h = 31 * h + line;
+         this.hash = h;
+      }
+
+      @Override public int hashCode() { return hash; }
+
+      @Override public boolean equals(Object o) {
+         if (!(o instanceof SampleKey)) return false;
+         SampleKey k = (SampleKey) o;
+         return line == k.line && mod.equals(k.mod) && file.equals(k.file) && fn.equals(k.fn);
+      }
+   }
+
    private static final class Stats {
       final AtomicLong count = new AtomicLong();
       final AtomicLong totalNs = new AtomicLong();
@@ -413,5 +970,28 @@ public final class LuaProfiler {
       long calls;
       long totalNs;
       long maxNs;
+   }
+
+   private static final class BuiltinRow {
+      String file;
+      String mod;
+      double totalMs;
+   }
+
+   private static final class SampleFrame {
+      String mod;
+      String file;
+      String fn;
+      int line;
+   }
+
+   private static final class SampleRecord {
+      long tsNs;
+      SampleFrame[] stack;
+   }
+
+   private static final class SampleRow {
+      SampleKey key;
+      long samples;
    }
 }
