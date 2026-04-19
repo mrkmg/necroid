@@ -46,6 +46,7 @@ from tkinter import messagebox, ttk
 
 from .assets import HEADER_MARK, WINDOW_ICON_FULL, WINDOW_ICON_SKULL, asset_path
 from .config import read_config
+from . import markdown_render
 from .mod import list_mods, read_mod_json
 from .profile import load_profile
 from .state import read_state
@@ -308,16 +309,18 @@ class ModderApp:
         frame = ttk.Frame(self.tk, padding=(12, 8, 12, 0))
         frame.pack(fill=tk.BOTH, expand=True)
 
-        columns = ("check", "name", "status", "desc")
+        columns = ("check", "name", "info", "status", "desc")
         tv = ttk.Treeview(frame, columns=columns, show="headings", selectmode="none")
         tv.heading("check", text="")
         tv.heading("name", text="Mod")
+        tv.heading("info", text="")
         tv.heading("status", text="Status")
         tv.heading("desc", text="Description")
         tv.column("check", width=30, anchor=tk.CENTER, stretch=False)
         tv.column("name", width=180, anchor=tk.W)
+        tv.column("info", width=36, anchor=tk.CENTER, stretch=False)
         tv.column("status", width=90, anchor=tk.W)
-        tv.column("desc", width=520, anchor=tk.W)
+        tv.column("desc", width=484, anchor=tk.W)
         tv.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         scroll = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tv.yview)
@@ -426,7 +429,9 @@ class ModderApp:
                 continue  # filter off-target
             status = "installed" if name in installed_stack else "available"
             check = "☑" if name in self.checked else "☐"
-            self.tv.insert("", tk.END, iid=name, values=(check, name, status, mj.description))
+            info = "ⓘ" if (mods_dir / name / "README.md").exists() else ""
+            self.tv.insert("", tk.END, iid=name,
+                           values=(check, name, info, status, mj.description))
         self._update_primary_button()
 
     def _update_primary_button(self) -> None:
@@ -441,6 +446,13 @@ class ModderApp:
         row = self.tv.identify_row(event.y)
         if not row:
             return
+        # The info column is the 3rd in our column tuple — Treeview reports
+        # it as "#3". Clicking it opens the README; any other column toggles
+        # the checkbox as before.
+        col = self.tv.identify_column(event.x)
+        if col == "#3":
+            self._open_readme(row)
+            return
         if row in self.checked:
             self.checked.discard(row)
         else:
@@ -448,6 +460,58 @@ class ModderApp:
         vals = list(self.tv.item(row, "values"))
         vals[0] = "☑" if row in self.checked else "☐"
         self.tv.item(row, values=vals)
+
+    def _open_readme(self, mod_name: str) -> None:
+        path = self.root / "data" / "mods" / mod_name / "README.md"
+        if not path.exists():
+            messagebox.showinfo(
+                "No README",
+                f"This mod ({mod_name}) doesn't ship a README.")
+            return
+        try:
+            md = path.read_text(encoding="utf-8")
+        except OSError as e:
+            messagebox.showerror("Couldn't open README", str(e))
+            return
+
+        win = tk.Toplevel(self.tk)
+        win.title(f"{mod_name} — README")
+        win.geometry("760x620")
+        win.minsize(520, 400)
+        win.configure(bg=PALETTE["char_900"])
+        try:
+            win.iconphoto(False, self._icon_small, self._icon_large)
+        except (AttributeError, tk.TclError):
+            pass
+
+        body = ttk.Frame(win, padding=(0, 0, 0, 0))
+        body.pack(fill=tk.BOTH, expand=True)
+
+        text = tk.Text(body, wrap="word", borderwidth=0, highlightthickness=0,
+                       bg=PALETTE["char_900"], fg=PALETTE["bone"],
+                       insertbackground=PALETTE["bone"],
+                       padx=18, pady=14, font=("Segoe UI", 10))
+        text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = ttk.Scrollbar(body, orient=tk.VERTICAL, command=text.yview)
+        text.configure(yscrollcommand=sb.set)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        try:
+            markdown_render.render(md, text, PALETTE)
+        except Exception as e:
+            # Renderer is best-effort — on any unexpected failure, fall back
+            # to plain text so the user can still read the file.
+            text.configure(state=tk.NORMAL)
+            text.delete("1.0", tk.END)
+            text.insert(tk.END, f"(markdown render failed: {e})\n\n{md}")
+            text.configure(state=tk.DISABLED)
+
+        footer = ttk.Frame(win, padding=(12, 6, 12, 10))
+        footer.pack(fill=tk.X)
+        ttk.Button(footer, text="Close", command=win.destroy).pack(side=tk.RIGHT)
+
+        win.transient(self.tk)
+        win.focus_set()
 
     # --- actions ---
 

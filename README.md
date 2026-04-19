@@ -22,6 +22,21 @@ Necroid ships a bundle of Java-level mods for Project Zomboid plus a small app t
   <img src="assets/necroid-screenshot-v0.2.0.png" alt="Necroid GUI"/>
 </p>
 
+## Bundled mods
+
+Each mod ships with its own README — click through for behaviour notes, in-game commands, and compatibility caveats.
+
+| Mod | Target | What it does |
+|---|---|---|
+| [admin-xray](data/mods/admin-xray/README.md) | client | Staff LOS toggle (F9). |
+| [gravymod](data/mods/gravymod/README.md) | server | Adds various lua utils and commands. |
+| [lua-profiler](data/mods/lua-profiler/README.md) | client | Per-mod Lua profiler with event/builtin/sample modes. Flame-graph output + mod/file filter. |
+| [more-zoom](data/mods/more-zoom/README.md) | client | Adds one extra zoom-out (300%) and one extra zoom-in (25%) level. |
+| [no-radio-fzzt](data/mods/no-radio-fzzt/README.md) | server | Disable all radio obfuscation server-side (weather interference + distance falloff). Clients receive the raw transmission text. |
+| [radio-fix](data/mods/radio-fix/README.md) | client | Remove weather-based radio interference. |
+
+In the Necroid GUI, click the **ⓘ** next to any mod to read its README without leaving the app.
+
 ## Install
 
 1. Install these one-time prerequisites:
