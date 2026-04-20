@@ -6,6 +6,7 @@ import zombie.core.textures.ColorInfo;
 
 public final class AdminXray {
     public static boolean losOverride = false;
+    public static boolean treeOverride = false;
     public static final ColorInfo WHITE = new ColorInfo(1.0F, 1.0F, 1.0F, 1.0F);
     public static final int FULL_VERT_LIGHT = 0xFFFFFFFF;
 

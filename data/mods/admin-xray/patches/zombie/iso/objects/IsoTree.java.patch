@@ -1,0 +1,22 @@
+diff --git a/zombie/iso/objects/IsoTree.java b/zombie/iso/objects/IsoTree.java
+index ae21ddc..c9536ee 100644
+--- a/zombie/iso/objects/IsoTree.java
++++ b/zombie/iso/objects/IsoTree.java
+@@ -284,6 +284,17 @@ public class IsoTree extends IsoObject {
+ 
+    @Override
+    public void render(float var1, float var2, float var3, ColorInfo var4, boolean var5, boolean var6, Shader var7) {
++      if (zombie.admin_xray.AdminXray.treeOverride && !this.isHighlighted()) {
++         int var80 = IsoCamera.frameState.playerIndex;
++         float var81 = this.getAlpha(var80);
++         float var82 = this.getTargetAlpha(var80);
++         this.setAlphaAndTarget(var80, 0.25F);
++         this.renderInner(var1, var2, var3, var4, true, false);
++         this.setAlpha(var80, var81);
++         this.setTargetAlpha(var80, var82);
++         this.checkChopTreeIndicator(var1, var2, var3);
++         return;
++      }
+       if (this.isHighlighted()) {
+          if (this.square != null) {
+             s_chopTreeHighlighted = this;
