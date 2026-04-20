@@ -172,6 +172,12 @@ public final class LuaProfiler {
       return false;
    }
 
+   private static boolean filterNoop() {
+      Set<String> fm = filterMods;
+      Set<String> ff = filterFiles;
+      return (fm == null || fm.isEmpty()) && (ff == null || ff.isEmpty());
+   }
+
    // ---------------- closure metadata ----------------
 
    private static String safeFile(LuaClosure closure) {
@@ -336,7 +342,7 @@ public final class LuaProfiler {
                long us = 1000L;
                if (a instanceof Double) us = ((Double) a).longValue();
                else if (a instanceof Number) us = ((Number) a).longValue();
-               if (us < 200L) us = 200L;
+               if (us < 20L) us = 20L;
                if (us > 10_000L) us = 10_000L;
                sampleIntervalNs = us * 1_000L;
                DebugLog.Lua.println("LuaProfiler: sample interval = " + us + " us");
@@ -585,8 +591,9 @@ public final class LuaProfiler {
    private static void stopSampling() {
       samplerRun = false;
       Thread t = samplerThread;
-      if (t != null) {
-         try { t.join(500L); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+      if (t != null && t != Thread.currentThread()) {
+         // Join is generous because the sampler thread flushes CSV + JSON before exit.
+         try { t.join(3000L); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
       }
       samplerThread = null;
       DebugLog.Lua.println("LuaProfiler: sampling stopped (" + sampleIndex.get() + " samples)");
@@ -598,75 +605,133 @@ public final class LuaProfiler {
       if (fStack == null || fTop == null) {
          DebugLog.Lua.warn("LuaProfiler: sampler abort — reflection unavailable");
          samplerRun = false;
+         if (samplerThread == Thread.currentThread()) samplerThread = null;
          return;
       }
-      while (samplerRun) {
-         long now = System.nanoTime();
-         if (now > deadlineNs) break;
-         try {
-            takeSample(fStack, fTop, now);
-         } catch (Throwable ignore) {
-            // racy reads — drop malformed sample and continue.
+      try {
+         while (samplerRun) {
+            long now = System.nanoTime();
+            if (now > deadlineNs) break;
+            try {
+               takeSample(fStack, fTop, now);
+            } catch (Throwable ignore) {
+               // racy reads — drop malformed sample and continue.
+            }
+            long sleep = sampleIntervalNs;
+            if (sleep > 0) LockSupport.parkNanos(sleep);
          }
-         long sleep = sampleIntervalNs;
-         if (sleep > 0) LockSupport.parkNanos(sleep);
+      } finally {
+         samplerRun = false;
+         // Parity with event mode: flush aggregate + trace when the window ends,
+         // whether that was the deadline, the buffer filling, or explicit Stop.
+         try {
+            if (!sampleAgg.isEmpty()) dumpSampleAggregate();
+            if (sampleIndex.get() > 0) flushSampleTrace();
+         } catch (Throwable err) {
+            DebugLog.Lua.warn("LuaProfiler: sampler auto-flush failed: " + err.getMessage());
+         }
+         if (samplerThread == Thread.currentThread()) samplerThread = null;
+         DebugLog.Lua.println("LuaProfiler: sampling finished (" + sampleIndex.get() + " samples buffered)");
       }
-      samplerRun = false;
    }
+
+   private static final int MAX_COROUTINE_DEPTH = 16;
+   private static final int MAX_SAMPLE_RETRY = 3;
 
    private static void takeSample(Field fStack, Field fTop, long tsNs) throws IllegalAccessException {
       KahluaThread th = LuaManager.thread;
       if (th == null) return;
-      Coroutine co = th.currentCoroutine;
-      if (co == null) return;
+      Coroutine leaf = th.currentCoroutine;
+      if (leaf == null) return;
 
-      Object rawStack = fStack.get(co);
-      if (!(rawStack instanceof LuaCallFrame[])) return;
-      LuaCallFrame[] frames = (LuaCallFrame[]) rawStack;
-      int top = fTop.getInt(co);
-      if (top <= 0 || top > frames.length) return;
-
-      SampleFrame[] stack = new SampleFrame[top];
-      int k = 0;
-      for (int i = 0; i < top; i++) {
-         LuaCallFrame f = frames[i];
-         if (f == null) continue;
-         LuaClosure c = f.closure;
-         if (c == null) continue; // skip Java-only frames
-         String full = safeFullPath(c);
-         String file = safeFile(c);
-         String mod = resolveMod(full);
-         if (!filterAllows(mod, file)) continue;
-         String fn = safeFunctionName(c);
-         int line = safeLine(f, c);
-
-         SampleFrame sf = new SampleFrame();
-         sf.mod = mod;
-         sf.file = file;
-         sf.fn = fn;
-         sf.line = line;
-         stack[k++] = sf;
-
-         // Aggregate every frame — gives CPU-inclusive counts. "Self time" is
-         // derivable post-hoc by subtracting child totals if needed.
-         SampleKey key = new SampleKey(mod, file, fn, line);
-         Stats s = sampleAgg.get(key);
-         if (s == null) s = sampleAgg.computeIfAbsent(key, kk -> new Stats());
-         s.count.incrementAndGet();
+      // Walk the coroutine parent chain. When the VM is running inside a
+      // resumed child coroutine, `currentCoroutine` only holds the child's
+      // frames — the call chain that invoked coroutine.resume lives on the
+      // parent's stack. Without this walk, samples taken inside a child come
+      // out rooted at whatever the child was resumed with, which surfaces as
+      // orphaned top-level functions in the flame graph.
+      Coroutine[] chain = new Coroutine[MAX_COROUTINE_DEPTH];
+      int chainLen = 0;
+      for (Coroutine c = leaf; c != null && chainLen < chain.length; c = c.getParent()) {
+         chain[chainLen++] = c;
       }
+
+      ArrayList<SampleFrame> flat = new ArrayList<>(32);
+      boolean anyMatched = false;
+      final boolean noFilter = filterNoop();
+
+      // Iterate rootmost parent → leaf so the flattened stack reads
+      // outermost-first (matches chrome-trace flame-graph conventions).
+      for (int ci = chainLen - 1; ci >= 0; ci--) {
+         Coroutine co = chain[ci];
+
+         // Race-retry: snapshot (top, frames[0..top]) and re-read top to
+         // confirm the VM didn't push/pop between the reads. Unstable
+         // snapshots from a single coroutine look like phantom 1-frame
+         // stacks and are a direct source of orphaned nodes.
+         LuaCallFrame[] snap = null;
+         int snapTop = -1;
+         for (int attempt = 0; attempt < MAX_SAMPLE_RETRY; attempt++) {
+            Object rawStack = fStack.get(co);
+            if (!(rawStack instanceof LuaCallFrame[])) continue;
+            LuaCallFrame[] arr = (LuaCallFrame[]) rawStack;
+            int topA = fTop.getInt(co);
+            if (topA < 0 || topA > arr.length) continue;
+            if (topA == 0) { snap = new LuaCallFrame[0]; snapTop = 0; break; }
+            LuaCallFrame[] tmp = new LuaCallFrame[topA];
+            System.arraycopy(arr, 0, tmp, 0, topA);
+            int topB = fTop.getInt(co);
+            if (topB == topA) { snap = tmp; snapTop = topA; break; }
+         }
+         // An unstable read of the *leaf* coroutine means we can't trust
+         // anything about this moment — drop the whole sample. An unstable
+         // parent would produce a mis-rooted leaf, which is exactly the
+         // orphan shape we're trying to eliminate, so drop then too.
+         if (snap == null) return;
+         if (snapTop == 0) continue; // dormant coroutine — nothing to add
+
+         for (int i = 0; i < snapTop; i++) {
+            LuaCallFrame f = snap[i];
+            // Null inside the declared depth = we raced a mutation; treat
+            // everything beyond as untrustworthy rather than papering over.
+            if (f == null) break;
+            LuaClosure c = f.closure;
+            if (c == null) continue; // Java-only frame — no Lua metadata
+            String full = safeFullPath(c);
+            String file = safeFile(c);
+            String mod = resolveMod(full);
+            String fn = safeFunctionName(c);
+            int line = safeLine(f, c);
+
+            SampleFrame sf = new SampleFrame();
+            sf.mod = mod;
+            sf.file = file;
+            sf.fn = fn;
+            sf.line = line;
+            flat.add(sf);
+
+            // Aggregate every matching frame — gives CPU-inclusive counts.
+            // Filtered-out frames are kept in the flame-graph stack (so the
+            // chain stays continuous) but excluded from the aggregate CSV.
+            if (noFilter || filterAllows(mod, file)) {
+               anyMatched = true;
+               SampleKey key = new SampleKey(mod, file, fn, line);
+               Stats s = sampleAgg.get(key);
+               if (s == null) s = sampleAgg.computeIfAbsent(key, kk -> new Stats());
+               s.count.incrementAndGet();
+            }
+         }
+      }
+
+      int k = flat.size();
       if (k == 0) return;
+      if (!noFilter && !anyMatched) return;
 
       int idx = (int) sampleIndex.getAndIncrement();
       if (idx < SAMPLE_CAPACITY) {
          SampleRecord rec = new SampleRecord();
          rec.tsNs = tsNs;
-         if (k == stack.length) {
-            rec.stack = stack;
-         } else {
-            SampleFrame[] trimmed = new SampleFrame[k];
-            System.arraycopy(stack, 0, trimmed, 0, k);
-            rec.stack = trimmed;
-         }
+         rec.stack = flat.toArray(new SampleFrame[0]);
          sampleBuffer[idx] = rec;
       } else {
          samplerRun = false;
@@ -810,7 +875,12 @@ public final class LuaProfiler {
          int parent = -1;
          int leaf = -1;
          for (SampleFrame sf : rec.stack) {
-            String name = sf.fn + "@" + sf.file + (sf.line > 0 ? ":" + sf.line : "");
+            // Frame identity is function@file — NOT including the PC line.
+            // safeLine() returns the *currently-executing* line, so including
+            // it here fragments the same function into N sibling nodes and
+            // breaks flame-graph parent/child de-duplication. Per-line
+            // granularity is preserved in the sample_*.csv aggregate.
+            String name = sf.fn + "@" + sf.file;
             String key = parent + "|" + name;
             Integer id = frameIds.get(key);
             if (id == null) {

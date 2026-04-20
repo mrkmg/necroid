@@ -23,17 +23,19 @@ Run from the in-game Lua console (or any mod's Lua):
 
 ```lua
 LuaProfilerStart(seconds)              -- begin a timed window
-LuaProfilerStop()                      -- end early
+LuaProfilerStop()                      -- end early (auto-dumps in sample/event mode)
 LuaProfilerDump()                      -- write report to disk
 LuaProfilerReset()                     -- clear aggregates
 LuaProfilerEnable() / Disable()        -- toggle aggregation (event mode)
 
 LuaProfilerMode("event"|"builtin"|"sample")
 LuaProfilerFilter({ mods = {"ModA","ModB"}, files = {"foo.lua"} })
-LuaProfilerSampleInterval(microseconds)  -- sample mode only, default 1000us (1ms)
+LuaProfilerSampleInterval(microseconds)  -- sample mode only, default 1000us (1ms), min 20us, max 10000us
 ```
 
-Filters are allowlists: leave `mods` empty to capture every mod, set it to `{"MyMod"}` to capture only that one. `files` works the same way for individual `.lua` files.
+`LuaProfilerStart(seconds)` arms a deadline in both `event` and `sample` mode — when it expires the profiler auto-stops and writes its output to disk without a manual `Dump()`. `builtin` mode ignores the duration and still requires explicit `Stop()` + `Dump()`.
+
+Filters are allowlists: leave `mods` empty to capture every mod, set it to `{"MyMod"}` to capture only that one. `files` works the same way for individual `.lua` files. In `sample` mode, filters keep whole-sample call chains intact — frames outside the filter still appear as ancestor boxes in the flame graph, but only matching frames are counted in the aggregate CSV.
 
 Output goes under the Zomboid user dir (the same place `DebugLog` writes) — the dump function logs the exact path. Files are named with a timestamp, so repeated dumps don't overwrite each other.
 
@@ -53,9 +55,8 @@ Flame graph for the entire engine:
 
 ```lua
 LuaProfilerMode("sample")
-LuaProfilerSampleInterval(500)   -- 500us = 2kHz sampling
-LuaProfilerStart(15)
-LuaProfilerDump()
+LuaProfilerSampleInterval(500)   -- 500us = 2kHz sampling (floor is 20us = 50kHz)
+LuaProfilerStart(15)             -- auto-dumps after 15s, no Dump() needed
 ```
 
 Drop the resulting `*.json` into [Speedscope](https://www.speedscope.app/) or `chrome://tracing`.
