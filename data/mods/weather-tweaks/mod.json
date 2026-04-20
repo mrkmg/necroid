@@ -1,0 +1,9 @@
+{
+  "name": "weather-tweaks",
+  "target": "client",
+  "description": "Preserve client-modded ClimateFloat values across server weather sync",
+  "version": "0.1.0",
+  "createdAt": "2026-04-20T02:18:50.405064Z",
+  "updatedAt": "2026-04-20T02:27:30.359003Z",
+  "pristineSnapshot": "6f4073339f84b5b25ed6129f49e3856e9a050d8c6573935d27c3e86f4813a311"
+}

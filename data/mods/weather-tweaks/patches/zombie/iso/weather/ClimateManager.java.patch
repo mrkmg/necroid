@@ -1,0 +1,38 @@
+diff --git a/zombie/iso/weather/ClimateManager.java b/zombie/iso/weather/ClimateManager.java
+index 61927fb..948b5b6 100644
+--- a/zombie/iso/weather/ClimateManager.java
++++ b/zombie/iso/weather/ClimateManager.java
+@@ -1826,19 +1826,31 @@ public class ClimateManager {
+ 
+             for (int var5 = 0; var5 < this.climateFloats.length; var5++) {
+                ClimateManager.ClimateFloat var4 = this.climateFloats[var5];
++               float var100 = var1.getFloat();
++               if (var4.isModded && var4.modInterpolate > 0.0F) {
++                  continue;
++               }
+                var4.internalValue = var4.finalValue;
+-               var4.setOverride(var1.getFloat(), 0.0F);
++               var4.setOverride(var100, 0.0F);
+             }
+ 
+             for (int var6 = 0; var6 < this.climateColors.length; var6++) {
+                ClimateManager.ClimateColor var10 = this.climateColors[var6];
++               if (var10.isModded && var10.modInterpolate > 0.0F) {
++                  var10.override.read(var1);
++                  continue;
++               }
+                var10.internalValue.setTo(var10.finalValue);
+                var10.setOverride(var1, 0.0F);
+             }
+ 
+             for (int var7 = 0; var7 < this.climateBooleans.length; var7++) {
+                ClimateManager.ClimateBool var11 = this.climateBooleans[var7];
+-               var11.setOverride(var1.get() == 1);
++               boolean var101 = var1.get() == 1;
++               if (var11.isModded) {
++                  continue;
++               }
++               var11.setOverride(var101);
+             }
+ 
+             this.airMass = var1.getFloat();
