@@ -1,7 +1,7 @@
 {
-  "name": "weather-tweaks",
+  "name": "weather-flash-fix",
   "target": "client",
-  "description": "Preserve client-modded ClimateFloat values across server weather sync",
+  "description": "Preserve client-modded climate values across the 10-minute server weather sync — no flash.",
   "version": "0.1.0",
   "createdAt": "2026-04-20T02:18:50.405064Z",
   "updatedAt": "2026-04-20T02:27:30.359003Z",

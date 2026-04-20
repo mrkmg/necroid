@@ -34,6 +34,7 @@ Each mod ships with its own README — click through for behaviour notes, in-gam
 | [more-zoom](data/mods/more-zoom/README.md) | client | Adds one extra zoom-out (300%) and one extra zoom-in (25%) level. |
 | [no-radio-fzzt](data/mods/no-radio-fzzt/README.md) | server | Disable all radio obfuscation server-side (weather interference + distance falloff). Clients receive the raw transmission text. |
 | [radio-fix](data/mods/radio-fix/README.md) | client | Remove weather-based radio interference. |
+| [weather-flash-fix](data/mods/weather-flash-fix/README.md) | client | Stops the 10-minute weather-resync flash when a Lua mod (e.g. Wasteland) is overriding client climate values. |
 
 In the Necroid GUI, click the **ⓘ** next to any mod to read its README without leaving the app.
 

@@ -1,4 +1,4 @@
-# weather-tweaks
+# weather-flash-fix
 
 Preserves client-side `ClimateFloat`, `ClimateColor`, and `ClimateBool` modded overrides across the server's ~10-minute `PacketUpdateClimateVars` sync so Lua weather mods (e.g. Wasteland) don't flash.
 
