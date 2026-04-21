@@ -33,6 +33,6 @@ State resets to off whenever the game is restarted.
 ## Compatibility
 
 - **Target:** client. Install on the **client** profile only.
-- Stacks cleanly with `radio-fix` and `more-zoom`. Does not touch radio or zoom code.
+- Stacks cleanly with `no-radio-fzzt` and `more-zoom`. Does not touch radio or zoom code.
 - Does not modify save files. Uninstalling restores normal LOS and normal tree rendering immediately.
 - Multiplayer-safe: both overrides are purely client-side render tricks; the server never knows they're on, and other players see no change.

@@ -1,9 +1,0 @@
-{
-  "name": "radio-fix",
-  "clientOnly": true,
-  "description": "Remove weather-based radio interference.",
-  "version": "0.1.0",
-  "createdAt": "2026-04-19T03:44:02.2730598Z",
-  "updatedAt": "2026-04-19T03:45:01.1239217Z",
-  "pristineSnapshot": "c258167ac8451134cc5cb819f0e350840adeff95cb4f4b965b57950eb14d3d12"
-}

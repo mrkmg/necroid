@@ -1,9 +1,9 @@
 {
   "name": "no-radio-fzzt",
   "clientOnly": false,
-  "description": "Disable all radio obfuscation server-side (weather interference + distance falloff). Clients receive the raw transmission text.",
-  "version": "0.1.0",
+  "description": "Disable all radio obfuscation (weather interference + distance falloff + scramble pipeline). Install to client or server.",
+  "version": "0.2.0",
   "createdAt": "2026-04-19T18:03:32.139391Z",
-  "updatedAt": "2026-04-19T18:04:02.035653Z",
+  "updatedAt": "2026-04-21T00:00:00.000000Z",
   "pristineSnapshot": "c258167ac8451134cc5cb819f0e350840adeff95cb4f4b965b57950eb14d3d12"
 }

@@ -32,8 +32,7 @@ Each mod ships with its own README — click through for behaviour notes, in-gam
 | [gravymod](data/mods/gravymod/README.md) | no | Adds various lua utils and commands. |
 | [lua-profiler](data/mods/lua-profiler/README.md) | no | Per-mod Lua profiler with event/builtin/sample modes. Flame-graph output + mod/file filter. |
 | [more-zoom](data/mods/more-zoom/README.md) | yes | Adds one extra zoom-out (300%) and one extra zoom-in (25%) level. |
-| [no-radio-fzzt](data/mods/no-radio-fzzt/README.md) | no | Disable all radio obfuscation server-side (weather interference + distance falloff). Clients receive the raw transmission text. |
-| [radio-fix](data/mods/radio-fix/README.md) | yes | Remove weather-based radio interference. |
+| [no-radio-fzzt](data/mods/no-radio-fzzt/README.md) | no | Disable all radio obfuscation (weather interference + distance falloff + scramble pipeline). Install to client or server. |
 | [weather-flash-fix](data/mods/weather-flash-fix/README.md) | yes | Stops the 10-minute weather-resync flash when a Lua mod (e.g. Wasteland) is overriding client climate values. |
 
 "Client-only" mods require a Project Zomboid **client** install and can only be installed to the client. Non-client-only mods can install to either the client or the Dedicated Server.

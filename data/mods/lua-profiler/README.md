@@ -64,6 +64,6 @@ Drop the resulting `*.json` into [Speedscope](https://www.speedscope.app/) or `c
 ## Compatibility
 
 - **Target:** client.
-- Stacks cleanly with the other client mods (`admin-xray`, `more-zoom`, `radio-fix`).
+- Stacks cleanly with the other client mods (`admin-xray`, `more-zoom`, `no-radio-fzzt`).
 - Touches `zombie.Lua.Event` — any other future mod that also patches `Event.trigger` will conflict at install time and fail to merge. None of the bundled mods do.
 - Uninstalling removes both the new class and the Event hook; the vanilla SlowLuaEvents warning continues to work either way.

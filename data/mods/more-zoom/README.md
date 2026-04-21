@@ -19,6 +19,6 @@ If you've set custom zoom levels via `ZoomLevels=...` in your config, the mod st
 ## Compatibility
 
 - **Target:** client.
-- Stacks cleanly with `admin-xray` and `radio-fix`.
+- Stacks cleanly with `admin-xray` and `no-radio-fzzt`.
 - Does not affect multiplayer; zoom is local-only.
 - Uninstalling restores the vanilla 9-level zoom range.

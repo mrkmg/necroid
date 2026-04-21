@@ -1,9 +1,8 @@
 # TODO
 
 1. Add groups for mods - e.g. "Utility", "Fun", "Admin", etc.
-2. Combine the radio mods into one
-3. Add support for dependent mods. Should provide layered diff applications.
-4. Add support for project zomboid versions. Mods should be able to support multiple versions, with auto-detection of the version installed and auto-installation of the correct version of the mod.
+2. Add support for dependent mods. Should provide layered diff applications.
+3. Add support for project zomboid versions. Mods should be able to support multiple versions, with auto-detection of the version installed and auto-installation of the correct version of the mod.
 
 ## Ideas - Possible Enhancements
 
