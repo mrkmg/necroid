@@ -77,6 +77,25 @@ If something drifted (e.g. Steam ran a "Verify Integrity of Game Files" pass and
 - **Mod marked STALE after a Project Zomboid update** — the game changed underneath the mod. Click **Update from Game**, then Apply Changes to reinstall your stack. If the mod still won't apply, wait for an updated release.
 - **Wrong Project Zomboid install path detected** — edit `data/.mod-config.json` in the Necroid folder and set `clientPzInstall` to your actual install path.
 
+## Config file
+
+`data/.mod-config.json` is written by `necroid init` and stores your install paths plus a couple of defaults. You only need to edit it by hand if auto-detection picked the wrong Steam install or you want to change the default destination.
+
+```json
+{
+  "version": 3,
+  "clientPzInstall": "C:/Program Files (x86)/Steam/steamapps/common/ProjectZomboid",
+  "serverPzInstall": "C:/Program Files (x86)/Steam/steamapps/common/Project Zomboid Dedicated Server",
+  "defaultInstallTo": "client",
+  "workspaceSource": "client"
+}
+```
+
+- `clientPzInstall` / `serverPzInstall` — absolute paths to each PZ install. Leave either empty (`""`) if you don't have it. Forward slashes on all OSes. `~`, `$VAR`, `%VAR%`, and `${VAR}` are expanded.
+- `defaultInstallTo` — `client` or `server`. Used when you omit `--to` on `install` / `uninstall` / `verify` / `list` / `status`.
+- `workspaceSource` — `client` or `server`. Which install seeded `data/workspace/`. `resync-pristine` re-hydrates from this unless you pass `--from`.
+- `originalsDir` *(optional)* — override for the verbatim class-copy directory. Leave unset unless you know why you need it.
+
 ---
 
 ## For server operators
