@@ -9,6 +9,7 @@ from .. import logging_util as log
 from ..errors import ClientOnlyViolation, ConflictError
 from ..fsops import mirror_tree
 from ..mod import ensure_mod_exists, read_mod_json
+from ..profile import existing_subtrees
 from ..stackapply import apply_stack
 from ..state import write_enter
 
@@ -39,7 +40,11 @@ def run(args) -> int:
         )
 
     log.info(f"enter [{', '.join(stack)}] (as {install_as}): reset src/ then apply patches")
-    mirror_tree(p.pristine / "zombie", p.src / "zombie")
+    subs = existing_subtrees(p.pristine)
+    if not subs:
+        raise SystemExit(f"src-pristine/ is empty at {p.pristine} (run `necroid init`)")
+    for sub in subs:
+        mirror_tree(p.pristine / sub, p.src / sub)
     result = apply_stack(
         stack=stack,
         work_dir=p.src,
@@ -54,5 +59,5 @@ def run(args) -> int:
             print(f"  {cf.rel}  [{cf.type}]  mods: {', '.join(cf.mods)}")
         raise ConflictError([c.to_dict() for c in result.conflicts])
     write_enter(p.enter_file, stack, install_as=install_as)
-    log.success(f"applied: {len(result.touched)} file(s). Edit under src/zombie/; run `capture` when done.")
+    log.success(f"applied: {len(result.touched)} file(s). Edit under src/; run `capture` when done.")
     return 0

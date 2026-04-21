@@ -19,13 +19,10 @@ from .errors import BuildError, ClientOnlyViolation, ConflictError
 from .fsops import empty_dir, inner_class_files, mirror_tree
 from .hashing import file_sha256
 from .mod import ensure_mod_exists, read_mod_json
-from .profile import Profile, require_pz_install
+from .profile import Profile, existing_subtrees, require_pz_install
 from .stackapply import apply_stack
 from .state import InstalledEntry, ModState, read_state, reset_state, utc_now_iso, write_state
 from . import buildjava
-
-
-def _pristine_zombie(profile: Profile) -> Path: return profile.pristine / "zombie"
 
 
 def _assert_destination_allowed(profile: Profile, stack: list[str], install_to: str) -> None:
@@ -55,11 +52,14 @@ def install_stack(profile: Profile, stack: list[str], install_to: str) -> None:
 
     # --- Phase 1: stage source ---
     log.step(f"stage source ({profile.stage})")
-    stage_zombie = profile.stage / "zombie"
+    subs = existing_subtrees(profile.pristine)
+    if not subs:
+        raise BuildError(f"src-pristine/ is empty at {profile.pristine} (run `necroid init`)")
     if profile.stage.exists():
         shutil.rmtree(profile.stage)
     profile.stage.mkdir(parents=True, exist_ok=True)
-    mirror_tree(_pristine_zombie(profile), stage_zombie)
+    for sub in subs:
+        mirror_tree(profile.pristine / sub, profile.stage / sub)
 
     result = apply_stack(
         stack=stack,

@@ -17,6 +17,23 @@ from .errors import ConfigError
 
 InstallTo = Literal["client", "server"]
 
+# Every top-level class-file subtree PZ ships. These are all that `init` /
+# `resync-pristine` mirror into `classes-original/` and decompile into
+# `src-pristine/`. Kept in declaration order (zombie first — it's by far the
+# largest and the most common edit target).
+PZ_CLASS_SUBTREES: tuple[str, ...] = (
+    "zombie", "astar", "com", "de", "fmod", "javax", "org", "se",
+)
+
+
+def existing_subtrees(root: Path) -> list[str]:
+    """Return the entries of PZ_CLASS_SUBTREES that exist under `root`.
+
+    Used by commands that iterate the decompiled workspace (enter, reset,
+    capture, status, test, install) so they tolerate partial workspaces —
+    e.g. a user who hasn't re-run `init --force` after this change yet."""
+    return [s for s in PZ_CLASS_SUBTREES if (root / s).is_dir()]
+
 
 def find_root(start: Path | None = None) -> Path:
     """Walk up from `start` (default cwd) looking for `data/` or `necroid/`.

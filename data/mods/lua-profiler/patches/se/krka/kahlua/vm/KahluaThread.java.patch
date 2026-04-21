@@ -1,0 +1,57 @@
+diff --git a/se/krka/kahlua/vm/KahluaThread.java b/se/krka/kahlua/vm/KahluaThread.java
+index 5e92b0a..26adb7f 100644
+--- a/se/krka/kahlua/vm/KahluaThread.java
++++ b/se/krka/kahlua/vm/KahluaThread.java
+@@ -100,6 +100,11 @@ public class KahluaThread {
+    }
+ 
+    public int call(int var1) {
++      // Java→Lua entry. Anchor the profiler's sample cursor here so the
++      // first closure we're about to execute is NOT retroactively credited
++      // with all wall-clock time since the last Lua tick (which is game
++      // idle time, not Lua time).
++      KahluaProfiler.noteReentry();
+       int var2 = this.currentCoroutine.getTop();
+       int var3 = var2 - var1 - 1;
+       Object var4 = this.currentCoroutine.objectStack[var3];
+@@ -130,7 +135,16 @@ public class KahluaThread {
+    private int callJava(JavaFunction var1, int var2, int var3, int var4) {
+       Coroutine var5 = this.currentCoroutine;
+       LuaCallFrame var6 = var5.pushNewCallFrame(null, var1, var2, var3, var4, false, false);
++      // Anchor the sample cursor going into the Java call: anything due
++      // as of NOW gets a sample crediting the caller (below the pushed
++      // Java frame) before we disappear into native code.
++      KahluaProfiler.tick(this);
+       int var7 = var1.call(var6, var4);
++      // On return, catch up for the full Java duration. Snapshot still
++      // sees the Java frame (closure=null, skipped) on top, so the leaf
++      // is the Lua caller — every synthetic sample in the catch-up burst
++      // credits that caller.
++      KahluaProfiler.tick(this);
+       int var8 = var6.getTop();
+       int var9 = var8 - var7;
+       int var10 = var3 - var2;
+@@ -166,6 +180,11 @@ public class KahluaThread {
+       boolean var27 = true;
+ 
+       while (!this.bReset) {
++         // Hot path for the in-VM sampler. When KahluaProfiler is disabled
++         // this is a single volatile-bool read; when enabled it compares
++         // now against lastSampleNs + intervalNs and emits catch-up samples
++         // if due. No branch on bReset needed — disabled is the default.
++         KahluaProfiler.tick(this);
+          if (Core.bDebug && this == LuaManager.thread) {
+             Coroutine var37 = this.getCurrentCoroutine();
+             if (var37 != null) {
+@@ -833,6 +852,11 @@ public class KahluaThread {
+                   this.currentCoroutine.stackCopy(var121 + var46, var5, var145 + 1);
+                   this.currentCoroutine.setTop(var5 + var145 + 1);
+                   if (var190 instanceof LuaClosure) {
++                     // Tail call reuses the current frame in place. Record the
++                     // outgoing closure+pc into the frame's tail-call history
++                     // before the swap so the profiler can reconstruct the
++                     // caller chain that would otherwise be collapsed.
++                     KahluaProfiler.recordTailCall(var1, var1.closure, var1.pc);
+                      var1.localBase = var209;
+                      var1.nArguments = var145;
+                      var1.closure = (LuaClosure)var190;

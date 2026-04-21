@@ -116,8 +116,8 @@ There are **no tests and no linter** for the PZ-decompiled code — it's decompi
 - `data/.mod-config.json` — `clientPzInstall`, `serverPzInstall`, `defaultInstallTo`, `workspaceSource`. Schema v3. Local-only.
 - `data/mods/<name>/` — each mod: `mod.json` (with `clientOnly`) + `patches/` containing `.java.patch` / `.java.new` / `.java.delete`. **Tracked**; the portable artifact.
 - `data/tools/vineflower.jar` — downloaded by `init`. Local-only.
-- `data/workspace/src/zombie/` — decompiled Java, editable. `enter` resets and patches, `capture` reads back.
-- `data/workspace/src-pristine/zombie/` — **frozen** pristine decompile. Populated by `init`; refreshed by `resync-pristine`.
+- `data/workspace/src/{zombie,astar,com,de,fmod,javax,org,se}/` — decompiled Java, editable. `enter` resets and patches, `capture` reads back. Every class subtree PZ ships is decompiled, so mods can touch any of them (e.g. `se/krka/kahlua/...` for Lua-interpreter changes).
+- `data/workspace/src-pristine/<same subtrees>/` — **frozen** pristine decompile. Populated by `init`; refreshed by `resync-pristine`.
 - `data/workspace/classes-original/` — verbatim class-file copies from the Steam install. Reference and restore source; **do not edit**.
 - `data/workspace/libs/` — every jar from the PZ install used to seed the workspace.
 - `data/workspace/libs/classpath-originals/` — the `classes-original/` subtrees repackaged as jars for `javac -cp`.
@@ -130,9 +130,9 @@ There are **no tests and no linter** for the PZ-decompiled code — it's decompi
 
 ## When a PZ update lands
 
-Run `necroid resync-pristine` (one pass — workspace is shared). This re-runs the `init` flow with `--force` against `config.workspaceSource` (refreshing `classes-original/`, `libs/`, `libs/classpath-originals/`, and `src-pristine/zombie/`), then re-fingerprints every mod against the new pristine. Mods whose patches no longer apply are flagged STALE — `enter` them one at a time, resolve conflicts in `src/`, then `capture`.
+Run `necroid resync-pristine` (one pass — workspace is shared). Before refreshing pristine sources, any installed stack on client or server is uninstalled first — otherwise the modded `.class` files in the PZ install would get copied back into `classes-original/` and adopted as the new pristine, contaminating every mod's diffs. If a destination has installed state but its PZ install is unreachable, resync aborts rather than silently skipping. After the guard, it re-runs the `init` flow with `--force` against `config.workspaceSource` (refreshing `classes-original/`, `libs/`, `libs/classpath-originals/`, and every `src-pristine/<subtree>/`), then re-fingerprints every mod against the new pristine. Mods whose patches no longer apply are flagged STALE — `enter` them one at a time, resolve conflicts in `src/`, then `capture`.
 
-Vineflower writes files declaring `package zombie;` into its output root (not a nested `zombie/` folder), so `decompile_zombie` moves that output into `src-pristine/zombie/` as the final step — that's not a bug.
+Vineflower writes files declaring `package <subtree>;` into its output root (not a nested folder) because each `classes-original/<subtree>/` *is* the package root. `decompile_subtree` therefore decompiles into a tmp dir and renames it into `src-pristine/<subtree>/` as the final step — that's not a bug. Each subtree is decompiled in its own Vineflower invocation.
 
 ## Building the distributable
 

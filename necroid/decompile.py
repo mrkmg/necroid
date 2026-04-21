@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import sys
 import urllib.request
 from pathlib import Path
 
@@ -40,48 +39,80 @@ def ensure_vineflower(tools_dir: Path, force: bool = False) -> Path:
     return target
 
 
-def decompile_zombie(
+def decompile_subtree(
     classes_orig: Path,
     out_pristine_dir: Path,
+    subtree: str,
     libs_jars: list[Path],
     vineflower_jar: Path,
     force: bool = False,
 ) -> int:
-    """Decompile `classes_orig/zombie` into `out_pristine_dir/zombie`.
+    """Decompile `classes_orig/<subtree>` into `out_pristine_dir/<subtree>`.
 
-    Vineflower writes files declaring `package zombie;` into the output dir's
-    root (not a nested `zombie/` folder). Move the output into place as a
-    final step.
+    Vineflower writes files declaring `package <subtree>;` into the output
+    dir's root (not a nested `<subtree>/` folder) because its input directory
+    *is* the package root. We therefore decompile into a tmp dir and rename
+    it into place under `out_pristine_dir/<subtree>`.
     """
-    zombie_classes = classes_orig / "zombie"
-    if not zombie_classes.exists():
-        raise FileNotFoundError(f"{zombie_classes} not found; run the class-copy step first")
+    sub_classes = classes_orig / subtree
+    if not sub_classes.exists():
+        raise FileNotFoundError(f"{sub_classes} not found; run the class-copy step first")
 
-    if out_pristine_dir.exists() and not force:
-        log.info(f"[skip] {out_pristine_dir} already exists (use --force to regenerate)")
-        java_files = list((out_pristine_dir / "zombie").rglob("*.java"))
-        return len(java_files)
-    if out_pristine_dir.exists():
-        log.info(f"wiping existing {out_pristine_dir}")
-        shutil.rmtree(out_pristine_dir)
+    out_sub = out_pristine_dir / subtree
+    if out_sub.exists() and not force:
+        log.info(f"[skip] {out_sub} already exists (use --force to regenerate)")
+        return sum(1 for _ in out_sub.rglob("*.java"))
+    if out_sub.exists():
+        log.info(f"wiping existing {out_sub}")
+        shutil.rmtree(out_sub)
 
-    tmp_out = out_pristine_dir.parent / (out_pristine_dir.name + "-tmp")
+    out_pristine_dir.mkdir(parents=True, exist_ok=True)
+    tmp_out = out_pristine_dir / (subtree + "-tmp")
     empty_dir(tmp_out)
 
     java = str(resolve("java"))
     args = [java, "-jar", str(vineflower_jar), "--silent"]
     for j in libs_jars:
         args.append(f"-e={j}")
-    args.append(str(zombie_classes))
+    args.append(str(sub_classes))
     args.append(str(tmp_out))
 
-    log.info("decompiling zombie/ (Vineflower, ~1 min)...")
+    log.info(f"decompiling {subtree}/ (Vineflower)...")
     proc = subprocess.run(args)
     if proc.returncode != 0:
-        raise RuntimeError(f"Vineflower failed (exit {proc.returncode})")
+        raise RuntimeError(f"Vineflower failed on {subtree}/ (exit {proc.returncode})")
 
-    out_pristine_dir.mkdir(parents=True, exist_ok=True)
-    tmp_out.rename(out_pristine_dir / "zombie")
-    count = sum(1 for _ in (out_pristine_dir / "zombie").rglob("*.java"))
-    log.info(f"decompiled {count} .java files into {out_pristine_dir / 'zombie'}")
+    tmp_out.rename(out_sub)
+    count = sum(1 for _ in out_sub.rglob("*.java"))
+    log.info(f"decompiled {count} .java files into {out_sub}")
     return count
+
+
+def decompile_all(
+    classes_orig: Path,
+    out_pristine_dir: Path,
+    subtrees: list[str],
+    libs_jars: list[Path],
+    vineflower_jar: Path,
+    force: bool = False,
+) -> int:
+    """Decompile every listed subtree that actually exists under `classes_orig`.
+
+    Each subtree is decompiled in its own Vineflower invocation (same pattern
+    as the original zombie-only driver) so failures localize and missing
+    subtrees are skipped cleanly."""
+    total = 0
+    for sub in subtrees:
+        if not (classes_orig / sub).exists():
+            log.info(f"[skip] {sub}/ not present under classes-original/")
+            continue
+        total += decompile_subtree(
+            classes_orig=classes_orig,
+            out_pristine_dir=out_pristine_dir,
+            subtree=sub,
+            libs_jars=libs_jars,
+            vineflower_jar=vineflower_jar,
+            force=force,
+        )
+    log.info(f"decompile total: {total} .java files across {len(subtrees)} subtree(s)")
+    return total

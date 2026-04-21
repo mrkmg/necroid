@@ -1,0 +1,28 @@
+diff --git a/se/krka/kahlua/vm/LuaCallFrame.java b/se/krka/kahlua/vm/LuaCallFrame.java
+index 0cba8e1..a335fd9 100644
+--- a/se/krka/kahlua/vm/LuaCallFrame.java
++++ b/se/krka/kahlua/vm/LuaCallFrame.java
+@@ -21,6 +21,15 @@ public class LuaCallFrame {
+    public HashMap LocalVarToStackMap = new HashMap();
+    public HashMap LocalStackToVarMap = new HashMap();
+    public ArrayList<String> LocalVarNames = new ArrayList<>();
++   // Tail-call history for the in-VM profiler. When a tail call overwrites
++   // this frame's closure in place, the outgoing closure + pc are appended
++   // here (via KahluaProfiler.recordTailCall) so the sampler can expand the
++   // caller chain in flame graphs. Lazy-allocated; only populated when the
++   // profiler is enabled and the frame participates in a tail call. Reset
++   // to depth 0 on every setup().
++   public LuaClosure[] tailCallClosures;
++   public int[] tailCallPcs;
++   public int tailCallDepth = 0;
+ 
+    public LuaCallFrame(Coroutine var1) {
+       this.coroutine = var1;
+@@ -180,6 +189,7 @@ public class LuaCallFrame {
+       this.javaFunction = var2;
+       LuaCallFrame var8 = this;
+       this.localsAssigned = 0;
++      this.tailCallDepth = 0;
+       this.LocalVarToStackMap.clear();
+       this.LocalStackToVarMap.clear();
+       this.LocalVarNames.clear();

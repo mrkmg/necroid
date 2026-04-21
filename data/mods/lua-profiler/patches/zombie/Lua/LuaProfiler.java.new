@@ -16,11 +16,9 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.LockSupport;
 
-import se.krka.kahlua.vm.Coroutine;
+import se.krka.kahlua.vm.KahluaProfiler;
 import se.krka.kahlua.vm.KahluaThread;
-import se.krka.kahlua.vm.LuaCallFrame;
 import se.krka.kahlua.vm.LuaClosure;
 
 import zombie.ZomboidFileSystem;
@@ -77,11 +75,10 @@ public final class LuaProfiler {
    // normalized-absolute-path -> modID. Same basename across mods no longer collides.
    private static volatile HashMap<String, String> pathToMod = null;
 
-   // Reflection cache (populated lazily, per VM lifetime).
+   // Reflection cache (populated lazily, per VM lifetime). Only used for
+   // MODE_BUILTIN which flips Kahlua's hidden doProfiling flag.
    private static volatile Field fDoProfiling = null;
    private static volatile Field fProfileEntries = null;
-   private static volatile Field fCallFrameStack = null;
-   private static volatile Field fCallFrameTop = null;
 
    private LuaProfiler() {}
 
@@ -201,12 +198,11 @@ public final class LuaProfiler {
       return -1;
    }
 
-   private static int safeLine(LuaCallFrame frame, LuaClosure closure) {
+   private static int safeLine(int pc, LuaClosure closure) {
       try {
          if (closure == null || closure.prototype == null) return -1;
          int[] lines = closure.prototype.lines;
          if (lines == null) return -1;
-         int pc = frame.pc;
          if (pc < 0 || pc >= lines.length) return -1;
          return lines[pc];
       } catch (Throwable ignore) {
@@ -638,174 +634,103 @@ public final class LuaProfiler {
       return s < 0 ? p : p.substring(s + 1);
    }
 
-   // ---------------- sample mode ----------------
-
-   private static Field getCallFrameStack() {
-      Field f = fCallFrameStack;
-      if (f == null) { f = fieldOrNull(Coroutine.class, "callFrameStack"); fCallFrameStack = f; }
-      return f;
-   }
-
-   private static Field getCallFrameTop() {
-      Field f = fCallFrameTop;
-      if (f == null) { f = fieldOrNull(Coroutine.class, "callFrameTop"); fCallFrameTop = f; }
-      return f;
-   }
+   // ---------------- sample mode (in-VM sampler, Kahlua-hosted) ----------------
+   //
+   // Sampling runs inside Kahlua's luaMainloop via se.krka.kahlua.vm.KahluaProfiler.
+   // This class owns: start/stop control, deadline daemon, result drain, filter +
+   // mod attribution on drain, CSV + chrome-trace output. The ring-buffered
+   // sample records live in KahluaProfiler until drain() hands them to us.
 
    private static void startSampling(int seconds) {
-      if (samplerThread != null) {
+      if (KahluaProfiler.isEnabled() || samplerThread != null) {
          DebugLog.Lua.warn("LuaProfiler: sampler already running");
          return;
       }
       sampleIndex.set(0);
+      sampleAgg.clear();
       traceStartNs = System.nanoTime();
       traceStartWallUs = System.currentTimeMillis() * 1000L;
-      final long deadlineNs = traceStartNs + (long) seconds * 1_000_000_000L;
+      long durationNs = (long) seconds * 1_000_000_000L;
       samplerRun = true;
-      Thread t = new Thread(() -> samplerLoop(deadlineNs), "LuaProfiler-Sampler");
+      KahluaProfiler.enable(sampleIntervalNs, durationNs, SAMPLE_CAPACITY);
+      // Deadline daemon: sleep, then stop + flush. KahluaProfiler also
+      // auto-disables on tick when deadline passes, but the daemon is what
+      // triggers the CSV/JSON flush pipeline when the user didn't /stop.
+      Thread t = new Thread(() -> {
+         try { Thread.sleep(Math.max(1L, durationNs / 1_000_000L)); }
+         catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+         stopSampling();
+      }, "LuaProfiler-Deadline");
       t.setDaemon(true);
-      t.setPriority(Thread.NORM_PRIORITY + 1);
       samplerThread = t;
       t.start();
       DebugLog.Lua.println("LuaProfiler: sampling started for " + seconds + "s @ "
-              + (sampleIntervalNs / 1000) + "us");
+              + (sampleIntervalNs / 1000) + "us (in-VM)");
    }
 
    private static void stopSampling() {
+      if (!samplerRun && !KahluaProfiler.isEnabled()) return;
       samplerRun = false;
-      Thread t = samplerThread;
-      if (t != null && t != Thread.currentThread()) {
-         // Join is generous because the sampler thread flushes CSV + JSON before exit.
-         try { t.join(3000L); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
-      }
+      KahluaProfiler.disable();
       samplerThread = null;
-      DebugLog.Lua.println("LuaProfiler: sampling stopped (" + sampleIndex.get() + " samples)");
-   }
 
-   private static void samplerLoop(long deadlineNs) {
-      final Field fStack = getCallFrameStack();
-      final Field fTop = getCallFrameTop();
-      if (fStack == null || fTop == null) {
-         DebugLog.Lua.warn("LuaProfiler: sampler abort — reflection unavailable");
-         samplerRun = false;
-         if (samplerThread == Thread.currentThread()) samplerThread = null;
-         return;
-      }
+      int drained = 0;
       try {
-         while (samplerRun) {
-            long now = System.nanoTime();
-            if (now > deadlineNs) break;
-            try {
-               takeSample(fStack, fTop, now);
-            } catch (Throwable ignore) {
-               // racy reads — drop malformed sample and continue.
-            }
-            long sleep = sampleIntervalNs;
-            if (sleep > 0) LockSupport.parkNanos(sleep);
-         }
-      } finally {
-         samplerRun = false;
-         // Parity with event mode: flush aggregate + trace when the window ends,
-         // whether that was the deadline, the buffer filling, or explicit Stop.
-         try {
-            if (!sampleAgg.isEmpty()) dumpSampleAggregate();
-            if (sampleIndex.get() > 0) flushSampleTrace();
-         } catch (Throwable err) {
-            DebugLog.Lua.warn("LuaProfiler: sampler auto-flush failed: " + err.getMessage());
-         }
-         if (samplerThread == Thread.currentThread()) samplerThread = null;
-         DebugLog.Lua.println("LuaProfiler: sampling finished (" + sampleIndex.get() + " samples buffered)");
+         drained = KahluaProfiler.drain(LuaProfiler::ingestSample);
+      } catch (Throwable err) {
+         DebugLog.Lua.warn("LuaProfiler: drain failed: " + err.getMessage());
       }
+
+      try {
+         if (!sampleAgg.isEmpty()) dumpSampleAggregate();
+         if (sampleIndex.get() > 0) flushSampleTrace();
+      } catch (Throwable err) {
+         DebugLog.Lua.warn("LuaProfiler: sampler auto-flush failed: " + err.getMessage());
+      }
+
+      DebugLog.Lua.println("LuaProfiler: sampling finished ("
+              + drained + " drained, "
+              + sampleIndex.get() + " kept after filter, "
+              + KahluaProfiler.getDroppedCount() + " ring-dropped, "
+              + KahluaProfiler.getCatchupOverflowCount() + " catchup-overflow)");
    }
 
-   private static final int MAX_COROUTINE_DEPTH = 16;
-   private static final int MAX_SAMPLE_RETRY = 3;
-
-   private static void takeSample(Field fStack, Field fTop, long tsNs) throws IllegalAccessException {
-      KahluaThread th = LuaManager.thread;
-      if (th == null) return;
-      Coroutine leaf = th.currentCoroutine;
-      if (leaf == null) return;
-
-      // Walk the coroutine parent chain. When the VM is running inside a
-      // resumed child coroutine, `currentCoroutine` only holds the child's
-      // frames — the call chain that invoked coroutine.resume lives on the
-      // parent's stack. Without this walk, samples taken inside a child come
-      // out rooted at whatever the child was resumed with, which surfaces as
-      // orphaned top-level functions in the flame graph.
-      Coroutine[] chain = new Coroutine[MAX_COROUTINE_DEPTH];
-      int chainLen = 0;
-      for (Coroutine c = leaf; c != null && chainLen < chain.length; c = c.getParent()) {
-         chain[chainLen++] = c;
-      }
-
-      ArrayList<SampleFrame> flat = new ArrayList<>(32);
-      boolean anyMatched = false;
+   /**
+    * Drain consumer. Called once per KahluaProfiler.SampleRecord after
+    * stopSampling(). Translates raw (closure, pc) arrays into fully
+    * resolved (mod, file, fn, line) SampleFrame arrays, applies the
+    * active filter, updates the aggregate, and appends to sampleBuffer
+    * for the chrome-trace JSON flush.
+    */
+   private static void ingestSample(KahluaProfiler.SampleRecord r) {
+      if (r == null || r.depth == 0) return;
       final boolean noFilter = filterNoop();
+      ArrayList<SampleFrame> flat = new ArrayList<>(r.depth);
+      boolean anyMatched = false;
+      for (int i = 0; i < r.depth; i++) {
+         LuaClosure c = r.closures[i];
+         if (c == null) continue;
+         String full = safeFullPath(c);
+         String file = safeFile(c);
+         String mod = resolveMod(full);
+         String fn = safeFunctionName(c);
+         int line = safeLine(r.pcs[i], c);
 
-      // Iterate rootmost parent → leaf so the flattened stack reads
-      // outermost-first (matches chrome-trace flame-graph conventions).
-      for (int ci = chainLen - 1; ci >= 0; ci--) {
-         Coroutine co = chain[ci];
+         SampleFrame sf = new SampleFrame();
+         sf.mod = mod;
+         sf.file = file;
+         sf.fn = fn;
+         sf.line = line;
+         flat.add(sf);
 
-         // Race-retry: snapshot (top, frames[0..top]) and re-read top to
-         // confirm the VM didn't push/pop between the reads. Unstable
-         // snapshots from a single coroutine look like phantom 1-frame
-         // stacks and are a direct source of orphaned nodes.
-         LuaCallFrame[] snap = null;
-         int snapTop = -1;
-         for (int attempt = 0; attempt < MAX_SAMPLE_RETRY; attempt++) {
-            Object rawStack = fStack.get(co);
-            if (!(rawStack instanceof LuaCallFrame[])) continue;
-            LuaCallFrame[] arr = (LuaCallFrame[]) rawStack;
-            int topA = fTop.getInt(co);
-            if (topA < 0 || topA > arr.length) continue;
-            if (topA == 0) { snap = new LuaCallFrame[0]; snapTop = 0; break; }
-            LuaCallFrame[] tmp = new LuaCallFrame[topA];
-            System.arraycopy(arr, 0, tmp, 0, topA);
-            int topB = fTop.getInt(co);
-            if (topB == topA) { snap = tmp; snapTop = topA; break; }
-         }
-         // An unstable read of the *leaf* coroutine means we can't trust
-         // anything about this moment — drop the whole sample. An unstable
-         // parent would produce a mis-rooted leaf, which is exactly the
-         // orphan shape we're trying to eliminate, so drop then too.
-         if (snap == null) return;
-         if (snapTop == 0) continue; // dormant coroutine — nothing to add
-
-         for (int i = 0; i < snapTop; i++) {
-            LuaCallFrame f = snap[i];
-            // Null inside the declared depth = we raced a mutation; treat
-            // everything beyond as untrustworthy rather than papering over.
-            if (f == null) break;
-            LuaClosure c = f.closure;
-            if (c == null) continue; // Java-only frame — no Lua metadata
-            String full = safeFullPath(c);
-            String file = safeFile(c);
-            String mod = resolveMod(full);
-            String fn = safeFunctionName(c);
-            int line = safeLine(f, c);
-
-            SampleFrame sf = new SampleFrame();
-            sf.mod = mod;
-            sf.file = file;
-            sf.fn = fn;
-            sf.line = line;
-            flat.add(sf);
-
-            // Aggregate every matching frame — gives CPU-inclusive counts.
-            // Filtered-out frames are kept in the flame-graph stack (so the
-            // chain stays continuous) but excluded from the aggregate CSV.
-            if (noFilter || filterAllows(mod, file)) {
-               anyMatched = true;
-               SampleKey key = new SampleKey(mod, file, fn, line);
-               Stats s = sampleAgg.get(key);
-               if (s == null) s = sampleAgg.computeIfAbsent(key, kk -> new Stats());
-               s.count.incrementAndGet();
-            }
+         if (noFilter || filterAllows(mod, file)) {
+            anyMatched = true;
+            SampleKey key = new SampleKey(mod, file, fn, line);
+            Stats s = sampleAgg.get(key);
+            if (s == null) s = sampleAgg.computeIfAbsent(key, kk -> new Stats());
+            s.count.incrementAndGet();
          }
       }
-
       int k = flat.size();
       if (k == 0) return;
       if (!noFilter && !anyMatched) return;
@@ -813,11 +738,9 @@ public final class LuaProfiler {
       int idx = (int) sampleIndex.getAndIncrement();
       if (idx < SAMPLE_CAPACITY) {
          SampleRecord rec = new SampleRecord();
-         rec.tsNs = tsNs;
+         rec.tsNs = r.tsNs;
          rec.stack = flat.toArray(new SampleFrame[0]);
          sampleBuffer[idx] = rec;
-      } else {
-         samplerRun = false;
       }
    }
 

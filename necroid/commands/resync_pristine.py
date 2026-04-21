@@ -1,21 +1,59 @@
 """resync-pristine — after a PZ update, regenerate the shared workspace from
-the source PZ install and flag mods whose patches no longer apply."""
+the source PZ install and flag mods whose patches no longer apply.
+
+Guard: before the re-init copies the PZ install's class tree back into
+`classes-original/`, any currently-installed stack on client or server is
+rolled back to originals. Otherwise the modded `.class` files still sitting
+in the PZ install would get adopted as the new pristine and every mod's
+patches would start diffing against modded bytecode.
+"""
 from __future__ import annotations
 
 import shutil
 from argparse import Namespace
 
 from .. import logging_util as log
+from ..errors import ConfigError
 from ..fsops import empty_dir
+from ..install import uninstall_all
 from ..mod import list_mods, patch_items, pristine_snapshot, read_mod_json, write_mod_json
 from ..patching import patched_theirs_file
+from ..profile import require_pz_install
+from ..state import read_state
 from . import init as init_cmd
+
+
+def _uninstall_active_stacks(profile) -> None:
+    """Roll back both destinations' installed stacks (if any) before the
+    pristine sources are refreshed. Raises if state says something is
+    installed but the PZ install path isn't configured/present — we won't
+    silently skip, since adopting modded classes as pristine would corrupt
+    every mod in the library."""
+    for dest in ("client", "server"):
+        state = read_state(profile.state_file(dest))
+        if not state.installed:
+            continue
+        log.step(
+            f"guard: uninstall {dest} stack [{', '.join(state.stack)}] "
+            f"({len(state.installed)} class file(s)) before resync"
+        )
+        try:
+            require_pz_install(profile, dest)
+        except ConfigError as e:
+            raise ConfigError(
+                f"cannot resync-pristine: {dest} has an installed stack but its PZ install "
+                f"is unreachable. Roll it back manually, then retry.\n    {e}"
+            )
+        uninstall_all(profile, dest)
 
 
 def run(args) -> int:
     p = args.profile
     source = args.source  # populated in cli.py from --from (or config.workspace_source)
     install_to = args.install_to  # used for postfix resolution during applicability check
+
+    _uninstall_active_stacks(p)
+
     log.info(f"resync-pristine [from={source}]: re-running init with --force")
     init_args = Namespace(
         root=args.root,

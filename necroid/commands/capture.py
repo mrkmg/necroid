@@ -28,6 +28,7 @@ from ..mod import (
     write_mod_json,
 )
 from ..patching import git_diff_no_index
+from ..profile import existing_subtrees
 from ..state import read_enter, utc_now_iso
 
 
@@ -74,10 +75,9 @@ def run(args) -> int:
             fp.unlink()  # shared
     prune_empty_dirs(patches_dir)
 
-    src_zombie = p.src / "zombie"
-    pristine_zombie = p.pristine / "zombie"
-    if not src_zombie.exists():
-        raise SystemExit(f"src/zombie/ not found at {src_zombie}")
+    subs = existing_subtrees(p.pristine)
+    if not subs:
+        raise SystemExit(f"src-pristine/ is empty at {p.pristine} (run `necroid init`)")
 
     def _out_name(rel: str, ext: str) -> str:
         if _existing_postfixed_opposite(patches_dir, rel, ext, other):
@@ -86,41 +86,47 @@ def run(args) -> int:
 
     touched_count = 0
 
-    # Modified + new
-    for java in sorted(src_zombie.rglob("*.java")):
-        if not java.is_file():
+    # Modified + new (every subtree that has a src/ counterpart)
+    for sub in subs:
+        src_sub = p.src / sub
+        if not src_sub.exists():
             continue
-        rel = "zombie/" + java.relative_to(src_zombie).as_posix()
-        pristine_file = p.pristine / rel
-        if not pristine_file.exists():
-            dst = patches_dir / _out_name(rel, "new")
+        for java in sorted(src_sub.rglob("*.java")):
+            if not java.is_file():
+                continue
+            rel = f"{sub}/" + java.relative_to(src_sub).as_posix()
+            pristine_file = p.pristine / rel
+            if not pristine_file.exists():
+                dst = patches_dir / _out_name(rel, "new")
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(java, dst)
+                log.info(f"new:  {rel}")
+                touched_count += 1
+                continue
+            if file_sha256(java) == file_sha256(pristine_file):
+                continue
+            patch_bytes = git_diff_no_index(pristine_file, java, rel)
+            if patch_bytes is None:
+                continue
+            dst = patches_dir / _out_name(rel, "patch")
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(java, dst)
-            log.info(f"new:  {rel}")
+            dst.write_bytes(patch_bytes)
+            log.info(f"mod:  {rel}")
             touched_count += 1
-            continue
-        if file_sha256(java) == file_sha256(pristine_file):
-            continue
-        patch_bytes = git_diff_no_index(pristine_file, java, rel)
-        if patch_bytes is None:
-            continue
-        dst = patches_dir / _out_name(rel, "patch")
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_bytes(patch_bytes)
-        log.info(f"mod:  {rel}")
-        touched_count += 1
 
-    # Deleted
-    for pr in sorted(pristine_zombie.rglob("*.java")):
-        if not pr.is_file():
-            continue
-        rel = "zombie/" + pr.relative_to(pristine_zombie).as_posix()
-        if not (p.src / rel).exists():
-            dst = patches_dir / _out_name(rel, "delete")
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            dst.write_bytes(b"")
-            log.info(f"del:  {rel}")
-            touched_count += 1
+    # Deleted — any pristine file with no src/ counterpart
+    for sub in subs:
+        pristine_sub = p.pristine / sub
+        for pr in sorted(pristine_sub.rglob("*.java")):
+            if not pr.is_file():
+                continue
+            rel = f"{sub}/" + pr.relative_to(pristine_sub).as_posix()
+            if not (p.src / rel).exists():
+                dst = patches_dir / _out_name(rel, "delete")
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes(b"")
+                log.info(f"del:  {rel}")
+                touched_count += 1
 
     # Refresh snapshot + updatedAt
     items = patch_items(md, install_as)

@@ -11,7 +11,7 @@ Steps:
     5. Copy PZ class subtrees    -> workspace/classes-original/
     6. Rejar each subtree        -> workspace/libs/classpath-originals/<name>.jar
     7. Write data/.mod-config.json (records workspaceSource + the chosen install).
-    8. Decompile classes-original/zombie -> workspace/src-pristine/zombie (Vineflower).
+    8. Decompile every present class subtree -> workspace/src-pristine/ (Vineflower).
     9. Scaffold data/mods/.
 """
 from __future__ import annotations
@@ -22,15 +22,14 @@ from pathlib import Path
 
 from .. import logging_util as log
 from ..config import ModConfig, config_path, read_config, write_config
-from ..decompile import ensure_vineflower, decompile_zombie
+from ..decompile import ensure_vineflower, decompile_all
 from ..errors import ConfigError
 from ..fsops import ensure_dir, mirror_tree
 from ..hashing import file_sha256
-from ..profile import autodetect_server_install, load_profile
+from ..profile import PZ_CLASS_SUBTREES, autodetect_server_install, load_profile
 from ..tools import check_all, resolve
 
 
-PZ_CLASS_SUBTREES = ("zombie", "astar", "com", "de", "fmod", "javax", "org", "se")
 DEFAULT_CLIENT_INSTALL_WIN = Path(r"C:\Program Files (x86)\Steam\steamapps\common\ProjectZomboid")
 
 
@@ -169,11 +168,12 @@ def run(args) -> int:
     write_config(root, cfg)
     log.info(f"wrote {config_path(root)}")
 
-    log.step(f"step 8/9: decompile zombie -> {profile.pristine.relative_to(root)}")
+    log.step(f"step 8/9: decompile class subtrees -> {profile.pristine.relative_to(root)}")
     libs_jars = sorted(profile.libs.glob("*.jar")) + sorted(profile.classpath_originals.glob("*.jar"))
-    decompile_zombie(
+    decompile_all(
         classes_orig=profile.originals,
         out_pristine_dir=profile.pristine,
+        subtrees=list(PZ_CLASS_SUBTREES),
         libs_jars=libs_jars,
         vineflower_jar=profile.vineflower_jar,
         force=args.force,

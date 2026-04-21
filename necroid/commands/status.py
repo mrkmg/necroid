@@ -8,6 +8,7 @@ from ..fsops import empty_dir
 from ..hashing import file_sha256
 from ..mod import ensure_mod_exists, patch_items, read_mod_json
 from ..patching import patched_theirs_file
+from ..profile import existing_subtrees
 from ..state import read_enter, read_state
 
 
@@ -47,28 +48,33 @@ def _status_mod(profile, install_to: str, name: str) -> int:
 
 def _status_tree(profile) -> int:
     print(f"working tree: {profile.src}")
-    src_zombie = profile.src / "zombie"
-    pristine_zombie = profile.pristine / "zombie"
+    subs = existing_subtrees(profile.pristine)
     diverged: list[str] = []
-    if not src_zombie.exists():
-        print("  (src/zombie/ missing — consider `reset`)")
+    if not subs:
+        print("  (src-pristine/ empty — run `necroid init`)")
     else:
-        for p in src_zombie.rglob("*.java"):
-            if not p.is_file():
+        for sub in subs:
+            src_sub = profile.src / sub
+            pristine_sub = profile.pristine / sub
+            if not src_sub.exists():
+                print(f"  (src/{sub}/ missing — consider `reset`)")
                 continue
-            rel = "zombie/" + p.relative_to(src_zombie).as_posix()
-            pr = profile.pristine / rel
-            if not pr.exists():
-                diverged.append(f"+ {rel}")
-                continue
-            if file_sha256(p) != file_sha256(pr):
-                diverged.append(f"M {rel}")
-        for p in pristine_zombie.rglob("*.java"):
-            if not p.is_file():
-                continue
-            rel = "zombie/" + p.relative_to(pristine_zombie).as_posix()
-            if not (profile.src / rel).exists():
-                diverged.append(f"- {rel}")
+            for p in src_sub.rglob("*.java"):
+                if not p.is_file():
+                    continue
+                rel = f"{sub}/" + p.relative_to(src_sub).as_posix()
+                pr = profile.pristine / rel
+                if not pr.exists():
+                    diverged.append(f"+ {rel}")
+                    continue
+                if file_sha256(p) != file_sha256(pr):
+                    diverged.append(f"M {rel}")
+            for p in pristine_sub.rglob("*.java"):
+                if not p.is_file():
+                    continue
+                rel = f"{sub}/" + p.relative_to(pristine_sub).as_posix()
+                if not (profile.src / rel).exists():
+                    diverged.append(f"- {rel}")
     if not diverged:
         print("  clean (matches src-pristine)")
     else:

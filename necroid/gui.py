@@ -70,7 +70,7 @@ STEP_FRIENDLY = {
     "copy PZ class trees": "Copying game classes…",
     "rejar class trees": "Repackaging classes…",
     "write data/.mod-config": "Saving settings…",
-    "decompile zombie": "Decompiling game code (this takes a while)…",
+    "decompile class subtrees": "Decompiling game code (this takes a while)…",
     "scaffold mods": "Finishing setup…",
     "checking mod patches": "Re-checking mod patches…",
 }

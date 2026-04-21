@@ -12,34 +12,36 @@ from .. import buildjava
 from .. import logging_util as log
 from ..errors import BuildError
 from ..hashing import file_sha256
+from ..profile import existing_subtrees
 
 
 def run(args) -> int:
     p = args.profile
 
-    src_zombie = p.src / "zombie"
-    pristine_zombie = p.pristine / "zombie"
-    if not src_zombie.exists():
-        raise SystemExit(f"src/zombie/ not found at {src_zombie}")
-    if not pristine_zombie.exists():
-        raise SystemExit(f"src-pristine/zombie/ not found at {pristine_zombie} (run `necroid init`)")
+    subs = existing_subtrees(p.pristine)
+    if not subs:
+        raise SystemExit(f"src-pristine/ is empty at {p.pristine} (run `necroid init`)")
 
     changed: list[Path] = []
     new_files: list[Path] = []
 
-    for java in sorted(src_zombie.rglob("*.java")):
-        if not java.is_file():
+    for sub in subs:
+        src_sub = p.src / sub
+        if not src_sub.exists():
             continue
-        rel = "zombie/" + java.relative_to(src_zombie).as_posix()
-        pristine_file = p.pristine / rel
-        if not pristine_file.exists():
-            new_files.append(java)
-            log.info(f"new:  {rel}")
-            continue
-        if file_sha256(java) == file_sha256(pristine_file):
-            continue
-        changed.append(java)
-        log.info(f"mod:  {rel}")
+        for java in sorted(src_sub.rglob("*.java")):
+            if not java.is_file():
+                continue
+            rel = f"{sub}/" + java.relative_to(src_sub).as_posix()
+            pristine_file = p.pristine / rel
+            if not pristine_file.exists():
+                new_files.append(java)
+                log.info(f"new:  {rel}")
+                continue
+            if file_sha256(java) == file_sha256(pristine_file):
+                continue
+            changed.append(java)
+            log.info(f"mod:  {rel}")
 
     files = changed + new_files
     if not files:
