@@ -12,7 +12,10 @@ from __future__ import annotations
 import shutil
 
 from .. import logging_util as log
+from ..config import read_config
+from ..errors import ModNotFound, PzMajorMismatch
 from ..state import clear_enter, read_enter
+from ._resolve import resolve_mod
 
 
 def _confirm(prompt: str) -> bool:
@@ -31,6 +34,16 @@ def run(args) -> int:
     es = read_enter(p.enter_file)
 
     if name:
+        # Prefer the resolved canonical dir name so users can pass a bare base.
+        # If resolution fails (orphan src-<foo>/ with no matching mod dir), fall
+        # back to the raw name so the orphan can still be cleaned.
+        cfg = read_config(args.root, required=False)
+        resolved = name
+        try:
+            resolved = resolve_mod(p.mods_dir, cfg.workspace_major, name)
+        except (ModNotFound, PzMajorMismatch):
+            pass
+        name = resolved
         target = p.src_for(name)
         if not target.exists():
             log.info(f"nothing to clean: {target} does not exist.")

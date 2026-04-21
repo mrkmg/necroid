@@ -12,6 +12,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Mods carry a `clientOnly` flag.** In `mod.json`, `clientOnly: true` means the mod requires a configured client PZ install and cannot be installed to the server (it relies on client-only rendering / input code). `clientOnly: false` (default) means the mod works against either destination. There is no per-mod "target" any more.
 
+**Workspace is bound to one PZ major version.** Every PZ major (41, 42, ...) decompiles to an incompatible source tree — a 41-authored patch set cannot apply to 42 pristine and vice versa. Necroid handles this by binding a workspace to exactly one major at `init` time (detected via a tiny Java probe that reads `zombie.core.Core.gameVersion` + `Core.buildVersion` via reflection — see `necroid/pzversion.py`). The bound major is stored in `config.workspaceMajor`; the full version string (e.g. `"41.78.19"`) is stored in `config.workspaceVersion`.
+
+**Mod dirs encode their PZ major in the name.** `data/mods/<base>-<major>/` — e.g. `admin-xray-41`. The `-<major>` suffix is authoritative: `list`, `status`, `install`, `enter`, and the GUI filter mods against `workspaceMajor` and refuse to touch incompatible variants. `necroid install admin-xray` resolves bare bases against the workspace major (so `admin-xray` → `admin-xray-41` if that's what the workspace is bound to). `mod.json` additionally stamps `expectedVersion` (the full PZ version at the time of last `capture`) for soft minor/patch-drift warnings — the dir suffix is the hard gate, `expectedVersion` is the recapture hint.
+
+**Major changes require an explicit opt-in.** `necroid resync-pristine` refuses to silently re-bind the workspace to a different major when the source install has moved (e.g. 41 → 42). Pass `--force-major-change` to acknowledge that every existing mod's patches will need to be re-captured against the new pristine. The old-major mod dirs are left on disk (filtered out of default views); re-enter and re-capture each to port.
+
 Uninstall restores originals from `data/workspace/classes-original/` (verbatim copy of the install's class tree) — that directory is the single source of truth for "what the vanilla class looks like", and **must not be edited**.
 
 Writing to `C:\Program Files (x86)\...` requires an elevated shell. If Steam "Verify Integrity of Game Files" is run, it will revert any installed overrides — just re-run `necroid install <stack> --to <dest>` afterwards.
@@ -54,9 +60,13 @@ Install editable (`pip install -e .`) to put `necroid` on PATH as a bare command
 
 Per-command flags:
 
-- `init` / `resync-pristine`: `--from {client,server}` picks the PZ install to seed from. Default comes from `config.workspaceSource`, then falls back to whichever install is configured, then `client`.
+- `init`: `--from {client,server}` picks the PZ install to seed from. Default comes from `config.workspaceSource`, then falls back to whichever install is configured, then `client`. `--yes` auto-confirms the detected workspace major and migrates legacy unversioned mod dirs without prompting. `--major N` overrides the detected major (advanced).
+- `resync-pristine`: `--from` as for `init`; `--force-major-change` authorises a workspace re-bind when the source install has moved to a new PZ major; `--yes` skips prompts.
 - `install` / `uninstall` / `verify` / `list` / `status`: `--to {client,server}` chooses the install destination / state file / counting lens. Default from `config.defaultInstallTo`.
+- `list`: `--all` shows every mod dir regardless of major (default filters to `workspaceMajor`).
 - `enter`: `--as {client,server}` picks which per-destination postfix variant to apply when the mod ships one. Default is `config.defaultInstallTo`; forced to `client` if any mod in the stack is `clientOnly`.
+
+Commands that accept a mod name (`install`, `uninstall`, `enter`, `capture`, `clean`) accept either a bare base (`admin-xray`) or the fully-qualified dir name (`admin-xray-41`). Bare bases resolve to `<base>-<workspaceMajor>`. Fully-qualified names must match the workspace major or the command errors with `PzMajorMismatch`.
 
 Install is **atomic**: stages against pristine, compiles via `javac`, restores the previous install to originals, then copies new classes. A conflict during staging or a compile error leaves the PZ install untouched. Inner classes (`Outer$Inner.class`) are globbed automatically — a mod lists source changes, not class enumerations.
 
@@ -120,9 +130,10 @@ There are **no tests and no linter** for the PZ-decompiled code — it's decompi
 - `assets/` — brand assets. `necroid.png` (source 1024²), `necroid-mark-256.png` (GUI header skull), `necroid-icon-256.png` (window icon), `necroid-icon.ico` (Windows exe icon), `build-assets.sh` (ImageMagick regen).
 - `pyproject.toml` — project metadata; script entry point `necroid = "necroid.cli:main"`.
 - `data/` — all PZ-sourced + runtime content.
-- `data/.mod-config.json` — `clientPzInstall`, `serverPzInstall`, `defaultInstallTo`, `workspaceSource`. Schema v3. Local-only.
-- `data/mods/<name>/` — each mod: `mod.json` (with `clientOnly`) + `patches/` containing `.java.patch` / `.java.new` / `.java.delete`. **Tracked**; the portable artifact.
+- `data/.mod-config.json` — `clientPzInstall`, `serverPzInstall`, `defaultInstallTo`, `workspaceSource`, `workspaceMajor`, `workspaceVersion`. Schema v1. Local-only.
+- `data/mods/<base>-<major>/` — each mod: `mod.json` (with `clientOnly` + `expectedVersion`) + `patches/` containing `.java.patch` / `.java.new` / `.java.delete`. The `-<major>` suffix (e.g. `admin-xray-41`) is parsed by the tool and enforced against `workspaceMajor`. **Tracked**; the portable artifact.
 - `data/tools/vineflower.jar` — downloaded by `init`. Local-only.
+- `data/tools/pz-version-probe/` — compiled `NecroidGetPzVersion.class`, cached on first `init` / `status` / `install` run. Regenerated automatically if `necroid/java/NecroidGetPzVersion.java` changes. Local-only.
 - `src-<modname>/{zombie,astar,com,de,fmod,javax,org,se}/` — per-mod editable working tree at the **repo root**. `enter` seeds it from pristine + patches (preserving contents if it already exists), `capture` reads it back into the mod's patch set, `reset` re-seeds it, `clean` deletes it. Gitignored via `/src-*/`. Every class subtree PZ ships is decompiled, so mods can touch any of them (e.g. `se/krka/kahlua/...` for Lua-interpreter changes). Legacy `data/workspace/src/` (single shared tree) is no longer used — safe to delete if present.
 - `data/workspace/src-pristine/<same subtrees>/` — **frozen** pristine decompile. Populated by `init`; refreshed by `resync-pristine`.
 - `data/workspace/classes-original/` — verbatim class-file copies from the Steam install. Reference and restore source; **do not edit**.
@@ -130,7 +141,7 @@ There are **no tests and no linter** for the PZ-decompiled code — it's decompi
 - `data/workspace/libs/classpath-originals/` — the `classes-original/` subtrees repackaged as jars for `javac -cp`.
 - `data/workspace/build/classes/` — javac output mirroring `zombie/...`.
 - `data/workspace/build/stage-src/` — ephemeral install-staging tree.
-- `data/.mod-state-client.json` / `data/.mod-state-server.json` — per-destination runtime manifest of what the last install to that destination wrote; used by `uninstall --to <dest>`.
+- `data/.mod-state-client.json` / `data/.mod-state-server.json` — per-destination runtime manifest of what the last install to that destination wrote; used by `uninstall --to <dest>`. Schema v1 records a `pzVersion` (the detected install version at install time), used by `verify` to surface "install has moved to a new patch since install" warnings.
 - `data/.mod-enter.json` — the single mod the working tree is currently "entered" on (`{mod, enteredAt, installAs}`), plus the `installAs` destination used when applying postfix variants. Legacy stacked entries (multiple mods) are treated as invalid on read — re-enter with a single mod.
 - `build/` — PyInstaller scratch + raw output. Local-only.
 - `dist/` — produced by `packaging/build_dist.py`: self-contained binary + `data/mods/`. Local-only; zipped and shipped via GitHub Releases.

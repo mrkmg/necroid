@@ -13,12 +13,14 @@ import shutil
 from argparse import Namespace
 
 from .. import logging_util as log
-from ..errors import ConfigError
+from ..config import read_config
+from ..errors import ConfigError, PzMajorMismatch, PzVersionDetectError
 from ..fsops import empty_dir
 from ..install import uninstall_all
 from ..mod import list_mods, patch_items, pristine_snapshot, read_mod_json, write_mod_json
 from ..patching import patched_theirs_file
 from ..profile import require_pz_install
+from ..pzversion import detect_pz_version
 from ..state import read_state
 from . import init as init_cmd
 
@@ -51,6 +53,42 @@ def run(args) -> int:
     p = args.profile
     source = args.source  # populated in cli.py from --from (or config.workspace_source)
     install_to = args.install_to  # used for postfix resolution during applicability check
+    force_major = bool(getattr(args, "force_major_change", False))
+    assume_yes = bool(getattr(args, "yes", False))
+
+    # Major-change guard runs BEFORE the uninstall pre-flight — otherwise a
+    # guard failure leaves the user without their installed stacks.
+    src_install = p.pz_install(source)
+    if src_install is None or not src_install.exists():
+        raise ConfigError(
+            f"{source}PzInstall is not configured or does not exist. "
+            f"Run `necroid init --from {source}` first."
+        )
+    src_content = src_install / "java" if source == "server" else src_install
+
+    cfg = read_config(args.root)
+    try:
+        detected = detect_pz_version(
+            src_content,
+            __import__("pathlib").Path(__file__).resolve().parent.parent,
+            args.root / "data",
+        )
+    except PzVersionDetectError as e:
+        raise ConfigError(f"could not detect PZ version at {src_content}: {e}")
+
+    if cfg.workspace_major and detected.major != cfg.workspace_major and not force_major:
+        raise PzMajorMismatch(
+            f"workspace is bound to major {cfg.workspace_major}, but {source} install "
+            f"is now PZ {detected}. Run with --force-major-change to re-bind the "
+            f"workspace to major {detected.major} (this invalidates every mod's "
+            f"patches against pristine — expect 3-way merge conflicts)."
+        )
+    if cfg.workspace_major and detected.major != cfg.workspace_major:
+        log.warn(
+            f"major change: workspace {cfg.workspace_major} → {detected.major}. "
+            f"All major-{cfg.workspace_major} mods will filter out of default views; "
+            f"re-enter and re-capture each one to port it."
+        )
 
     _uninstall_active_stacks(p)
 
@@ -60,12 +98,15 @@ def run(args) -> int:
         source=source,
         pz_install=None,
         force=True,
+        yes=True,                  # don't re-prompt; resync is non-interactive
+        major=detected.major,      # explicit: match the detected install
     )
     init_cmd.run(init_args)
+    cfg = read_config(args.root)
 
     log.step("checking mod patches against new pristine...")
     any_stale = False
-    for name in list_mods(p.mods_dir):
+    for name in list_mods(p.mods_dir, workspace_major=cfg.workspace_major):
         md = p.mods_dir / name
         mj = read_mod_json(md)
         # For applicability checking, use the effective install destination;

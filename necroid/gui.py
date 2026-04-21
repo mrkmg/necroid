@@ -41,8 +41,10 @@ from tkinter import messagebox, ttk
 from .assets import HEADER_MARK, WINDOW_ICON_FULL, WINDOW_ICON_SKULL, asset_path
 from .config import read_config
 from . import markdown_render
-from .mod import list_mods, read_mod_json
+from .errors import PzVersionDetectError
+from .mod import list_mods, mod_base_name, mod_major, read_mod_json
 from .profile import load_profile
+from .pzversion import PzVersion, detect_pz_version
 from .state import read_state
 
 
@@ -165,6 +167,7 @@ class ModderApp:
         self._warnings: list[str] = []
         self._current_cmd: Optional[str] = None
         self._log_expanded = False
+        self._pz_mismatch_reason: Optional[str] = None
 
         self._build_header()
         self._build_mod_list()
@@ -296,6 +299,10 @@ class ModderApp:
         ttk.Label(title_col, text="Necroid", style="Brand.TLabel").pack(anchor="w")
         ttk.Label(title_col,
                   text="Beyond Workshop — Project Zomboid mod manager",
+                  style="Tagline.TLabel").pack(anchor="w", pady=(2, 0))
+        # Workspace PZ-version label (set by refresh_mods / _reload_cfg).
+        self.pz_label_var = tk.StringVar(value="")
+        ttk.Label(title_col, textvariable=self.pz_label_var,
                   style="Tagline.TLabel").pack(anchor="w", pady=(2, 0))
 
         # Install-to toggle on the right.
@@ -435,13 +442,27 @@ class ModderApp:
             cfg = read_config(self.root, required=False)
             profile = load_profile(self.root, cfg=cfg) if cfg else None
         except Exception:
+            cfg = None
             profile = None
+
+        ws_major = int(getattr(cfg, "workspace_major", 0) or 0) if cfg else 0
+        ws_version = str(getattr(cfg, "workspace_version", "") or "") if cfg else ""
+
+        # Update workspace label in header.
+        if ws_major and ws_version:
+            self.pz_label_var.set(f"PZ {ws_version} · major {ws_major}")
+        elif ws_major:
+            self.pz_label_var.set(f"PZ major {ws_major}")
+        else:
+            self.pz_label_var.set("")
+
         mods_dir = self.root / "data" / "mods"
         if not mods_dir.exists():
             self._log(f"(no mods directory at {mods_dir}; run Set Up)", tag="info")
             self.installed_stack = []
             self.mod_order = []
             self.checked = set()
+            self._pz_mismatch_reason = None
             self._update_primary_button()
             self._update_apply_button_state()
             return
@@ -452,9 +473,36 @@ class ModderApp:
         self.installed_stack = installed_stack
         if reseed_checked:
             self.checked = set(installed_stack)
+
+        # Detect destination install's PZ version (for major-mismatch banner + drift badges).
+        detected_dest = None
+        mismatch_reason: str | None = None
+        if profile and ws_major:
+            pz = profile.pz_install(self.install_to)
+            if pz is not None and pz.exists():
+                content = profile.content_dir_for(self.install_to)
+                try:
+                    detected_dest = detect_pz_version(
+                        content, Path(__file__).resolve().parent, self.root / "data")
+                    if detected_dest.major != ws_major:
+                        mismatch_reason = (
+                            f"Workspace is PZ major {ws_major}; {self.install_to} install is "
+                            f"PZ {detected_dest}. Install disabled — run "
+                            f"`necroid resync-pristine --from {self.install_to} --force-major-change`."
+                        )
+                except PzVersionDetectError as e:
+                    mismatch_reason = f"cannot read {self.install_to} install's PZ version: {e}"
+        self._pz_mismatch_reason = mismatch_reason
+
+        # Filter mods to workspace major (or everything if workspace unbound — legacy).
+        if ws_major:
+            candidates = list_mods(mods_dir, workspace_major=ws_major)
+        else:
+            candidates = list_mods(mods_dir, include_all=True)
+
         has_blocked = False
         order: list[str] = []
-        for name in list_mods(mods_dir):
+        for name in candidates:
             try:
                 mj = read_mod_json(mods_dir / name)
             except Exception:
@@ -464,18 +512,34 @@ class ModderApp:
             if blocked:
                 # Blocked rows can't be part of the selection on this dest.
                 self.checked.discard(name)
-            status = self._row_status(name, blocked=blocked)
+
+            # Minor/patch-drift badge (informational; does not block install).
+            drift = ""
+            if detected_dest and mj.expected_version:
+                try:
+                    ev = PzVersion.parse(mj.expected_version)
+                    if ev.major == detected_dest.major and (
+                            ev.minor, ev.patch, ev.suffix
+                    ) != (detected_dest.minor, detected_dest.patch, detected_dest.suffix):
+                        drift = " ⚠"
+                except Exception:
+                    pass
+
+            status = self._row_status(name, blocked=blocked) + drift
             check = "☑" if (name in self.checked and not blocked) else "☐"
             info = "ⓘ" if (mods_dir / name / "README.md").exists() else ""
             kind = "client-only" if mj.client_only else "any"
+            display_name = mod_base_name(name)
             tag_args = ("blocked",) if blocked else ()
             self.tv.insert("", tk.END, iid=name,
-                           values=(check, name, info, kind, status, mj.description),
+                           values=(check, display_name, info, kind, status, mj.description),
                            tags=tag_args)
             if blocked:
                 has_blocked = True
         self.mod_order = order
         self._has_blocked = has_blocked
+        if mismatch_reason:
+            self._log(mismatch_reason, tag="warn")
         self._update_primary_button()
         self._update_apply_button_state()
 
@@ -520,6 +584,12 @@ class ModderApp:
             return
         if self._busy:
             return  # _set_buttons owns state while busy.
+        # PZ major mismatch (workspace vs destination install) hard-disables Apply.
+        if self._pz_mismatch_reason:
+            self.btn_apply.configure(state=tk.DISABLED)
+            self.btn_revert.configure(
+                state=tk.NORMAL if self._has_pending_changes() else tk.DISABLED)
+            return
         state = tk.NORMAL if self._has_pending_changes() else tk.DISABLED
         self.btn_apply.configure(state=state)
         self.btn_revert.configure(state=state)
@@ -779,7 +849,10 @@ class ModderApp:
         if not desired:
             self._run_cli(["uninstall", "--to", self.install_to])
         else:
-            self._run_cli(["install", *desired, "--to", self.install_to])
+            # `--replace` gives exact-replace semantics — unchecked mods actually
+            # leave the stack. Plain `install` is additive and would silently
+            # drop removals.
+            self._run_cli(["install", *desired, "--to", self.install_to, "--replace"])
 
     def _confirm_apply(self, added: list[str], removed: list[str],
                        desired: list[str]) -> bool:

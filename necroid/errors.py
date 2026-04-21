@@ -50,3 +50,17 @@ class BuildError(PzModderError):
 
 class ModJsonError(PzModderError):
     """Malformed mod directory: bad patch file layout or inconsistent mod.json."""
+
+
+class PzVersionDetectError(PzModderError):
+    """Could not determine the PZ version of a given install.
+
+    Raised when the detection probe fails to run, Core.class is missing from
+    the target install, or the probe's stdout is not parseable. The cause is
+    inlined in the message so the user knows which stage failed."""
+
+
+class PzMajorMismatch(PzModderError):
+    """Hard gate: a mod's major version (encoded in its dir name) does not
+    match the workspace major, or a target PZ install's detected major does
+    not match the workspace major."""

@@ -4,15 +4,55 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from .. import logging_util as log
+from ..config import read_config
+from ..errors import PzVersionDetectError
 from ..fsops import empty_dir
 from ..hashing import file_sha256
 from ..mod import ensure_mod_exists, patch_items, read_mod_json
 from ..patching import patched_theirs_file
 from ..profile import existing_subtrees
+from ..pzversion import PzVersion, detect_pz_version
 from ..state import read_enter, read_state
+from ._resolve import resolve_mod
+
+
+def _detect_destination_version(profile, install_to: str) -> str:
+    """Return a short descriptor string for the given destination's PZ version,
+    or a human-readable reason it could not be detected. Never raises."""
+    pz = profile.pz_install(install_to)
+    if pz is None:
+        return "(not configured)"
+    if not pz.exists():
+        return f"(install missing: {pz})"
+    content = profile.content_dir_for(install_to)
+    try:
+        from pathlib import Path
+        v = detect_pz_version(content, Path(__file__).resolve().parent.parent, profile.root / "data")
+        return str(v)
+    except PzVersionDetectError as e:
+        return f"(detect failed: {e})"
+
+
+def _describe_drift(expected: str, detected: str) -> str:
+    """Return '' if ok, 'recapture' for minor/patch drift, 'INCOMPATIBLE' for major."""
+    if not expected:
+        return "no expected version"
+    try:
+        ev = PzVersion.parse(expected)
+        dv = PzVersion.parse(detected)
+    except Exception:
+        return ""
+    if ev.major != dv.major:
+        return "INCOMPATIBLE"
+    if (ev.minor, ev.patch, ev.suffix) != (dv.minor, dv.patch, dv.suffix):
+        return "recapture"
+    return ""
 
 
 def _status_mod(profile, install_to: str, name: str) -> int:
+    cfg = read_config(profile.root, required=False)
+    name = resolve_mod(profile.mods_dir, cfg.workspace_major, name)
     md = ensure_mod_exists(profile.mods_dir, name)
     mj = read_mod_json(md)
     effective_to = "client" if mj.client_only else install_to
@@ -21,6 +61,18 @@ def _status_mod(profile, install_to: str, name: str) -> int:
     print(f"  clientOnly: {mj.client_only}")
     if mj.description:
         print(f"  desc: {mj.description}")
+
+    # PZ version diagnostic.
+    detected = _detect_destination_version(profile, effective_to)
+    expected = mj.expected_version or ""
+    if expected:
+        drift = _describe_drift(expected, detected) if not detected.startswith("(") else ""
+        if drift:
+            print(f"  PZ: expected {expected} — {effective_to} install is {detected} ({drift})")
+        else:
+            print(f"  PZ: expected {expected} — {effective_to} install is {detected}")
+    else:
+        print(f"  PZ: (not stamped; run `capture`) — {effective_to} install is {detected}")
     n_p = sum(1 for i in items if i.kind == "patch")
     n_n = sum(1 for i in items if i.kind == "new")
     n_d = sum(1 for i in items if i.kind == "delete")
@@ -47,6 +99,22 @@ def _status_mod(profile, install_to: str, name: str) -> int:
 
 
 def _status_tree(profile) -> int:
+    cfg = read_config(profile.root, required=False)
+    ws_major = int(getattr(cfg, "workspace_major", 0) or 0)
+    ws_version = str(getattr(cfg, "workspace_version", "") or "")
+    if ws_major or ws_version:
+        header_parts = []
+        if ws_version:
+            header_parts.append(f"PZ {ws_version}")
+        if ws_major:
+            header_parts.append(f"major {ws_major}")
+        print(f"workspace: {' · '.join(header_parts)}")
+        for dest in ("client", "server"):
+            if profile.pz_install(dest) is not None:
+                d = _detect_destination_version(profile, dest)
+                print(f"  {dest}: {d}")
+        print()
+
     es = read_enter(profile.enter_file)
     subs = existing_subtrees(profile.pristine)
 

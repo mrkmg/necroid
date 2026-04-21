@@ -16,17 +16,20 @@ from __future__ import annotations
 import shutil
 
 from .. import logging_util as log
+from ..config import read_config
 from ..errors import ClientOnlyViolation, ConflictError
 from ..fsops import mirror_tree
 from ..mod import ensure_mod_exists, read_mod_json
 from ..profile import existing_subtrees
 from ..stackapply import apply_stack
 from ..state import write_enter
+from ._resolve import resolve_mod
 
 
 def run(args) -> int:
     p = args.profile
-    name: str = args.mod
+    cfg = read_config(args.root)
+    name: str = resolve_mod(p.mods_dir, cfg.workspace_major, args.mod)
 
     md = ensure_mod_exists(p.mods_dir, name)
     mj = read_mod_json(md)

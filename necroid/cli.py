@@ -62,6 +62,10 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="which PZ install to seed the workspace from (default: config.workspaceSource or 'client')")
     s.add_argument("--pz-install", default=None, help="override PZ install path")
     s.add_argument("--force", action="store_true", help="redo steps even if they look up-to-date")
+    s.add_argument("--yes", "-y", action="store_true",
+                   help="accept the detected PZ major and auto-migrate legacy mod dirs without prompting")
+    s.add_argument("--major", type=int, default=None,
+                   help="override the detected workspace major (advanced; normally leave unset)")
 
     s = sub.add_parser("new", help="create a new mod")
     s.add_argument("name")
@@ -72,6 +76,8 @@ def _build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("list", help="tabular view of all mods")
     s.add_argument("--to", dest="install_to", choices=("client", "server"), default=None,
                    help="destination to count patches for (default: config.defaultInstallTo)")
+    s.add_argument("--all", dest="show_all", action="store_true",
+                   help="show mods for every PZ major (default: filter to workspaceMajor)")
 
     s = sub.add_parser("status", help="working-tree divergence or per-mod patch applicability")
     s.add_argument("name", nargs="?", default=None)
@@ -104,6 +110,9 @@ def _build_parser() -> argparse.ArgumentParser:
     s.add_argument("mods", nargs="+")
     s.add_argument("--to", dest="install_to", choices=("client", "server"), default=None,
                    help="install destination (default: config.defaultInstallTo)")
+    s.add_argument("--replace", action="store_true",
+                   help="replace the destination's stack with the given mods exactly "
+                        "(default: additive — merges into the existing stack)")
 
     s = sub.add_parser("uninstall", help="restore everything, or remove named mods and rebuild")
     s.add_argument("mods", nargs="*")
@@ -119,6 +128,10 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="which install to re-seed from (default: config.workspaceSource)")
     s.add_argument("--to", dest="install_to", choices=("client", "server"), default=None,
                    help="install destination to use for mod applicability checks")
+    s.add_argument("--force-major-change", action="store_true",
+                   help="allow the workspace major to change (invalidates existing mods' patches)")
+    s.add_argument("--yes", "-y", action="store_true",
+                   help="skip confirmation prompts")
 
     return p
 

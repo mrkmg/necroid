@@ -1,12 +1,14 @@
 """`.mod-config.json` read/write + path expansion.
 
-Schema (v3):
+Schema (v1):
     {
-      "version": 3,
+      "version": 1,
       "clientPzInstall": "C:/Program Files (x86)/Steam/steamapps/common/ProjectZomboid",
       "serverPzInstall": "...Project Zomboid Dedicated Server",
       "defaultInstallTo": "client",
       "workspaceSource": "client",
+      "workspaceMajor": 41,
+      "workspaceVersion": "41.78.19",
       "originalsDir": "workspace/classes-original"
     }
 
@@ -15,6 +17,15 @@ and `originalsDir` are optional.
 
 `workspaceSource` records which PZ install seeded `data/workspace/`. Only matters
 for `resync-pristine` (re-hydrates from the same source unless `--from` overrides).
+
+`workspaceMajor` is the PZ major version the workspace is bound to (e.g. 41).
+Mod dirs under `data/mods/` are suffixed with `-<major>` and filtered against
+this value in every surface (list, status, install, GUI). Set at `init` time
+from `workspaceVersion`. Changing it requires `resync-pristine --force-major-change`.
+
+`workspaceVersion` is the full detected PZ version string (`PzVersion.__str__`,
+e.g. `"41.78.19"`) at the time the workspace was seeded. Used for minor/patch
+drift warnings at install time; never a hard gate.
 """
 from __future__ import annotations
 
@@ -26,7 +37,7 @@ from pathlib import Path
 
 from .errors import ConfigError
 
-CONFIG_VERSION = 3
+CONFIG_VERSION = 1
 
 _VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
@@ -52,6 +63,8 @@ class ModConfig:
     server_pz_install: Path | None = None
     default_install_to: str = "client"
     workspace_source: str = "client"
+    workspace_major: int = 0
+    workspace_version: str = ""
     originals_dir_override: str = ""
     _raw: dict = field(default_factory=dict, repr=False)
     _path: Path | None = field(default=None, repr=False)
@@ -86,7 +99,7 @@ def read_config(root: Path, required: bool = True) -> ModConfig:
     if ver != CONFIG_VERSION:
         raise ConfigError(
             f"{path} is schema v{ver}; this tool requires v{CONFIG_VERSION}.\n"
-            f"    re-run `necroid init` (this tool migrated to a single shared workspace)."
+            f"    re-run `necroid init` to rebuild it."
         )
 
     originals_raw = raw.get("originalsDir", "")
@@ -97,12 +110,19 @@ def read_config(root: Path, required: bool = True) -> ModConfig:
             f"    re-run `necroid init` to regenerate."
         )
 
+    try:
+        workspace_major = int(raw.get("workspaceMajor", 0) or 0)
+    except (TypeError, ValueError):
+        raise ConfigError(f"{path}: workspaceMajor must be an integer")
+
     cfg = ModConfig(
         version=ver,
         client_pz_install=expand_config_path(raw.get("clientPzInstall"), root),
         server_pz_install=expand_config_path(raw.get("serverPzInstall"), root),
         default_install_to=raw.get("defaultInstallTo", "client"),
         workspace_source=raw.get("workspaceSource", "client"),
+        workspace_major=workspace_major,
+        workspace_version=str(raw.get("workspaceVersion", "") or ""),
         originals_dir_override=str(originals_raw or ""),
         _raw=raw,
         _path=path,
@@ -119,6 +139,8 @@ def write_config(root: Path, cfg: ModConfig) -> Path:
         "serverPzInstall": str(cfg.server_pz_install).replace("\\", "/") if cfg.server_pz_install else "",
         "defaultInstallTo": cfg.default_install_to,
         "workspaceSource": cfg.workspace_source,
+        "workspaceMajor": int(cfg.workspace_major),
+        "workspaceVersion": cfg.workspace_version,
     }
     if cfg.originals_dir_override:
         obj["originalsDir"] = cfg.originals_dir_override

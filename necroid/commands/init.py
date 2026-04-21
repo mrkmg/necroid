@@ -10,23 +10,25 @@ Steps:
     4. Copy PZ top-level *.jar  -> workspace/libs/
     5. Copy PZ class subtrees    -> workspace/classes-original/
     6. Rejar each subtree        -> workspace/libs/classpath-originals/<name>.jar
-    7. Write data/.mod-config.json (records workspaceSource + the chosen install).
+    7. Detect PZ version via probe; confirm workspace major; write config.
     8. Decompile every present class subtree -> workspace/src-pristine/ (Vineflower).
-    9. Scaffold data/mods/.
+    9. Scaffold data/mods/ and migrate legacy unversioned mod dirs.
 """
 from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from .. import logging_util as log
 from ..config import ModConfig, config_path, read_config, write_config
 from ..decompile import ensure_vineflower, decompile_all
-from ..errors import ConfigError
+from ..errors import ConfigError, PzVersionDetectError
 from ..fsops import ensure_dir, mirror_tree
 from ..hashing import file_sha256
 from ..profile import PZ_CLASS_SUBTREES, autodetect_server_install, load_profile
+from ..pzversion import detect_pz_version
 from ..steam_discovery import discover_client_install
 from ..tools import check_all, resolve
 
@@ -127,10 +129,7 @@ def run(args) -> int:
     source: str = args.source  # populated in cli.py from --from (or default)
 
     log.step(f"init [from={source}] — step 1/9: resolve PZ install path")
-    try:
-        cfg = read_config(root, required=False)
-    except ConfigError:
-        cfg = ModConfig(_path=config_path(root))
+    cfg = read_config(root, required=False)
 
     existing = cfg.pz_install(source)
     pz = _resolve_pz_install(source, existing, args.pz_install, root)
@@ -167,9 +166,26 @@ def run(args) -> int:
     log.step(f"step 6/9: rejar class trees -> {profile.classpath_originals.relative_to(root)}")
     _rejar_originals(profile.originals, profile.classpath_originals, force=args.force)
 
-    log.step(f"step 7/9: write {config_path(root).relative_to(root)}")
+    log.step(f"step 7/9: detect PZ version; write {config_path(root).relative_to(root)}")
+    try:
+        detected = detect_pz_version(content, Path(__file__).resolve().parent.parent, root / "data")
+    except PzVersionDetectError as e:
+        raise ConfigError(
+            f"could not detect PZ version at {content}: {e}\n"
+            f"    workspace cannot be bound to a major without a version. Aborting."
+        )
+    log.info(f"detected PZ version: {detected}")
+
+    chosen_major = _choose_workspace_major(detected.major, args)
+    if chosen_major != detected.major:
+        log.warn(
+            f"workspace will be bound to major {chosen_major}, but source install is "
+            f"PZ {detected}. This is advanced; compile correctness is not guaranteed."
+        )
+    cfg.workspace_major = int(chosen_major)
+    cfg.workspace_version = str(detected)
     write_config(root, cfg)
-    log.info(f"wrote {config_path(root)}")
+    log.info(f"wrote {config_path(root)}  (workspaceMajor={cfg.workspace_major})")
 
     log.step(f"step 8/9: decompile class subtrees -> {profile.pristine.relative_to(root)}")
     libs_jars = sorted(profile.libs.glob("*.jar")) + sorted(profile.classpath_originals.glob("*.jar"))
@@ -185,6 +201,35 @@ def run(args) -> int:
     log.step("step 9/9: scaffold mods/")
     ensure_dir(profile.mods_dir)
 
-    log.success(f"init [from={source}] complete.")
+    log.success(f"init [from={source}] complete. Workspace bound to PZ {cfg.workspace_version} (major {cfg.workspace_major}).")
     log.info("next: `necroid new <mod-name>`  then  `capture <mod-name>`")
     return 0
+
+
+def _choose_workspace_major(detected_major: int, args) -> int:
+    """Determine the workspace major to bind to.
+
+    --major N           explicit override (advanced).
+    --yes / non-tty     accept detected major silently.
+    interactive tty     prompt to confirm; default=yes.
+    """
+    override = getattr(args, "major", None)
+    if override is not None:
+        return int(override)
+
+    assume_yes = bool(getattr(args, "yes", False))
+    if assume_yes or not sys.stdin.isatty():
+        return int(detected_major)
+
+    try:
+        resp = input(
+            f"Bind this workspace to PZ major {detected_major}? [Y/n]: "
+        ).strip().lower()
+    except EOFError:
+        return int(detected_major)
+    if resp in ("", "y", "yes"):
+        return int(detected_major)
+    raise ConfigError(
+        "init aborted: workspace major not confirmed. Re-run with `--yes` or "
+        "`--major N` if you know what you want."
+    )

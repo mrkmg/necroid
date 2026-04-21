@@ -16,6 +16,7 @@ import shutil
 from pathlib import Path
 
 from .. import logging_util as log
+from ..config import read_config
 from ..fsops import ensure_dir
 from ..hashing import file_sha256
 from ..mod import (
@@ -30,6 +31,7 @@ from ..mod import (
 from ..patching import git_diff_no_index
 from ..profile import existing_subtrees
 from ..state import read_enter, utc_now_iso
+from ._resolve import resolve_mod
 
 
 def _existing_postfixed_opposite(patches_dir: Path, rel: str, kind: str, other: str) -> bool:
@@ -41,7 +43,8 @@ def _existing_postfixed_opposite(patches_dir: Path, rel: str, kind: str, other: 
 
 def run(args) -> int:
     p = args.profile
-    name = args.name
+    cfg = read_config(args.root)
+    name = resolve_mod(p.mods_dir, cfg.workspace_major, args.name)
     md = ensure_mod_exists(p.mods_dir, name)
     mj = read_mod_json(md)
 
@@ -139,10 +142,12 @@ def run(args) -> int:
                 log.info(f"del:  {rel}")
                 touched_count += 1
 
-    # Refresh snapshot + updatedAt
+    # Refresh snapshot, updatedAt, and stamp expectedVersion from workspace.
     items = patch_items(md, install_as)
     mj.pristine_snapshot = pristine_snapshot(p.pristine, items)
     mj.updated_at = utc_now_iso()
+    if cfg.workspace_version:
+        mj.expected_version = cfg.workspace_version
     write_mod_json(md, mj)
 
     log.success(f"captured {touched_count} file(s) into {patches_dir}")

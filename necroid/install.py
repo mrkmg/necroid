@@ -15,11 +15,13 @@ import shutil
 from pathlib import Path
 
 from . import logging_util as log
-from .errors import BuildError, ClientOnlyViolation, ConflictError
+from .config import read_config
+from .errors import BuildError, ClientOnlyViolation, ConflictError, PzMajorMismatch, PzVersionDetectError
 from .fsops import empty_dir, inner_class_files, mirror_tree
 from .hashing import file_sha256
-from .mod import ensure_mod_exists, read_mod_json
+from .mod import ensure_mod_exists, mod_major, parse_mod_dirname, read_mod_json
 from .profile import Profile, existing_subtrees, require_pz_install
+from .pzversion import PzVersion, detect_pz_version
 from .stackapply import apply_stack
 from .state import InstalledEntry, ModState, read_state, reset_state, utc_now_iso, write_state
 from . import buildjava
@@ -49,6 +51,10 @@ def install_stack(profile: Profile, stack: list[str], install_to: str) -> None:
     _assert_destination_allowed(profile, stack, install_to)
 
     content_dir = profile.content_dir_for(install_to)
+
+    # --- PZ version gate -------------------------------------------------
+    cfg = read_config(profile.root)
+    detected = _detect_and_enforce_pz_version(profile, content_dir, install_to, cfg, stack)
 
     # --- Phase 1: stage source ---
     log.step(f"stage source ({profile.stage})")
@@ -147,8 +153,88 @@ def install_stack(profile: Profile, stack: list[str], install_to: str) -> None:
         stack=list(stack),
         installed_at=utc_now_iso(),
         installed=installed,
+        pz_version=str(detected) if detected else None,
     ))
     log.success(f"install complete. to={install_to} stack=[{', '.join(stack)}]  class files={len(installed)}")
+
+
+def _detect_and_enforce_pz_version(profile: Profile, content_dir: Path, install_to: str,
+                                   cfg, stack: list[str]) -> PzVersion | None:
+    """Detect the target install's PZ version and enforce the major gate.
+
+    Hard failures:
+      * workspace has a bound major and the install's major differs,
+      * any mod in the stack has a `-<major>` suffix that disagrees with the
+        workspace major (defense in depth; CLI resolver should already block).
+
+    Soft warnings (install still proceeds):
+      * workspace major unset (legacy config without the v4 binding),
+      * mod.expected_version differs from the detected version (minor/patch drift),
+      * mod dir has no `-<major>` suffix (legacy unversioned).
+
+    Returns the detected `PzVersion` (stored in ModState) or raises on a
+    hard failure."""
+    try:
+        necroid_pkg = Path(__file__).resolve().parent
+        detected = detect_pz_version(content_dir, necroid_pkg, profile.root / "data")
+    except PzVersionDetectError as e:
+        raise PzVersionDetectError(
+            f"cannot install to {install_to}: {e}\n"
+            f"    the install's PZ version must be detectable before any .class files are touched."
+        )
+
+    ws_major = int(getattr(cfg, "workspace_major", 0) or 0)
+    ws_version = str(getattr(cfg, "workspace_version", "") or "")
+
+    if ws_major and detected.major != ws_major:
+        raise PzMajorMismatch(
+            f"{install_to} install is PZ {detected} (major {detected.major}), but "
+            f"workspace is bound to major {ws_major}. "
+            f"Run `necroid resync-pristine --from {install_to} --force-major-change` "
+            f"to re-bind the workspace to {install_to}'s major."
+        )
+    if not ws_major:
+        log.warn(
+            "workspace has no bound major (legacy config). "
+            "Run `necroid init` to upgrade — some checks are skipped."
+        )
+
+    for name in stack:
+        parsed = parse_mod_dirname(name)
+        if parsed is None:
+            log.warn(f"mod '{name}' has no `-<major>` suffix (legacy). "
+                     f"Run `necroid init` to migrate.")
+            continue
+        _, mod_m = parsed
+        if ws_major and mod_m != ws_major:
+            raise PzMajorMismatch(
+                f"mod '{name}' is for PZ {mod_m}; workspace is bound to PZ {ws_major}."
+            )
+        # Minor/patch drift (soft).
+        try:
+            mj = read_mod_json(profile.mods_dir / name)
+        except Exception:
+            continue
+        if mj.expected_version:
+            try:
+                ev = PzVersion.parse(mj.expected_version)
+            except Exception:
+                log.warn(f"mod '{name}' has unparseable expectedVersion='{mj.expected_version}'.")
+                continue
+            if ev.major == detected.major and (ev.minor, ev.patch, ev.suffix) != (
+                    detected.minor, detected.patch, detected.suffix):
+                log.warn(
+                    f"mod '{name}' was captured against PZ {ev}; {install_to} install is "
+                    f"PZ {detected}. Recapture recommended."
+                )
+
+    if ws_version and ws_version != str(detected):
+        log.warn(
+            f"workspace was seeded against PZ {ws_version}, but {install_to} install is "
+            f"PZ {detected}. Consider `necroid resync-pristine --from {install_to}`."
+        )
+
+    return detected
 
 
 def _restore_installed(profile: Profile, install_to: str) -> None:

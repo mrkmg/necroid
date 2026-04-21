@@ -33,6 +33,7 @@ class ModState:
     stack: list[str] = field(default_factory=list)
     installed_at: str | None = None
     installed: list[InstalledEntry] = field(default_factory=list)
+    pz_version: str | None = None   # full PZ version string recorded at install time
 
     def to_json(self) -> dict:
         return {
@@ -40,15 +41,18 @@ class ModState:
             "stack": list(self.stack),
             "installedAt": self.installed_at,
             "installed": [e.to_json() for e in self.installed],
+            "pzVersion": self.pz_version,
         }
 
     @staticmethod
     def from_json(o: dict) -> "ModState":
+        pz = o.get("pzVersion")
         return ModState(
             version=int(o.get("version", 1)),
             stack=list(o.get("stack") or []),
             installed_at=o.get("installedAt"),
             installed=[InstalledEntry.from_json(e) for e in (o.get("installed") or [])],
+            pz_version=str(pz) if pz else None,
         )
 
 
