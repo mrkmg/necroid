@@ -69,7 +69,16 @@ class Profile:
     @property
     def workspace_dir(self) -> Path: return self.data_dir / "workspace"
     @property
-    def src(self) -> Path:           return self.workspace_dir / "src"
+    def src(self) -> Path:
+        # Legacy single-tree path. Kept so any stray caller still resolves,
+        # but no command uses it any more — each mod has its own src-<name>/
+        # tree at the repo root (see `src_for`). Safe to remove once external
+        # callers are gone.
+        return self.workspace_dir / "src"
+    def src_for(self, mod_name: str) -> Path:
+        """Per-mod editable working tree, rooted at the repo root.
+        `enter` populates it; `capture`/`test`/`status`/`reset` read/write it."""
+        return self.root / f"src-{mod_name}"
     @property
     def pristine(self) -> Path:      return self.workspace_dir / "src-pristine"
     @property

@@ -1,4 +1,4 @@
-"""capture — diff src/ vs src-pristine/, rewrite mods/<name>/patches/.
+"""capture — diff src-<name>/ vs src-pristine/, rewrite mods/<name>/patches/.
 
 The mod's postfix layout (generic `.patch` vs `.patch.{client|server}`) is
 preserved per-file:
@@ -47,6 +47,11 @@ def run(args) -> int:
 
     # Figure out which destination's variant we're rewriting.
     es = read_enter(p.enter_file)
+    if es and es.mod != name:
+        raise SystemExit(
+            f"currently entered mod is '{es.mod}', not '{name}'. "
+            f"Run `necroid enter {name}` first."
+        )
     install_as: str = es.install_as if es else args.install_as
     if mj.client_only and install_as != "client":
         raise SystemExit(
@@ -55,9 +60,15 @@ def run(args) -> int:
         )
     other = "server" if install_as == "client" else "client"
 
+    src_dir = p.src_for(name)
+    if not src_dir.exists():
+        raise SystemExit(
+            f"no working tree at {src_dir} — run `necroid enter {name}` first."
+        )
+
     patches_dir = md / "patches"
     ensure_dir(patches_dir)
-    log.info(f"capture {name} (as {install_as}): diffing src/ vs src-pristine/")
+    log.info(f"capture {name} (as {install_as}): diffing {src_dir.name}/ vs src-pristine/")
 
     # Remove every file applicable to install_as (shared + `.{install_as}`).
     # Opposite-side `.{other}` files stay put.
@@ -88,7 +99,7 @@ def run(args) -> int:
 
     # Modified + new (every subtree that has a src/ counterpart)
     for sub in subs:
-        src_sub = p.src / sub
+        src_sub = src_dir / sub
         if not src_sub.exists():
             continue
         for java in sorted(src_sub.rglob("*.java")):
@@ -121,7 +132,7 @@ def run(args) -> int:
             if not pr.is_file():
                 continue
             rel = f"{sub}/" + pr.relative_to(pristine_sub).as_posix()
-            if not (p.src / rel).exists():
+            if not (src_dir / rel).exists():
                 dst = patches_dir / _out_name(rel, "delete")
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 dst.write_bytes(b"")

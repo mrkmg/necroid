@@ -153,16 +153,16 @@ necroid/                              # this repo
 │   ├── mods/                         # tracked — the portable patch-set library
 │   │   └── <name>/{mod.json, patches/}
 │   ├── .mod-config.json              # local-only, written by `init`
-│   ├── .mod-enter.json               # local-only: current entered stack + install_as
+│   ├── .mod-enter.json               # local-only: currently entered mod + install_as
 │   ├── .mod-state-client.json        # local-only: last install to client destination
 │   ├── .mod-state-server.json        # local-only: last install to server destination
 │   ├── tools/vineflower.jar          # local-only
 │   └── workspace/                    # local-only, one shared PZ-sourced workspace
-│       ├── src/                      # editable working tree (reset by `enter`)
 │       ├── src-pristine/             # frozen pristine decompile
 │       ├── classes-original/         # verbatim PZ classes (identical client/server)
 │       ├── libs/                     # PZ jars + classpath-originals/
 │       └── build/                    # javac output + staging
+├── src-<modname>/                    # local-only, per-mod editable tree (one per entered mod)
 ├── dist/                             # local-only, output of build_dist.py
 ├── CLAUDE.md, README.md
 └── .gitignore
@@ -185,16 +185,17 @@ During development, `python -m necroid` works equivalently from the repo root.
 
 ```bash
 necroid new my-mod -d "does a thing"     # scaffold data/mods/my-mod/ (add --client-only if it is)
-necroid enter my-mod                     # reset src/, apply patches
-# ...edit under data/workspace/src/zombie/...
+necroid enter my-mod                     # seed src-my-mod/ from pristine + patches (or preserve if exists)
+# ...edit under src-my-mod/zombie/...
 necroid capture my-mod                   # rewrite patches from working tree
 necroid test                             # javac-only compile, no install (fast sanity check)
 necroid install my-mod --to client       # compile + install; play-test
+necroid clean my-mod                     # (optional) delete src-my-mod/ when done
 ```
 
-For a stack (`enter mod-a mod-b`), captures always write to the **last** mod in the entered stack. To edit an upstream mod in a stack, re-enter with it last, or enter it alone.
+Only one mod is entered at a time. Each mod gets its own `src-<name>/` tree at the repo root, so switching between mods via `necroid enter other-mod` preserves in-progress edits on the previous tree. Use `necroid clean` (with or without a mod name) to delete trees, and `necroid reset` to re-seed the currently entered mod's tree from pristine + patches. Stacking (`install mod-a mod-b …`) still works for install-time composition — only `enter` is single-mod.
 
-After a PZ update, run `necroid resync-pristine` and `enter` each STALE mod to resolve the new conflicts.
+After a PZ update, run `necroid resync-pristine` and `enter` each STALE mod (or `reset` it) to resolve the new conflicts.
 
 ### Building a release
 

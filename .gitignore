@@ -5,6 +5,12 @@
 /data/workspace/
 
 # -----------------------------------------------------------------------------
+# Per-mod editable working trees — `necroid enter <mod>` seeds one at
+# `/src-<mod>/`. Ephemeral; user-local. `necroid clean` removes them.
+# -----------------------------------------------------------------------------
+/src-*/
+
+# -----------------------------------------------------------------------------
 # Downloaded tooling. The tools/ dir itself is tracked via .gitkeep; contents are not.
 # -----------------------------------------------------------------------------
 /data/tools/*

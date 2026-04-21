@@ -71,31 +71,46 @@ def reset_state(state_file: Path) -> None:
 
 @dataclass
 class EnterState:
-    stack: list[str]
+    mod: str
     entered_at: str
     install_as: str = "client"   # which destination's postfix variant was applied
 
     def to_json(self) -> dict:
         return {
-            "stack": list(self.stack),
+            "mod": self.mod,
             "enteredAt": self.entered_at,
             "installAs": self.install_as,
         }
 
 
 def read_enter(enter_file: Path) -> EnterState | None:
+    """Read the entered-mod record.
+
+    Single-mod schema: {"mod": "...", "enteredAt": "...", "installAs": "..."}.
+    Legacy schema carried a `stack: [...]` list; a single-element legacy stack
+    auto-migrates in-memory (caller should rewrite on next write). A multi-mod
+    legacy stack is treated as invalid — enter-stacking is no longer supported.
+    """
     if not enter_file.exists():
         return None
     o = json.loads(enter_file.read_text(encoding="utf-8"))
+    mod = o.get("mod")
+    if not mod:
+        legacy_stack = list(o.get("stack") or [])
+        if len(legacy_stack) == 1:
+            mod = legacy_stack[0]
+        else:
+            # Unusable (empty or multi-mod). Caller treats as "nothing entered".
+            return None
     return EnterState(
-        stack=list(o.get("stack") or []),
+        mod=str(mod),
         entered_at=o.get("enteredAt", ""),
         install_as=o.get("installAs", "client"),
     )
 
 
-def write_enter(enter_file: Path, stack: list[str], install_as: str = "client") -> EnterState:
-    es = EnterState(stack=list(stack), entered_at=_utc_iso(), install_as=install_as)
+def write_enter(enter_file: Path, mod: str, install_as: str = "client") -> EnterState:
+    es = EnterState(mod=mod, entered_at=_utc_iso(), install_as=install_as)
     enter_file.parent.mkdir(parents=True, exist_ok=True)
     enter_file.write_text(json.dumps(es.to_json(), indent=2) + "\n", encoding="utf-8")
     return es

@@ -65,19 +65,26 @@ There are **no tests and no linter** for the PZ-decompiled code — it's decompi
 ### Creating a new mod
 
 1. `necroid new my-mod --description "..."` — scaffolds `data/mods/my-mod/mod.json` + empty `patches/`. Add `--client-only` if the mod touches client-only code.
-2. `necroid enter my-mod` — mirrors pristine into `data/workspace/src/` and applies my-mod's patches (none yet for a fresh mod). Working tree is now "entered" on my-mod (recorded in `data/.mod-enter.json`, including `installAs`).
-3. Edit files under `data/workspace/src/zombie/`. Only touch files you intend to ship — every diff vs pristine becomes a patch.
-4. `necroid capture my-mod` — diffs `workspace/src/` against `workspace/src-pristine/` and writes `.java.patch` / `.java.new` / `.java.delete` under `data/mods/my-mod/patches/`. Safe to run repeatedly.
+2. `necroid enter my-mod` — if `src-my-mod/` (at the repo root) doesn't exist yet, seeds it from pristine and applies my-mod's patches (none yet for a fresh mod); if it already exists, preserves its contents. Working tree is now "entered" on my-mod (recorded in `data/.mod-enter.json`, including `installAs`). Each mod gets its own `src-<name>/` tree at the repo root, so switching between mods is non-destructive.
+3. Edit files under `src-my-mod/zombie/`. Only touch files you intend to ship — every diff vs pristine becomes a patch.
+4. `necroid capture my-mod` — diffs `src-my-mod/` against `data/workspace/src-pristine/` and writes `.java.patch` / `.java.new` / `.java.delete` under `data/mods/my-mod/patches/`. Safe to run repeatedly.
 5. `necroid test` — javac-only compile of the currently-entered working tree into `data/workspace/build/classes/`. No install, no staging, no PZ-install writes. Fastest way to catch compile errors before touching the game. Run it anytime between edits.
 6. `necroid install my-mod --to client` — compile + install; play-test.
 
 ### Updating an existing mod
 
-1. `necroid enter my-mod` — resets `workspace/src/` and reapplies my-mod's patches so the working tree matches the mod's current state. Do this even if you think `src/` is already correct — only way to guarantee a clean baseline.
-2. Edit under `data/workspace/src/zombie/`.
+1. `necroid enter my-mod` — marks my-mod as entered and, if no `src-my-mod/` tree exists yet, seeds it from pristine + my-mod's patches. If the tree already exists (from a prior `enter`), its contents are preserved so in-progress edits aren't lost. Pass `--force` to wipe and re-seed, or run `necroid reset` afterwards for the same effect while keeping enter state.
+2. Edit under `src-my-mod/zombie/`.
 3. `necroid capture my-mod` — rewrites the patch set. Patches for files you reverted to pristine drop out automatically.
-4. For a stack (`enter mod-a mod-b`): captures always write to the **last** mod in the entered stack. To edit an upstream mod, re-enter with it last, or enter it alone.
-5. Stale mods after a PZ update: `necroid status my-mod` reports whether each patch still applies. If stale, `enter` the mod (expect 3-way merge conflict markers in `src/`), resolve by hand, then `capture`.
+4. Only one mod can be entered at a time. `necroid enter other-mod` preserves `src-my-mod/` on disk (switching is non-destructive) and sets other-mod as the entered one. `necroid clean` (see below) removes per-mod trees.
+5. Stacking is an **install-time** concern only (`necroid install mod-a mod-b …`). You cannot enter multiple mods; to edit a mod that sits on top of another in a stack, enter it directly — its patches are authored against pristine, not against the upstream mod.
+6. Stale mods after a PZ update: `necroid status my-mod` reports whether each patch still applies. If stale, `enter` the mod (expect 3-way merge conflict markers in `src-my-mod/`), resolve by hand, then `capture`.
+
+### Cleaning up entered working trees
+
+- `necroid clean` — delete every `src-*/` directory at the repo root and clear enter state. `--yes` skips the confirmation prompt.
+- `necroid clean my-mod` — delete only `src-my-mod/`. If my-mod was the currently entered mod, enter state is cleared too.
+- `necroid reset` — re-seeds the currently entered mod's `src-<mod>/` from pristine + patches (discards local edits, keeps enter state). Use this when you want a fresh baseline without losing track of which mod you're on.
 
 ### Installing / uninstalling
 
@@ -116,7 +123,7 @@ There are **no tests and no linter** for the PZ-decompiled code — it's decompi
 - `data/.mod-config.json` — `clientPzInstall`, `serverPzInstall`, `defaultInstallTo`, `workspaceSource`. Schema v3. Local-only.
 - `data/mods/<name>/` — each mod: `mod.json` (with `clientOnly`) + `patches/` containing `.java.patch` / `.java.new` / `.java.delete`. **Tracked**; the portable artifact.
 - `data/tools/vineflower.jar` — downloaded by `init`. Local-only.
-- `data/workspace/src/{zombie,astar,com,de,fmod,javax,org,se}/` — decompiled Java, editable. `enter` resets and patches, `capture` reads back. Every class subtree PZ ships is decompiled, so mods can touch any of them (e.g. `se/krka/kahlua/...` for Lua-interpreter changes).
+- `src-<modname>/{zombie,astar,com,de,fmod,javax,org,se}/` — per-mod editable working tree at the **repo root**. `enter` seeds it from pristine + patches (preserving contents if it already exists), `capture` reads it back into the mod's patch set, `reset` re-seeds it, `clean` deletes it. Gitignored via `/src-*/`. Every class subtree PZ ships is decompiled, so mods can touch any of them (e.g. `se/krka/kahlua/...` for Lua-interpreter changes). Legacy `data/workspace/src/` (single shared tree) is no longer used — safe to delete if present.
 - `data/workspace/src-pristine/<same subtrees>/` — **frozen** pristine decompile. Populated by `init`; refreshed by `resync-pristine`.
 - `data/workspace/classes-original/` — verbatim class-file copies from the Steam install. Reference and restore source; **do not edit**.
 - `data/workspace/libs/` — every jar from the PZ install used to seed the workspace.
@@ -124,13 +131,13 @@ There are **no tests and no linter** for the PZ-decompiled code — it's decompi
 - `data/workspace/build/classes/` — javac output mirroring `zombie/...`.
 - `data/workspace/build/stage-src/` — ephemeral install-staging tree.
 - `data/.mod-state-client.json` / `data/.mod-state-server.json` — per-destination runtime manifest of what the last install to that destination wrote; used by `uninstall --to <dest>`.
-- `data/.mod-enter.json` — the mod stack the working tree is currently "entered" on, plus the `installAs` destination used when applying postfix variants.
+- `data/.mod-enter.json` — the single mod the working tree is currently "entered" on (`{mod, enteredAt, installAs}`), plus the `installAs` destination used when applying postfix variants. Legacy stacked entries (multiple mods) are treated as invalid on read — re-enter with a single mod.
 - `build/` — PyInstaller scratch + raw output. Local-only.
 - `dist/` — produced by `packaging/build_dist.py`: self-contained binary + `data/mods/`. Local-only; zipped and shipped via GitHub Releases.
 
 ## When a PZ update lands
 
-Run `necroid resync-pristine` (one pass — workspace is shared). Before refreshing pristine sources, any installed stack on client or server is uninstalled first — otherwise the modded `.class` files in the PZ install would get copied back into `classes-original/` and adopted as the new pristine, contaminating every mod's diffs. If a destination has installed state but its PZ install is unreachable, resync aborts rather than silently skipping. After the guard, it re-runs the `init` flow with `--force` against `config.workspaceSource` (refreshing `classes-original/`, `libs/`, `libs/classpath-originals/`, and every `src-pristine/<subtree>/`), then re-fingerprints every mod against the new pristine. Mods whose patches no longer apply are flagged STALE — `enter` them one at a time, resolve conflicts in `src/`, then `capture`.
+Run `necroid resync-pristine` (one pass — workspace is shared). Before refreshing pristine sources, any installed stack on client or server is uninstalled first — otherwise the modded `.class` files in the PZ install would get copied back into `classes-original/` and adopted as the new pristine, contaminating every mod's diffs. If a destination has installed state but its PZ install is unreachable, resync aborts rather than silently skipping. After the guard, it re-runs the `init` flow with `--force` against `config.workspaceSource` (refreshing `classes-original/`, `libs/`, `libs/classpath-originals/`, and every `src-pristine/<subtree>/`), then re-fingerprints every mod against the new pristine. Mods whose patches no longer apply are flagged STALE — `enter` them one at a time (re-run with `--force` to re-seed `src-<mod>/` from the refreshed pristine), resolve conflicts in `src-<mod>/`, then `capture`. `resync-pristine` does **not** touch existing `src-*/` trees, so old per-mod edits aren't silently rebased — use `necroid reset` (or `necroid clean <mod>` then re-`enter`) to rebase onto the new pristine.
 
 Vineflower writes files declaring `package <subtree>;` into its output root (not a nested folder) because each `classes-original/<subtree>/` *is* the package root. `decompile_subtree` therefore decompiles into a tmp dir and renames it into `src-pristine/<subtree>/` as the final step — that's not a bug. Each subtree is decompiled in its own Vineflower invocation.
 

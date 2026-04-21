@@ -2,4 +2,10 @@
 
 1. Add groups for mods - e.g. "Utility", "Fun", "Admin", etc.
 2. Combine the radio mods into one
-3. Make "entering" a mod create a directory in the root of repo instead of inside data/workspace. These should be able to be cleaned up. Different mod would get different copies. eg. src-mod1, sec-mod2. Ensure all src-* are gitignored.
+3. Add support for dependent mods. Should provide layered diff applications.
+4. Add support for project zomboid versions. Mods should be able to support multiple versions, with auto-detection of the version installed and auto-installation of the correct version of the mod.
+
+## Ideas - Possible Enhancements
+
+- Create full integration with workshop and mod loading inside project zomboid.
+- Create support for companion steam workshop mod recommendations.

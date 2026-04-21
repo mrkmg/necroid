@@ -47,43 +47,58 @@ def _status_mod(profile, install_to: str, name: str) -> int:
 
 
 def _status_tree(profile) -> int:
-    print(f"working tree: {profile.src}")
-    subs = existing_subtrees(profile.pristine)
-    diverged: list[str] = []
-    if not subs:
-        print("  (src-pristine/ empty — run `necroid init`)")
-    else:
-        for sub in subs:
-            src_sub = profile.src / sub
-            pristine_sub = profile.pristine / sub
-            if not src_sub.exists():
-                print(f"  (src/{sub}/ missing — consider `reset`)")
-                continue
-            for p in src_sub.rglob("*.java"):
-                if not p.is_file():
-                    continue
-                rel = f"{sub}/" + p.relative_to(src_sub).as_posix()
-                pr = profile.pristine / rel
-                if not pr.exists():
-                    diverged.append(f"+ {rel}")
-                    continue
-                if file_sha256(p) != file_sha256(pr):
-                    diverged.append(f"M {rel}")
-            for p in pristine_sub.rglob("*.java"):
-                if not p.is_file():
-                    continue
-                rel = f"{sub}/" + p.relative_to(pristine_sub).as_posix()
-                if not (profile.src / rel).exists():
-                    diverged.append(f"- {rel}")
-    if not diverged:
-        print("  clean (matches src-pristine)")
-    else:
-        print(f"  {len(diverged)} diverging file(s):")
-        for d in sorted(diverged):
-            print(f"    {d}")
     es = read_enter(profile.enter_file)
-    if es:
-        print(f"  entered stack: {', '.join(es.stack)}  (as {es.install_as})")
+    subs = existing_subtrees(profile.pristine)
+
+    if not es:
+        print("no mod is entered. (run `necroid enter <mod>` to start editing)")
+    else:
+        src_dir = profile.src_for(es.mod)
+        print(f"entered: {es.mod}  (as {es.install_as})")
+        print(f"working tree: {src_dir}")
+        diverged: list[str] = []
+        if not src_dir.exists():
+            print(f"  (working tree missing — run `necroid enter {es.mod} --force`)")
+        elif not subs:
+            print("  (src-pristine/ empty — run `necroid init`)")
+        else:
+            for sub in subs:
+                src_sub = src_dir / sub
+                pristine_sub = profile.pristine / sub
+                if not src_sub.exists():
+                    print(f"  ({src_dir.name}/{sub}/ missing — consider `reset`)")
+                    continue
+                for p in src_sub.rglob("*.java"):
+                    if not p.is_file():
+                        continue
+                    rel = f"{sub}/" + p.relative_to(src_sub).as_posix()
+                    pr = profile.pristine / rel
+                    if not pr.exists():
+                        diverged.append(f"+ {rel}")
+                        continue
+                    if file_sha256(p) != file_sha256(pr):
+                        diverged.append(f"M {rel}")
+                for p in pristine_sub.rglob("*.java"):
+                    if not p.is_file():
+                        continue
+                    rel = f"{sub}/" + p.relative_to(pristine_sub).as_posix()
+                    if not (src_dir / rel).exists():
+                        diverged.append(f"- {rel}")
+            if not diverged:
+                print("  clean (matches src-pristine)")
+            else:
+                print(f"  {len(diverged)} diverging file(s):")
+                for d in sorted(diverged):
+                    print(f"    {d}")
+
+    # List every on-disk per-mod tree (including ones not currently entered).
+    stray_dirs = sorted(d for d in profile.root.glob("src-*") if d.is_dir())
+    if stray_dirs:
+        print()
+        print("on-disk per-mod working trees:")
+        for d in stray_dirs:
+            tag = " (entered)" if es and d == profile.src_for(es.mod) else ""
+            print(f"  {d.name}{tag}")
 
     for to in ("client", "server"):
         state = read_state(profile.state_file(to))

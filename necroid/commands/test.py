@@ -1,4 +1,4 @@
-"""test — detect changed files in src/ vs src-pristine/ and try to compile them.
+"""test — detect changed files in src-<entered>/ vs src-pristine/ and try to compile them.
 
 Dry-run build: same file-selection logic as `capture`, but instead of writing
 patches it hands the modified + new .java files to javac. No staging, no install,
@@ -13,10 +13,21 @@ from .. import logging_util as log
 from ..errors import BuildError
 from ..hashing import file_sha256
 from ..profile import existing_subtrees
+from ..state import read_enter
 
 
 def run(args) -> int:
     p = args.profile
+
+    es = read_enter(p.enter_file)
+    if not es:
+        raise SystemExit("no mod is entered — run `necroid enter <mod>` first.")
+    src_dir = p.src_for(es.mod)
+    if not src_dir.exists():
+        raise SystemExit(
+            f"entered mod '{es.mod}' has no working tree at {src_dir}. "
+            f"Run `necroid enter {es.mod} --force` to re-seed."
+        )
 
     subs = existing_subtrees(p.pristine)
     if not subs:
@@ -26,7 +37,7 @@ def run(args) -> int:
     new_files: list[Path] = []
 
     for sub in subs:
-        src_sub = p.src / sub
+        src_sub = src_dir / sub
         if not src_sub.exists():
             continue
         for java in sorted(src_sub.rglob("*.java")):
@@ -48,7 +59,7 @@ def run(args) -> int:
         log.info("no changed or new .java files — nothing to test.")
         return 0
 
-    log.step(f"compile {len(files)} file(s) (test build, output -> {p.classes_out})")
+    log.step(f"compile {len(files)} file(s) from {src_dir.name}/ (test build, output -> {p.classes_out})")
     try:
         buildjava.javac_compile(
             files=files,

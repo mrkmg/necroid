@@ -23,6 +23,7 @@ from .errors import ConfigError, PzModderError
 from .profile import find_root, load_profile, resolve_install_to, resolve_source
 from .commands import (
     capture as capture_cmd,
+    clean as clean_cmd,
     diff as diff_cmd,
     enter as enter_cmd,
     init as init_cmd,
@@ -76,12 +77,14 @@ def _build_parser() -> argparse.ArgumentParser:
     s.add_argument("name", nargs="?", default=None)
     s.add_argument("--to", dest="install_to", choices=("client", "server"), default=None)
 
-    s = sub.add_parser("enter", help="reset src/ and apply a stack of mods")
-    s.add_argument("mods", nargs="+")
+    s = sub.add_parser("enter", help="seed src-<mod>/ from pristine + patches and mark it entered")
+    s.add_argument("mod", help="mod name (only one at a time; use `install` for stacks)")
     s.add_argument("--as", dest="install_as", choices=("client", "server"), default=None,
                    help="destination variant to apply (default: config.defaultInstallTo)")
+    s.add_argument("--force", action="store_true",
+                   help="re-seed src-<mod>/ even if it already exists (discards local edits)")
 
-    s = sub.add_parser("capture", help="diff src/ vs pristine, rewrite the mod's patches")
+    s = sub.add_parser("capture", help="diff src-<mod>/ vs pristine, rewrite the mod's patches")
     s.add_argument("name")
     s.add_argument("--as", dest="install_as", choices=("client", "server"), default=None,
                    help="fallback variant if no enter state is recorded")
@@ -89,7 +92,13 @@ def _build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("diff", help="concatenate a mod's patches to stdout")
     s.add_argument("name")
 
-    sub.add_parser("reset", help="mirror src-pristine -> src, clear enter state")
+    sub.add_parser("reset", help="re-seed the entered mod's src-<mod>/ from pristine + patches")
+
+    s = sub.add_parser("clean", help="delete per-mod src-*/ working trees at the repo root")
+    s.add_argument("mod", nargs="?", default=None,
+                   help="specific mod to clean; omit to clean every src-*/")
+    s.add_argument("--yes", "-y", action="store_true",
+                   help="skip the confirmation prompt")
 
     s = sub.add_parser("install", help="stack-additive install to a destination")
     s.add_argument("mods", nargs="+")
@@ -100,7 +109,7 @@ def _build_parser() -> argparse.ArgumentParser:
     s.add_argument("mods", nargs="*")
     s.add_argument("--to", dest="install_to", choices=("client", "server"), default=None)
 
-    sub.add_parser("test", help="compile changed + new .java files in src/ (no install)")
+    sub.add_parser("test", help="compile changed + new .java files in the entered mod's src-<mod>/ (no install)")
 
     s = sub.add_parser("verify", help="re-hash installed files, report drift")
     s.add_argument("--to", dest="install_to", choices=("client", "server"), default=None)
@@ -123,6 +132,7 @@ _HANDLERS = {
     "capture": capture_cmd.run,
     "diff": diff_cmd.run,
     "reset": reset_cmd.run,
+    "clean": clean_cmd.run,
     "install": install_cmd.run,
     "uninstall": uninstall_cmd.run,
     "test": test_cmd.run,
