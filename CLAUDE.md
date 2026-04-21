@@ -27,7 +27,7 @@ Mods are diff-based: each mod is a directory of unified diffs under `data/mods/<
 Python 3.10+ (stdlib only — tkinter, subprocess, hashlib, urllib, json). Cross-platform (Windows / Linux / macOS). Two entry points:
 
 - **CLI** — full feature set. Developers and automation use this.
-- **GUI** (tkinter) — simplified end-user surface: Init/Resync, Install, Uninstall. Launch with `--gui`. Themed charcoal/bone; logo + window icon load from `assets/`.
+- **GUI** (tkinter) — simplified end-user surface: Set Up / Update from Game, and a state-based checkbox list with a single **Apply Changes** button (plus **Revert** to drop pending edits). Checkboxes auto-seed from `data/.mod-state-<dest>.json` on load and on every destination flip; Apply Changes diffs the user's selection against the installed stack and shells out to `necroid install <desired> --to <dest>` (or `necroid uninstall --to <dest>` when the selection is empty). Launch with `--gui`. Themed charcoal/bone; logo + window icon load from `assets/`.
 
 External requirements on PATH: `git`, `java` (17+), `javac` (17+), `jar` (ships with JDK). `init` downloads Vineflower itself.
 

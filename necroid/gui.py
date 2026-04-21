@@ -7,7 +7,7 @@ Layout:
     ├──────────────────────────────────────────────────────────┤
     │  Treeview of mods: ☑/☐ | name | cli-only | status | desc │
     ├──────────────────────────────────────────────────────────┤
-    │  [Refresh]                       [ Install ] [Uninstall] │
+    │  [Refresh]                      [ Revert ] [Apply Changes]│
     ├──────────────────────────────────────────────────────────┤
     │  ● Ready                                     [ progress ] │
     ├──────────────────────────────────────────────────────────┤
@@ -15,9 +15,14 @@ Layout:
     │  (log, collapsed by default; auto-opens on error)         │
     └──────────────────────────────────────────────────────────┘
 
+State-based model: the checkbox column auto-reflects the installed stack for
+the selected destination. Users edit the selection, then hit Apply Changes to
+reconcile (install what was added, uninstall what was removed). Switching the
+install-to destination re-seeds checkboxes from that destination's state file.
+
 Single shared workspace + a destination toggle in the header. Mods are never
 hidden — clientOnly mods simply can't be installed while install-to is server
-(the Install button disables itself with a tooltip).
+(their rows grey out and the checkbox won't toggle).
 """
 from __future__ import annotations
 
@@ -76,8 +81,9 @@ STEP_FRIENDLY = {
 }
 
 CMD_FAILURE_TITLE = {
-    "install": "Install failed",
-    "uninstall": "Uninstall failed",
+    "install": "Apply changes failed",
+    "uninstall": "Apply changes failed",
+    "apply": "Apply changes failed",
     "init": "Setup failed",
     "resync-pristine": "Update failed",
 }
@@ -144,6 +150,8 @@ class ModderApp:
         self.root = root
         self.install_to: InstallTo = initial_install_to
         self.checked: set[str] = set()
+        self.installed_stack: list[str] = []
+        self.mod_order: list[str] = []
 
         self.tk = tk.Tk()
         self.tk.title("Necroid")
@@ -249,7 +257,29 @@ class ModderApp:
                     darkcolor=PALETTE["accent"])
         s.configure("TCombobox",
                     fieldbackground=PALETTE["char_700"], background=PALETTE["char_500"],
-                    foreground=PALETTE["bone"], arrowcolor=PALETTE["bone"])
+                    foreground=PALETTE["bone"], arrowcolor=PALETTE["bone"],
+                    selectbackground=PALETTE["char_700"],
+                    selectforeground=PALETTE["bone"],
+                    insertcolor=PALETTE["bone"])
+        s.map("TCombobox",
+              fieldbackground=[("readonly", PALETTE["char_700"]),
+                               ("disabled", PALETTE["char_700"])],
+              foreground=[("readonly", PALETTE["bone"]),
+                          ("disabled", PALETTE["bone_dim"])],
+              selectbackground=[("readonly", PALETTE["char_700"])],
+              selectforeground=[("readonly", PALETTE["bone"])],
+              arrowcolor=[("disabled", PALETTE["bone_dim"])])
+
+        # The dropdown listbox is a plain tk.Listbox owned by the Combobox
+        # popdown toplevel — ttk.Style doesn't reach it. Configure via the
+        # option database instead.
+        self.tk.option_add("*TCombobox*Listbox.background", PALETTE["char_700"])
+        self.tk.option_add("*TCombobox*Listbox.foreground", PALETTE["bone"])
+        self.tk.option_add("*TCombobox*Listbox.selectBackground", PALETTE["accent"])
+        self.tk.option_add("*TCombobox*Listbox.selectForeground", PALETTE["char_900"])
+        self.tk.option_add("*TCombobox*Listbox.font", ("Segoe UI", 10))
+        self.tk.option_add("*TCombobox*Listbox.borderWidth", 0)
+        self.tk.option_add("*TCombobox*Listbox.relief", "flat")
 
     # --- layout ---
 
@@ -329,18 +359,24 @@ class ModderApp:
         ft.pack(fill=tk.X)
         btn_refresh = ttk.Button(ft, text="Refresh", command=self.refresh_mods)
         btn_refresh.pack(side=tk.LEFT)
-        _Tooltip(btn_refresh, "Reload the mod list from disk.")
+        _Tooltip(btn_refresh, "Reload the mod list from disk and reset the\n"
+                              "selection to what's actually installed.")
 
-        self.btn_uninstall = ttk.Button(ft, text="Uninstall", command=self.on_uninstall)
-        self.btn_uninstall.pack(side=tk.RIGHT)
-        _Tooltip(self.btn_uninstall,
-                 "With mods checked: remove just those from the chosen destination.\n"
-                 "With nothing checked: remove everything and restore originals for that destination.")
+        self.btn_apply = ttk.Button(ft, text="Apply Changes",
+                                    style="Primary.TButton",
+                                    command=self.on_apply_changes)
+        self.btn_apply.pack(side=tk.RIGHT)
+        _Tooltip(self.btn_apply,
+                 "Reconcile the installed stack on the chosen destination to\n"
+                 "match what's checked here: installs added mods, uninstalls\n"
+                 "removed ones. Atomic — nothing changes in the game install\n"
+                 "until the full operation succeeds.")
 
-        self.btn_install = ttk.Button(ft, text="Install", command=self.on_install)
-        self.btn_install.pack(side=tk.RIGHT, padx=(0, 6))
-        _Tooltip(self.btn_install,
-                 "Install every checked mod into the chosen Project Zomboid install.")
+        self.btn_revert = ttk.Button(ft, text="Revert", command=self.on_revert)
+        self.btn_revert.pack(side=tk.RIGHT, padx=(0, 6))
+        _Tooltip(self.btn_revert,
+                 "Discard pending check/uncheck edits and re-seed the\n"
+                 "selection from the currently installed stack.")
 
     def _build_status_strip(self) -> None:
         wrap = ttk.Frame(self.tk, padding=(12, 8, 12, 4))
@@ -393,7 +429,7 @@ class ModderApp:
 
     # --- data ---
 
-    def refresh_mods(self) -> None:
+    def refresh_mods(self, reseed_checked: bool = True) -> None:
         self.tv.delete(*self.tv.get_children())
         try:
             cfg = read_config(self.root, required=False)
@@ -403,20 +439,32 @@ class ModderApp:
         mods_dir = self.root / "data" / "mods"
         if not mods_dir.exists():
             self._log(f"(no mods directory at {mods_dir}; run Set Up)", tag="info")
+            self.installed_stack = []
+            self.mod_order = []
+            self.checked = set()
             self._update_primary_button()
+            self._update_apply_button_state()
             return
         installed_stack: list[str] = []
         if profile:
             state = read_state(profile.state_file(self.install_to))
-            installed_stack = state.stack
+            installed_stack = list(state.stack)
+        self.installed_stack = installed_stack
+        if reseed_checked:
+            self.checked = set(installed_stack)
         has_blocked = False
+        order: list[str] = []
         for name in list_mods(mods_dir):
             try:
                 mj = read_mod_json(mods_dir / name)
             except Exception:
                 continue
+            order.append(name)
             blocked = mj.client_only and self.install_to == "server"
-            status = "installed" if name in installed_stack else ("N/A here" if blocked else "available")
+            if blocked:
+                # Blocked rows can't be part of the selection on this dest.
+                self.checked.discard(name)
+            status = self._row_status(name, blocked=blocked)
             check = "☑" if (name in self.checked and not blocked) else "☐"
             info = "ⓘ" if (mods_dir / name / "README.md").exists() else ""
             kind = "client-only" if mj.client_only else "any"
@@ -426,15 +474,55 @@ class ModderApp:
                            tags=tag_args)
             if blocked:
                 has_blocked = True
-                self.checked.discard(name)
+        self.mod_order = order
         self._has_blocked = has_blocked
         self._update_primary_button()
-        self._update_install_button_state()
+        self._update_apply_button_state()
 
-    def _update_install_button_state(self) -> None:
-        # Simple rule: the button itself is always enabled; the preflight in
-        # on_install refuses checked clientOnly rows while install-to is server.
-        pass
+    def _row_status(self, name: str, *, blocked: bool) -> str:
+        if blocked:
+            return "N/A here"
+        in_stack = name in self.installed_stack
+        checked = name in self.checked
+        if in_stack and checked:
+            return "installed"
+        if checked and not in_stack:
+            return "pending add"
+        if in_stack and not checked:
+            return "pending remove"
+        return "available"
+
+    def _update_row(self, name: str) -> None:
+        if not self.tv.exists(name):
+            return
+        tags = self.tv.item(name, "tags") or ()
+        blocked = "blocked" in tags
+        vals = list(self.tv.item(name, "values"))
+        vals[0] = "☑" if (name in self.checked and not blocked) else "☐"
+        vals[4] = self._row_status(name, blocked=blocked)
+        self.tv.item(name, values=vals)
+
+    def _compute_desired(self) -> list[str]:
+        """Preserve prior stack order for retained mods; append new ones in mod-list order."""
+        desired = [m for m in self.installed_stack if m in self.checked]
+        existing = set(desired)
+        for m in self.mod_order:
+            if m in self.checked and m not in existing:
+                desired.append(m)
+                existing.add(m)
+        return desired
+
+    def _has_pending_changes(self) -> bool:
+        return self._compute_desired() != list(self.installed_stack)
+
+    def _update_apply_button_state(self) -> None:
+        if not hasattr(self, "btn_apply"):
+            return
+        if self._busy:
+            return  # _set_buttons owns state while busy.
+        state = tk.NORMAL if self._has_pending_changes() else tk.DISABLED
+        self.btn_apply.configure(state=state)
+        self.btn_revert.configure(state=state)
 
     def _update_primary_button(self) -> None:
         pristine = self.root / "data" / "workspace" / "src-pristine"
@@ -460,9 +548,8 @@ class ModderApp:
             self.checked.discard(row)
         else:
             self.checked.add(row)
-        vals = list(self.tv.item(row, "values"))
-        vals[0] = "☑" if row in self.checked else "☐"
-        self.tv.item(row, values=vals)
+        self._update_row(row)
+        self._update_apply_button_state()
 
     def _open_readme(self, mod_name: str) -> None:
         path = self.root / "data" / "mods" / mod_name / "README.md"
@@ -575,8 +662,11 @@ class ModderApp:
 
     def _on_done(self, code: int) -> None:
         self._busy = False
+        # On failure, keep the user's pending edits so they can correct and
+        # retry. Install is atomic, so state on disk is unchanged — but still
+        # re-read it to surface any CLI-side changes.
+        self.refresh_mods(reseed_checked=(code == 0))
         self._set_buttons(True)
-        self.refresh_mods()
 
         if code == 0:
             if self._warnings:
@@ -624,9 +714,12 @@ class ModderApp:
 
     def _set_buttons(self, enabled: bool) -> None:
         state = tk.NORMAL if enabled else tk.DISABLED
-        for b in (self.btn_init, self.btn_install, self.btn_uninstall):
+        for b in (self.btn_init, self.btn_apply, self.btn_revert):
             b.configure(state=state)
         self.install_to_combo.configure(state="readonly" if enabled else tk.DISABLED)
+        if enabled:
+            # Re-evaluate apply/revert: only enabled when a diff exists.
+            self._update_apply_button_state()
 
     def on_init(self) -> None:
         # First-time setup or resync? Workspace pristine is the tell.
@@ -643,26 +736,72 @@ class ModderApp:
         else:
             self._run_cli(["init", "--from", self.install_to])
 
-    def on_install(self) -> None:
-        names = sorted(self.checked)
-        if not names:
-            messagebox.showinfo("No selection", "Check at least one mod to install.")
+    def on_revert(self) -> None:
+        if not self._has_pending_changes():
             return
-        self._run_cli(["install", *names, "--to", self.install_to])
-        self.checked.clear()
+        self.checked = set(self.installed_stack)
+        for name in self.mod_order:
+            self._update_row(name)
+        self._update_apply_button_state()
 
-    def on_uninstall(self) -> None:
-        names = sorted(self.checked)
-        if not names:
-            if not messagebox.askyesno(
-                "Uninstall all",
-                f"Uninstall every mod from {self.install_to} and restore the original game files?",
-            ):
-                return
-            self._run_cli(["uninstall", "--to", self.install_to])
+    def on_apply_changes(self) -> None:
+        desired = self._compute_desired()
+        added = [m for m in desired if m not in self.installed_stack]
+        removed = [m for m in self.installed_stack if m not in set(desired)]
+        if not added and not removed:
             return
-        self._run_cli(["uninstall", *names, "--to", self.install_to])
-        self.checked.clear()
+
+        # Preflight — defence-in-depth. Blocked rows already drop out on flip,
+        # but a stale state file could theoretically have a clientOnly mod in
+        # the stack after a mod.json flip.
+        if self.install_to == "server":
+            mods_dir = self.root / "data" / "mods"
+            offenders: list[str] = []
+            for name in desired:
+                try:
+                    mj = read_mod_json(mods_dir / name)
+                except Exception:
+                    continue
+                if mj.client_only:
+                    offenders.append(name)
+            if offenders:
+                messagebox.showerror(
+                    "Client-only mods can't go to server",
+                    "These mods are client-only and can't be installed to server:\n\n  "
+                    + "\n  ".join(offenders)
+                    + "\n\nUncheck them or switch Install to: client.",
+                )
+                return
+
+        if not self._confirm_apply(added, removed, desired):
+            return
+
+        if not desired:
+            self._run_cli(["uninstall", "--to", self.install_to])
+        else:
+            self._run_cli(["install", *desired, "--to", self.install_to])
+
+    def _confirm_apply(self, added: list[str], removed: list[str],
+                       desired: list[str]) -> bool:
+        if not desired:
+            prompt = (
+                f"This will uninstall every mod from {self.install_to} and\n"
+                f"restore the original game files.\n\n"
+                f"Removing: {', '.join(removed)}\n\nContinue?"
+            )
+            return messagebox.askyesno("Uninstall all", prompt)
+        lines = [f"Apply changes to {self.install_to}?\n"]
+        if added:
+            lines.append("Install:")
+            lines.extend(f"  + {m}" for m in added)
+        if removed:
+            if added:
+                lines.append("")
+            lines.append("Uninstall:")
+            lines.extend(f"  - {m}" for m in removed)
+        lines.append("")
+        lines.append(f"Final stack: {', '.join(desired)}")
+        return messagebox.askyesno("Apply changes", "\n".join(lines))
 
     # --- status strip ---
 

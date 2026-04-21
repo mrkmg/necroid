@@ -19,7 +19,7 @@ You know how Steam Workshop is great, until you want change how radios work, hav
 Necroid ships a bundle of Java-level mods for Project Zomboid plus a small app to install and uninstall them cleanly. Everything is reversible — you can always put the game back exactly how Steam shipped it.
 
 <p align="center">
-  <img src="assets/necroid-screenshot-v0.2.0.png" alt="Necroid GUI"/>
+  <img src="assets/necroid-screenshot-v0.4.0.png" alt="Necroid GUI"/>
 </p>
 
 ## Bundled mods
@@ -55,24 +55,26 @@ In the Necroid GUI, click the **ⓘ** next to any mod to read its README without
 
 ## Using Necroid
 
-On first launch, click **Init / Resync** in the top-right. Necroid finds your Steam install, makes a pristine copy of the vanilla Java classes, downloads the decompiler, and sets up the mod workspace. Takes about a minute. You only do this once (and again after a Project Zomboid update).
+On first launch, click **Set Up** in the top-right. Necroid finds your Steam install, makes a pristine copy of the vanilla Java classes, downloads the decompiler, and sets up the mod workspace. Takes about a minute. You only do this once (and again after a Project Zomboid update — the same button becomes **Update from Game**).
 
-Then:
+The mod list is **state-based**: the checkboxes automatically reflect what's currently installed on the chosen destination (client or server). Just tick what you want installed and untick what you don't:
 
-- Check the boxes next to the mods you want.
-- Click **Install**.
+- Check / uncheck mods to match your desired set.
+- Click **Apply Changes**. Necroid works out the diff and installs anything added / uninstalls anything removed in a single atomic step.
 - Launch Project Zomboid as usual.
 
-To roll back, click **Uninstall** — the game goes back to exactly how Steam shipped it.
+The Status column previews the diff before you apply: `installed`, `pending add`, `pending remove`, `available`. **Revert** discards pending edits and snaps the checkboxes back to what's actually installed. Switching the **Install to** toggle (client ↔ server) re-reads state for that destination — client and server have independent stacks.
 
-The mod list updates automatically. If something drifted (e.g. Steam ran a "Verify Integrity of Game Files" pass and reverted everything), just click **Install** again.
+To roll back everything, uncheck every box and click **Apply Changes** — the game goes back to exactly how Steam shipped it.
+
+If something drifted (e.g. Steam ran a "Verify Integrity of Game Files" pass and reverted everything), the checkboxes will still show what Necroid thinks is installed. Click **Apply Changes** once to re-install, or uncheck and re-check a mod to force a reapply.
 
 ## Troubleshooting
 
 - **"javac not found"** — install JDK 17+ (see the table above) and restart Necroid.
 - **Permission errors on Windows** — close Necroid, right-click **necroid.exe** → **Run as administrator**.
-- **Mods disappeared after a Steam update** — expected. Steam's "Verify Integrity of Game Files" silently reverts everything. Click **Install** in Necroid again.
-- **Mod marked STALE after a Project Zomboid update** — the game changed underneath the mod. Click **Init / Resync**, then reinstall your mods. If the mod still won't apply, wait for an updated release.
+- **Mods disappeared after a Steam update** — expected. Steam's "Verify Integrity of Game Files" silently reverts everything. Click **Apply Changes** in Necroid to push your stack back into the install (uncheck + re-check one mod first if the button is disabled — Necroid's state file still matches what Steam overwrote).
+- **Mod marked STALE after a Project Zomboid update** — the game changed underneath the mod. Click **Update from Game**, then Apply Changes to reinstall your stack. If the mod still won't apply, wait for an updated release.
 - **Wrong Project Zomboid install path detected** — edit `data/.mod-config.json` in the Necroid folder and set `clientPzInstall` to your actual install path.
 
 ---
