@@ -1,0 +1,101 @@
+diff --git a/zombie/network/LoginQueue.java b/zombie/network/LoginQueue.java
+index 4f97416..a60fbe5 100644
+--- a/zombie/network/LoginQueue.java
++++ b/zombie/network/LoginQueue.java
+@@ -3,6 +3,7 @@ package zombie.network;
+ import java.nio.ByteBuffer;
+ import java.util.ArrayList;
+ import zombie.Lua.LuaEventManager;
++import zombie.commands.PlayerType;
+ import zombie.core.Core;
+ import zombie.core.logger.LoggerManager;
+ import zombie.core.network.ByteBufferWriter;
+@@ -20,9 +21,9 @@ public class LoginQueue {
+ 
+    public static void receiveClientLoginQueueRequest(ByteBuffer var0, short var1) {
+       byte var2 = var0.get();
+-      if (var2 == LoginQueue.LoginQueueMessageType.ConnectionImmediate.ordinal()) {
++      if (var2 == LoginQueueMessageType.ConnectionImmediate.ordinal()) {
+          LoadingQueueState.onConnectionImmediate();
+-      } else if (var2 == LoginQueue.LoginQueueMessageType.PlaceInQueue.ordinal()) {
++      } else if (var2 == LoginQueueMessageType.PlaceInQueue.ordinal()) {
+          int var3 = var0.getInt();
+          LoadingQueueState.onPlaceInQueue(var3);
+          LuaEventManager.triggerEvent("OnConnectionStateChanged", "FormatMessage", "PlaceInQueue", var3);
+@@ -47,12 +48,14 @@ public class LoginQueue {
+    }
+ 
+    public static void receiveServerLoginQueueRequest(ByteBuffer var0, UdpConnection var1, short var2) {
++      boolean isStaff = var1.accessLevel > PlayerType.player;
++      boolean isPreferred = var1.preferredInQueue || isStaff;
+       LoggerManager.getLogger("user")
+-         .write(var1.idStr + " \"" + var1.username + "\" attempting to join used " + (var1.preferredInQueue ? "preferred " : "") + "queue");
++         .write(var1.idStr + " \"" + var1.username + "\" attempting to join used " + (isPreferred ? "preferred " : "") + "queue");
+       synchronized (LoginQueue) {
+          if (!ServerOptions.getInstance().LoginQueueEnabled.getValue()
+-            || !var1.preferredInQueue && currentLoginQueue == null && PreferredLoginQueue.isEmpty() && LoginQueue.isEmpty()
+-            || var1.preferredInQueue && currentLoginQueue == null && PreferredLoginQueue.isEmpty()) {
++            || !isPreferred && currentLoginQueue == null && PreferredLoginQueue.isEmpty() && LoginQueue.isEmpty()
++            || isPreferred && currentLoginQueue == null && PreferredLoginQueue.isEmpty()) {
+             if (Core.bDebug) {
+                DebugLog.log("receiveServerLoginQueueRequest: ConnectionImmediate (ip:" + var1.ip + ")");
+             }
+@@ -62,16 +65,27 @@ public class LoginQueue {
+             LoginQueueTimeout.Reset(ServerOptions.getInstance().LoginQueueConnectTimeout.getValue() * 1000);
+             ByteBufferWriter var4 = var1.startPacket();
+             PacketTypes.PacketType.LoginQueueRequest2.doPacket(var4);
+-            var4.putByte((byte)LoginQueue.LoginQueueMessageType.ConnectionImmediate.ordinal());
++            var4.putByte((byte)LoginQueueMessageType.ConnectionImmediate.ordinal());
+             PacketTypes.PacketType.LoginQueueRequest2.send(var1);
+          } else {
+             if (Core.bDebug) {
+-               DebugLog.log("receiveServerLoginQueueRequest: PlaceInQueue (ip:" + var1.ip + " preferredInQueue:" + var1.preferredInQueue + ")");
++               DebugLog.log("receiveServerLoginQueueRequest: PlaceInQueue (ip:" + var1.ip + " preferredInQueue:" + isPreferred + ")");
+             }
+ 
+-            if (var1.preferredInQueue) {
++            if (isPreferred) {
+                if (!PreferredLoginQueue.contains(var1)) {
+-                  PreferredLoginQueue.add(var1);
++                  if (isStaff) {
++                     int insertIdx = PreferredLoginQueue.size();
++                     for (int i = 0; i < PreferredLoginQueue.size(); i++) {
++                        if (PreferredLoginQueue.get(i).accessLevel <= PlayerType.player) {
++                           insertIdx = i;
++                           break;
++                        }
++                     }
++                     PreferredLoginQueue.add(insertIdx, var1);
++                  } else {
++                     PreferredLoginQueue.add(var1);
++                  }
+                }
+             } else if (!LoginQueue.contains(var1)) {
+                LoginQueue.add(var1);
+@@ -101,7 +115,7 @@ public class LoginQueue {
+       for (UdpConnection var1 : PreferredLoginQueue) {
+          ByteBufferWriter var2 = var1.startPacket();
+          PacketTypes.PacketType.LoginQueueRequest2.doPacket(var2);
+-         var2.putByte((byte)LoginQueue.LoginQueueMessageType.PlaceInQueue.ordinal());
++         var2.putByte((byte)LoginQueueMessageType.PlaceInQueue.ordinal());
+          var2.putInt(PreferredLoginQueue.indexOf(var1) + 1);
+          PacketTypes.PacketType.LoginQueueRequest2.send(var1);
+       }
+@@ -109,7 +123,7 @@ public class LoginQueue {
+       for (UdpConnection var4 : LoginQueue) {
+          ByteBufferWriter var5 = var4.startPacket();
+          PacketTypes.PacketType.LoginQueueRequest2.doPacket(var5);
+-         var5.putByte((byte)LoginQueue.LoginQueueMessageType.PlaceInQueue.ordinal());
++         var5.putByte((byte)LoginQueueMessageType.PlaceInQueue.ordinal());
+          var5.putInt(PreferredLoginQueue.size() + LoginQueue.indexOf(var4) + 1);
+          PacketTypes.PacketType.LoginQueueRequest2.send(var4);
+       }
+@@ -122,7 +136,7 @@ public class LoginQueue {
+ 
+       ByteBufferWriter var1 = var0.startPacket();
+       PacketTypes.PacketType.LoginQueueRequest2.doPacket(var1);
+-      var1.putByte((byte)LoginQueue.LoginQueueMessageType.ConnectionImmediate.ordinal());
++      var1.putByte((byte)LoginQueueMessageType.ConnectionImmediate.ordinal());
+       PacketTypes.PacketType.LoginQueueRequest2.send(var0);
+       ConnectionManager.log("send-packet", "login-queue-request", var0);
+    }
