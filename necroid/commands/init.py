@@ -27,10 +27,8 @@ from ..errors import ConfigError
 from ..fsops import ensure_dir, mirror_tree
 from ..hashing import file_sha256
 from ..profile import PZ_CLASS_SUBTREES, autodetect_server_install, load_profile
+from ..steam_discovery import discover_client_install
 from ..tools import check_all, resolve
-
-
-DEFAULT_CLIENT_INSTALL_WIN = Path(r"C:\Program Files (x86)\Steam\steamapps\common\ProjectZomboid")
 
 
 def _resolve_pz_install(source: str, existing: Path | None, flag: str | None, root: Path) -> Path:
@@ -43,11 +41,14 @@ def _resolve_pz_install(source: str, existing: Path | None, flag: str | None, ro
     if existing and existing.exists():
         log.info(f"using configured {source}PzInstall: {existing}")
         return existing
-    if source == "client" and DEFAULT_CLIENT_INSTALL_WIN.exists():
-        log.info(f"using default PZ install: {DEFAULT_CLIENT_INSTALL_WIN}")
-        return DEFAULT_CLIENT_INSTALL_WIN
-    if source == "server":
-        # Try autodetect off the client install (if known), then $ROOT/pzserver.
+
+    # Steam-aware discovery (OS-specific roots + libraryfolders.vdf),
+    # plus legacy fallbacks for the server (sibling-of-client, $ROOT/pzserver).
+    if source == "client":
+        guess = discover_client_install()
+        if guess:
+            return guess
+    else:
         cfg = None
         try:
             cfg = read_config(root, required=False)
@@ -58,8 +59,10 @@ def _resolve_pz_install(source: str, existing: Path | None, flag: str | None, ro
         if guess:
             log.info(f"autodetected server install: {guess}")
             return guess
+
     raise ConfigError(
         f"could not locate {source} PZ install.\n"
+        f"    tried Steam registry / library folders for this OS.\n"
         f"    pass --pz-install '<path>' or edit data/.mod-config.json."
     )
 

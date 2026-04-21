@@ -180,7 +180,15 @@ def resolve_source(cli_from: str | None, cfg: ModConfig | None = None) -> Instal
 
 def autodetect_server_install(client_install: Path | None, root: Path) -> Path | None:
     """Try to guess the Project Zomboid Dedicated Server install path.
-       Checks: sibling under Steam's `common/`, then `<root>/pzserver`."""
+       Checks, in order:
+         1. Steam-aware discovery (registry + libraryfolders.vdf, per OS).
+         2. Sibling of the client install under Steam's `common/`.
+         3. `<root>/pzserver`."""
+    from .steam_discovery import discover_server_install
+    guess = discover_server_install()
+    if guess:
+        return guess
+
     candidates: list[Path] = []
     if client_install:
         steam_common = client_install.parent
