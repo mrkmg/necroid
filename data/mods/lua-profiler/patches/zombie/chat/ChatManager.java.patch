@@ -1,0 +1,18 @@
+diff --git a/zombie/chat/ChatManager.java b/zombie/chat/ChatManager.java
+index 27936fb..b4652ba 100644
+--- a/zombie/chat/ChatManager.java
++++ b/zombie/chat/ChatManager.java
+@@ -288,6 +288,13 @@ public class ChatManager {
+    public void sendMessageToChat(String var1, ChatType var2, String var3) {
+       var3 = var3.trim();
+       if (!var3.isEmpty()) {
++         if (var3.equals("/luaprofile") || var3.startsWith("/luaprofile ")) {
++            String rest = var3.length() > 12 ? var3.substring(12).trim() : "";
++            String reply = zombie.Lua.LuaProfiler.handleCommand(
++                    zombie.Lua.LuaProfiler.tokenize(rest));
++            this.showInfoMessage("LuaProfiler", reply);
++            return;
++         }
+          ChatBase var4 = this.getChat(var2);
+          if (var4 == null) {
+             if (Core.bDebug) {

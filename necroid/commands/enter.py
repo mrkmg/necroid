@@ -1,8 +1,12 @@
-"""enter — reset src/, apply a stack of mods. Records .mod-enter.json."""
+"""enter — reset src/, apply a stack of mods. Records .mod-enter.json.
+
+clientOnly mods require a configured client PZ install. `--as` overrides the
+postfix variant chosen (default = config.defaultInstallTo; forced to `client`
+when any mod in the stack is clientOnly)."""
 from __future__ import annotations
 
 from .. import logging_util as log
-from ..errors import ConflictError, TargetMismatch
+from ..errors import ClientOnlyViolation, ConflictError
 from ..fsops import mirror_tree
 from ..mod import ensure_mod_exists, read_mod_json
 from ..stackapply import apply_stack
@@ -14,16 +18,27 @@ def run(args) -> int:
     stack: list[str] = list(args.mods)
     if not stack:
         raise SystemExit("usage: necroid enter <mod1> [mod2 ...]")
+
+    # Load every mod.json up front — detect clientOnly in the stack.
+    has_client_only = False
     for name in stack:
         md = ensure_mod_exists(p.mods_dir, name)
         mj = read_mod_json(md)
-        if mj.target != p.target:
-            raise TargetMismatch(
-                f"mod '{name}' targets {mj.target}; active profile is {p.target}\n"
-                f"    retry with --target {mj.target}"
-            )
+        if mj.client_only:
+            has_client_only = True
+            if p.client_pz_install is None:
+                raise ClientOnlyViolation(
+                    f"mod '{name}' is clientOnly but no clientPzInstall is configured.\n"
+                    f"    configure one: `necroid init --from client`."
+                )
 
-    log.info(f"enter [{', '.join(stack)}]: reset src/ then apply patches")
+    install_as: str = args.install_as
+    if has_client_only and install_as == "server":
+        raise ClientOnlyViolation(
+            f"stack contains a clientOnly mod; cannot enter with --as server."
+        )
+
+    log.info(f"enter [{', '.join(stack)}] (as {install_as}): reset src/ then apply patches")
     mirror_tree(p.pristine / "zombie", p.src / "zombie")
     result = apply_stack(
         stack=stack,
@@ -31,12 +46,13 @@ def run(args) -> int:
         pristine_dir=p.pristine,
         mods_dir=p.mods_dir,
         scratch_root=p.build / "stage-scratch-enter",
+        install_to=install_as,
     )
     if result.conflicts:
         log.error("CONFLICTS:")
         for cf in result.conflicts:
             print(f"  {cf.rel}  [{cf.type}]  mods: {', '.join(cf.mods)}")
         raise ConflictError([c.to_dict() for c in result.conflicts])
-    write_enter(p.enter_file, stack)
+    write_enter(p.enter_file, stack, install_as=install_as)
     log.success(f"applied: {len(result.touched)} file(s). Edit under src/zombie/; run `capture` when done.")
     return 0

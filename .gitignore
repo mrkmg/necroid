@@ -1,9 +1,8 @@
 # -----------------------------------------------------------------------------
-# Per-profile PZ-sourced content (populated by `necroid init`).
+# Shared workspace populated by `necroid init` from one PZ install.
 # Never commit — each user rebuilds from their own Steam install.
 # -----------------------------------------------------------------------------
-/data/client/
-/data/server/
+/data/workspace/
 
 # -----------------------------------------------------------------------------
 # Downloaded tooling. The tools/ dir itself is tracked via .gitkeep; contents are not.
@@ -15,6 +14,9 @@
 # Local runtime state — user-specific, not shared
 # -----------------------------------------------------------------------------
 /data/.mod-config.json
+/data/.mod-enter.json
+/data/.mod-state-client.json
+/data/.mod-state-server.json
 
 # -----------------------------------------------------------------------------
 # Build output (PyInstaller + wheels)

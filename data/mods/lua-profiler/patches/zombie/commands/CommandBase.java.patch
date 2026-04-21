@@ -1,0 +1,115 @@
+diff --git a/zombie/commands/CommandBase.java b/zombie/commands/CommandBase.java
+index 738cc92..c2bd7eb 100644
+--- a/zombie/commands/CommandBase.java
++++ b/zombie/commands/CommandBase.java
+@@ -30,6 +30,7 @@ import zombie.commands.serverCommands.InvisibleCommand;
+ import zombie.commands.serverCommands.KickUserCommand;
+ import zombie.commands.serverCommands.LightningCommand;
+ import zombie.commands.serverCommands.LogCommand;
++import zombie.commands.serverCommands.LuaProfileCommand;
+ import zombie.commands.serverCommands.NoClipCommand;
+ import zombie.commands.serverCommands.PlayersCommand;
+ import zombie.commands.serverCommands.QuitCommand;
+@@ -70,7 +71,7 @@ public abstract class CommandBase {
+    protected String argsName = "default args name. Nothing match";
+    protected static final String defaultArgsName = "default args name. Nothing match";
+    protected final String description;
+-   private static Class[] childrenClasses = new Class[]{
++   private static Class<?>[] childrenClasses = new Class<?>[]{
+       SaveCommand.class,
+       ServerMessageCommand.class,
+       ConnectionsCommand.class,
+@@ -120,15 +121,16 @@ public abstract class CommandBase {
+       StopWeatherCommand.class,
+       StartStormCommand.class,
+       ReplayCommands.class,
+-      CheckModsNeedUpdate.class
++      CheckModsNeedUpdate.class,
++      LuaProfileCommand.class
+    };
+ 
+-   public static Class[] getSubClasses() {
++   public static Class<?>[] getSubClasses() {
+       return childrenClasses;
+    }
+ 
+-   public static Class findCommandCls(String var0) {
+-      for (Class var5 : childrenClasses) {
++   public static Class<?> findCommandCls(String var0) {
++      for (Class<?> var5 : childrenClasses) {
+          if (!isDisabled(var5)) {
+             CommandName[] var1 = var5.getAnnotationsByType(CommandName.class);
+ 
+@@ -144,7 +146,7 @@ public abstract class CommandBase {
+       return null;
+    }
+ 
+-   public static String getHelp(Class var0) {
++   public static String getHelp(Class<?> var0) {
+       CommandHelp var1 = getAnnotation(CommandHelp.class, var0);
+       if (var1 == null) {
+          return null;
+@@ -156,12 +158,12 @@ public abstract class CommandBase {
+       }
+    }
+ 
+-   public static String getCommandName(Class var0) {
++   public static String getCommandName(Class<?> var0) {
+       Annotation[] var1 = var0.getAnnotationsByType(CommandName.class);
+       return ((CommandName)var1[0]).name();
+    }
+ 
+-   public static boolean isDisabled(Class var0) {
++   public static boolean isDisabled(Class<?> var0) {
+       DisabledCommand var1 = getAnnotation(DisabledCommand.class, var0);
+       return var1 != null;
+    }
+@@ -188,7 +190,7 @@ public abstract class CommandBase {
+       this.command = var3;
+       this.connection = var4;
+       this.playerType = accessLevelToInt(var2);
+-      ArrayList var5 = new ArrayList();
++      ArrayList<String> var5 = new ArrayList<>();
+       Matcher var6 = Pattern.compile("([^\"]\\S*|\".*?\")\\s*").matcher(var3);
+ 
+       while (var6.find()) {
+@@ -237,18 +239,18 @@ public abstract class CommandBase {
+    }
+ 
+    protected CommandArgs[] getCommandArgVariants() {
+-      Class var1 = this.getClass();
++      Class<?> var1 = this.getClass();
+       return var1.getAnnotationsByType(CommandArgs.class);
+    }
+ 
+    public boolean hasHelp() {
+-      Class var1 = this.getClass();
++      Class<?> var1 = this.getClass();
+       CommandHelp var2 = var1.getAnnotation(CommandHelp.class);
+       return var2 != null;
+    }
+ 
+    protected String getHelp() {
+-      Class var1 = this.getClass();
++      Class<?> var1 = this.getClass();
+       return getHelp(var1);
+    }
+ 
+@@ -273,7 +275,7 @@ public abstract class CommandBase {
+          return true;
+       } else {
+          boolean var2 = var1.length != 0 && this.commandArgs.length != 0 || var1.length == 0 && this.commandArgs.length == 0;
+-         ArrayList var3 = new ArrayList();
++         ArrayList<String> var3 = new ArrayList<>();
+ 
+          for (CommandArgs var7 : var1) {
+             var3.clear();
+@@ -352,7 +354,7 @@ public abstract class CommandBase {
+       return this.command;
+    }
+ 
+-   protected static <T> T getAnnotation(Class<T> var0, Class var1) {
++   protected static <T extends java.lang.annotation.Annotation> T getAnnotation(Class<T> var0, Class<?> var1) {
+       return var1.getAnnotation(var0);
+    }
+ 

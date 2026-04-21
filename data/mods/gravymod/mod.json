@@ -1,6 +1,6 @@
 {
   "name": "gravymod",
-  "target": "server",
+  "clientOnly": false,
   "description": "Adds various lua utils and commands.",
   "version": "0.1.0",
   "createdAt": "2026-04-19T17:07:27.647238Z",

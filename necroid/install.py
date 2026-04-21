@@ -1,11 +1,11 @@
-"""Atomic install of a mod stack.
+"""Atomic install of a mod stack to a chosen destination (client or server).
 
-Phase order (preserved from PS):
-    1. Stage   — mirror pristine into build/stage-src, apply stack
+Phase order:
+    1. Stage   — mirror workspace pristine into build/stage-src, apply stack
     2. Compile — javac only touched .java files
-    3. Restore — revert prior-install class files back to classes-original
+    3. Restore — revert prior-install class files (for `install_to`) to originals
     4. Deploy  — copy new .class files into PZ install + record SHA256
-    5. Commit  — write .mod-state.json
+    5. Commit  — write .mod-state-<install_to>.json
 
 Any failure prior to Deploy leaves the PZ install untouched.
 """
@@ -15,10 +15,10 @@ import shutil
 from pathlib import Path
 
 from . import logging_util as log
-from .errors import BuildError, ConflictError
+from .errors import BuildError, ClientOnlyViolation, ConflictError
 from .fsops import empty_dir, inner_class_files, mirror_tree
 from .hashing import file_sha256
-from .mod import ensure_mod_exists
+from .mod import ensure_mod_exists, read_mod_json
 from .profile import Profile, require_pz_install
 from .stackapply import apply_stack
 from .state import InstalledEntry, ModState, read_state, reset_state, utc_now_iso, write_state
@@ -28,10 +28,30 @@ from . import buildjava
 def _pristine_zombie(profile: Profile) -> Path: return profile.pristine / "zombie"
 
 
-def install_stack(profile: Profile, stack: list[str]) -> None:
-    require_pz_install(profile)
+def _assert_destination_allowed(profile: Profile, stack: list[str], install_to: str) -> None:
+    """clientOnly mods may only install to client."""
+    if install_to != "server":
+        return
+    offenders: list[str] = []
+    for name in stack:
+        md = ensure_mod_exists(profile.mods_dir, name)
+        mj = read_mod_json(md)
+        if mj.client_only:
+            offenders.append(name)
+    if offenders:
+        raise ClientOnlyViolation(
+            f"cannot install to server — clientOnly mod(s): {', '.join(offenders)}\n"
+            f"    retry with `--to client`, or drop the clientOnly flag."
+        )
+
+
+def install_stack(profile: Profile, stack: list[str], install_to: str) -> None:
+    require_pz_install(profile, install_to)
     for m in stack:
         ensure_mod_exists(profile.mods_dir, m)
+    _assert_destination_allowed(profile, stack, install_to)
+
+    content_dir = profile.content_dir_for(install_to)
 
     # --- Phase 1: stage source ---
     log.step(f"stage source ({profile.stage})")
@@ -47,6 +67,7 @@ def install_stack(profile: Profile, stack: list[str]) -> None:
         pristine_dir=profile.pristine,
         mods_dir=profile.mods_dir,
         scratch_root=profile.build / "stage-scratch",
+        install_to=install_to,
     )
     if result.conflicts:
         shutil.rmtree(profile.stage, ignore_errors=True)
@@ -76,12 +97,12 @@ def install_stack(profile: Profile, stack: list[str]) -> None:
             shutil.rmtree(profile.stage, ignore_errors=True)
             raise
 
-    # --- Phase 3: restore prior install to originals ---
-    log.step("restore prior install to original")
-    _restore_installed(profile)
+    # --- Phase 3: restore prior install (for this destination) to originals ---
+    log.step(f"restore prior {install_to} install to original")
+    _restore_installed(profile, install_to)
 
     # --- Phase 4: copy new class files to PZ install ---
-    log.step(f"copy class files to {profile.content_dir}")
+    log.step(f"copy class files to {content_dir}")
     installed: list[InstalledEntry] = []
 
     for rel, mod_origin in result.touched.items():
@@ -97,7 +118,7 @@ def install_stack(profile: Profile, stack: list[str]) -> None:
             continue
         for cf in matches:
             rel_class = f"{class_dir_rel}/{cf.name}" if class_dir_rel else cf.name
-            dst = profile.content_dir / Path(rel_class)
+            dst = content_dir / Path(rel_class)
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(cf, dst)
             log.info(f"+ {rel_class}")
@@ -112,7 +133,7 @@ def install_stack(profile: Profile, stack: list[str]) -> None:
         orig_class_dir = profile.originals / class_dir_rel
         for orig in inner_class_files(orig_class_dir, leaf_base):
             rel_class = f"{class_dir_rel}/{orig.name}" if class_dir_rel else orig.name
-            dst = profile.content_dir / Path(rel_class)
+            dst = content_dir / Path(rel_class)
             if dst.exists():
                 try:
                     dst.unlink()
@@ -121,22 +142,23 @@ def install_stack(profile: Profile, stack: list[str]) -> None:
                     log.warn(f"failed to delete {dst}: {e}")
 
     # --- Phase 5: commit state ---
-    write_state(profile.state_file, ModState(
+    write_state(profile.state_file(install_to), ModState(
         version=1,
         stack=list(stack),
         installed_at=utc_now_iso(),
         installed=installed,
     ))
-    log.success(f"install complete. stack=[{', '.join(stack)}]  class files={len(installed)}")
+    log.success(f"install complete. to={install_to} stack=[{', '.join(stack)}]  class files={len(installed)}")
 
 
-def _restore_installed(profile: Profile) -> None:
-    state = read_state(profile.state_file)
+def _restore_installed(profile: Profile, install_to: str) -> None:
+    state = read_state(profile.state_file(install_to))
     if not state.installed:
         log.info("(nothing to restore)")
         return
+    content_dir = profile.content_dir_for(install_to)
     for e in state.installed:
-        install_path = profile.content_dir / Path(e.rel)
+        install_path = content_dir / Path(e.rel)
         orig_path = profile.originals / Path(e.rel)
         if orig_path.exists():
             install_path.parent.mkdir(parents=True, exist_ok=True)
@@ -150,13 +172,13 @@ def _restore_installed(profile: Profile) -> None:
                 log.warn(f"failed to delete {install_path}: {err}")
 
 
-def uninstall_all(profile: Profile) -> None:
-    state = read_state(profile.state_file)
+def uninstall_all(profile: Profile, install_to: str) -> None:
+    state = read_state(profile.state_file(install_to))
     if not state.installed:
-        log.info("nothing installed.")
+        log.info(f"nothing installed to {install_to}.")
         return
-    require_pz_install(profile)
-    log.info(f"uninstall: restoring {len(state.installed)} class file(s)")
-    _restore_installed(profile)
-    reset_state(profile.state_file)
+    require_pz_install(profile, install_to)
+    log.info(f"uninstall: restoring {len(state.installed)} class file(s) on {install_to}")
+    _restore_installed(profile, install_to)
+    reset_state(profile.state_file(install_to))
     log.success("done.")

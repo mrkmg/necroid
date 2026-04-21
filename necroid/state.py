@@ -73,20 +73,29 @@ def reset_state(state_file: Path) -> None:
 class EnterState:
     stack: list[str]
     entered_at: str
+    install_as: str = "client"   # which destination's postfix variant was applied
 
     def to_json(self) -> dict:
-        return {"stack": list(self.stack), "enteredAt": self.entered_at}
+        return {
+            "stack": list(self.stack),
+            "enteredAt": self.entered_at,
+            "installAs": self.install_as,
+        }
 
 
 def read_enter(enter_file: Path) -> EnterState | None:
     if not enter_file.exists():
         return None
     o = json.loads(enter_file.read_text(encoding="utf-8"))
-    return EnterState(stack=list(o.get("stack") or []), entered_at=o.get("enteredAt", ""))
+    return EnterState(
+        stack=list(o.get("stack") or []),
+        entered_at=o.get("enteredAt", ""),
+        install_as=o.get("installAs", "client"),
+    )
 
 
-def write_enter(enter_file: Path, stack: list[str]) -> EnterState:
-    es = EnterState(stack=list(stack), entered_at=_utc_iso())
+def write_enter(enter_file: Path, stack: list[str], install_as: str = "client") -> EnterState:
+    es = EnterState(stack=list(stack), entered_at=_utc_iso(), install_as=install_as)
     enter_file.parent.mkdir(parents=True, exist_ok=True)
     enter_file.write_text(json.dumps(es.to_json(), indent=2) + "\n", encoding="utf-8")
     return es

@@ -2,10 +2,10 @@
 
 Layout:
     ┌──────────────────────────────────────────────────────────┐
-    │  [skull]  Necroid  [client]           [ Set Up ]         │
+    │  [skull]  Necroid   Install to: [client ▾]   [ Set Up ]   │
     │           Beyond Workshop — Project Zomboid mod manager  │
     ├──────────────────────────────────────────────────────────┤
-    │  Treeview of mods: ☑/☐ | name | status | description     │
+    │  Treeview of mods: ☑/☐ | name | cli-only | status | desc │
     ├──────────────────────────────────────────────────────────┤
     │  [Refresh]                       [ Install ] [Uninstall] │
     ├──────────────────────────────────────────────────────────┤
@@ -15,20 +15,9 @@ Layout:
     │  (log, collapsed by default; auto-opens on error)         │
     └──────────────────────────────────────────────────────────┘
 
-Install/uninstall run in a subprocess (`python -m necroid`) so the GUI
-stays responsive and any crash in the command doesn't kill the GUI.
-
-The mod list is filtered to the active target: a server-launched GUI only
-shows server-target mods; default client GUI only shows client-target mods.
-
-Theme: Charcoal + Bone (sampled from the Necroid brand mark). Stdlib tkinter
-only — no Pillow. Logo + window icon load via `tk.PhotoImage`. See
-`assets/build-assets.sh` for how the derived PNG/.ico assets are generated.
-
-The status strip parses `==> step X/N:` / `ERROR:` / `WARN:` markers from the
-CLI's stderr (logging_util.py) to drive a plain-English progress headline and
-determinate/indeterminate progress bar, so end users don't have to read raw
-stdout to understand what's happening.
+Single shared workspace + a destination toggle in the header. Mods are never
+hidden — clientOnly mods simply can't be installed while install-to is server
+(the Install button disables itself with a tooltip).
 """
 from __future__ import annotations
 
@@ -52,30 +41,27 @@ from .profile import load_profile
 from .state import read_state
 
 
-Target = Literal["client", "server"]
+InstallTo = Literal["client", "server"]
 
 
 # Charcoal + Bone palette — sampled from the brand mark.
 PALETTE = {
-    "char_900":  "#1F1F22",   # window bg
-    "char_700":  "#2B2B30",   # frames, treeview field
-    "char_500":  "#3D3D44",   # buttons, headings
-    "char_300":  "#5A5A63",   # hover/active borders, separators
-    "bone":      "#EDE6D3",   # text on dark, primary fg
-    "bone_dim":  "#C7BFA8",   # muted text, alt rows, scrollbar trough
-    "accent":    "#8FA68E",   # sage — selection highlight, busy/success
-    "warn":      "#D9A441",   # amber — warnings in log
-    "error":     "#C86060",   # terracotta — errors, failed state
+    "char_900":  "#1F1F22",
+    "char_700":  "#2B2B30",
+    "char_500":  "#3D3D44",
+    "char_300":  "#5A5A63",
+    "bone":      "#EDE6D3",
+    "bone_dim":  "#C7BFA8",
+    "accent":    "#8FA68E",
+    "warn":      "#D9A441",
+    "error":     "#C86060",
 }
 
 
-# Plain-English translations of log.step() markers. Matched by startswith()
-# against the tail of a "==> [step N/M: ]<tail>" line. Missing keys fall back
-# to the raw tail, so a new log.step() still surfaces *something* to the user.
 STEP_FRIENDLY = {
     "stage source": "Preparing files…",
     "compile": "Compiling Java classes…",
-    "restore prior install to original": "Restoring previous mods…",
+    "restore prior": "Restoring previous mods…",
     "copy class files to": "Writing to Project Zomboid…",
     "resolve PZ install path": "Looking for Project Zomboid…",
     "tools check": "Checking Java + Git…",
@@ -89,7 +75,6 @@ STEP_FRIENDLY = {
     "checking mod patches": "Re-checking mod patches…",
 }
 
-# Friendlier titles for the failure dialog, keyed by CLI subcommand.
 CMD_FAILURE_TITLE = {
     "install": "Install failed",
     "uninstall": "Uninstall failed",
@@ -101,8 +86,6 @@ _STEP_RE = re.compile(r"^==>\s+(?:step\s+(\d+)/(\d+):\s+)?(.+)$")
 
 
 class _Tooltip:
-    """Tiny hover tooltip. Stdlib only — Toplevel + after()."""
-
     def __init__(self, widget: tk.Widget, text: str, delay_ms: int = 600):
         self.widget = widget
         self.text = text
@@ -112,6 +95,9 @@ class _Tooltip:
         widget.bind("<Enter>", self._schedule, add="+")
         widget.bind("<Leave>", self._hide, add="+")
         widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def set_text(self, text: str) -> None:
+        self.text = text
 
     def _schedule(self, _e=None) -> None:
         self._cancel()
@@ -154,19 +140,18 @@ class _Tooltip:
 
 
 class ModderApp:
-    def __init__(self, root: Path, target: Target):
+    def __init__(self, root: Path, initial_install_to: InstallTo):
         self.root = root
-        self.target = target
+        self.install_to: InstallTo = initial_install_to
         self.checked: set[str] = set()
 
         self.tk = tk.Tk()
-        self.tk.title(f"Necroid [{target}]")
+        self.tk.title("Necroid")
         self.tk.geometry("900x620")
         self.tk.minsize(720, 480)
 
         self._apply_theme()
 
-        # Per-run state for the status strip + failure dialog.
         self._busy = False
         self._last_error: Optional[str] = None
         self._warnings: list[str] = []
@@ -188,25 +173,18 @@ class ModderApp:
     # --- theme ---
 
     def _apply_theme(self) -> None:
-        """Charcoal/Bone palette + load brand assets. Stdlib only."""
         self.tk.configure(bg=PALETTE["char_900"])
 
-        # Pre-rendered assets. Subsample for header; pass multiple sizes to
-        # iconphoto so Tk picks the best for each slot (title bar = small =
-        # skull-only, Alt-Tab / taskbar = larger = full brand mark).
         try:
             self._mark_full = tk.PhotoImage(file=str(asset_path(HEADER_MARK)))
-            self._mark = self._mark_full.subsample(4, 4)   # 256 -> 64 for header
+            self._mark = self._mark_full.subsample(4, 4)
             self._icon_small = tk.PhotoImage(file=str(asset_path(WINDOW_ICON_SKULL)))
             self._icon_large = tk.PhotoImage(file=str(asset_path(WINDOW_ICON_FULL)))
             self.tk.iconphoto(True, self._icon_small, self._icon_large)
         except tk.TclError:
-            # Assets missing (running before build-assets.sh has run, etc.)
             self._mark = None
 
         s = ttk.Style(self.tk)
-        # 'clam' is the only built-in theme that reliably honors configure()
-        # for all controls cross-platform.
         s.theme_use("clam")
         s.configure(".", background=PALETTE["char_900"], foreground=PALETTE["bone"],
                     font=("Segoe UI", 10))
@@ -269,6 +247,9 @@ class ModderApp:
                     background=PALETTE["accent"], troughcolor=PALETTE["char_700"],
                     borderwidth=0, lightcolor=PALETTE["accent"],
                     darkcolor=PALETTE["accent"])
+        s.configure("TCombobox",
+                    fieldbackground=PALETTE["char_700"], background=PALETTE["char_500"],
+                    foreground=PALETTE["bone"], arrowcolor=PALETTE["bone"])
 
     # --- layout ---
 
@@ -279,53 +260,66 @@ class ModderApp:
         if self._mark is not None:
             ttk.Label(hdr, image=self._mark).pack(side=tk.LEFT, padx=(0, 14))
 
-        # Vertical title/tagline stack so the wordmark and tagline stay
-        # visually anchored to the skull mark instead of drifting apart.
         title_col = ttk.Frame(hdr)
         title_col.pack(side=tk.LEFT, anchor="w")
 
-        title_row = ttk.Frame(title_col)
-        title_row.pack(anchor="w")
-        ttk.Label(title_row, text="Necroid", style="Brand.TLabel").pack(
-            side=tk.LEFT)
-        ttk.Label(title_row, text=self.target, style="Pill.TLabel").pack(
-            side=tk.LEFT, padx=(10, 0), pady=(6, 0))
-
+        ttk.Label(title_col, text="Necroid", style="Brand.TLabel").pack(anchor="w")
         ttk.Label(title_col,
                   text="Beyond Workshop — Project Zomboid mod manager",
                   style="Tagline.TLabel").pack(anchor="w", pady=(2, 0))
 
-        # Primary action sits far-right, label set by _update_primary_button.
-        self.btn_init = ttk.Button(hdr, text="Set Up", style="Primary.TButton",
+        # Install-to toggle on the right.
+        right = ttk.Frame(hdr)
+        right.pack(side=tk.RIGHT)
+
+        ttk.Label(right, text="Install to:", style="Tagline.TLabel").pack(
+            side=tk.LEFT, padx=(0, 6))
+        self.install_to_var = tk.StringVar(value=self.install_to)
+        self.install_to_combo = ttk.Combobox(
+            right, textvariable=self.install_to_var,
+            values=("client", "server"), width=8, state="readonly",
+        )
+        self.install_to_combo.pack(side=tk.LEFT, padx=(0, 10))
+        self.install_to_combo.bind("<<ComboboxSelected>>", self._on_install_to_changed)
+
+        self.btn_init = ttk.Button(right, text="Set Up", style="Primary.TButton",
                                    command=self.on_init)
-        self.btn_init.pack(side=tk.RIGHT, anchor="center")
+        self.btn_init.pack(side=tk.LEFT)
         _Tooltip(self.btn_init,
                  "First-time setup copies game files into this folder so mods\n"
                  "can be built. After setup, this re-syncs when the game updates.")
 
         ttk.Frame(self.tk, style="Sep.TFrame", height=1).pack(fill=tk.X, padx=12)
 
+    def _on_install_to_changed(self, _e=None) -> None:
+        self.install_to = self.install_to_var.get()  # type: ignore[assignment]
+        self.refresh_mods()
+
     def _build_mod_list(self) -> None:
         frame = ttk.Frame(self.tk, padding=(12, 8, 12, 0))
         frame.pack(fill=tk.BOTH, expand=True)
 
-        columns = ("check", "name", "info", "status", "desc")
+        columns = ("check", "name", "info", "kind", "status", "desc")
         tv = ttk.Treeview(frame, columns=columns, show="headings", selectmode="none")
         tv.heading("check", text="")
         tv.heading("name", text="Mod")
         tv.heading("info", text="")
+        tv.heading("kind", text="Type")
         tv.heading("status", text="Status")
         tv.heading("desc", text="Description")
         tv.column("check", width=30, anchor=tk.CENTER, stretch=False)
-        tv.column("name", width=180, anchor=tk.W)
+        tv.column("name", width=170, anchor=tk.W)
         tv.column("info", width=36, anchor=tk.CENTER, stretch=False)
-        tv.column("status", width=90, anchor=tk.W)
-        tv.column("desc", width=484, anchor=tk.W)
+        tv.column("kind", width=78, anchor=tk.W, stretch=False)
+        tv.column("status", width=96, anchor=tk.W)
+        tv.column("desc", width=420, anchor=tk.W)
         tv.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         scroll = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tv.yview)
         tv.configure(yscrollcommand=scroll.set)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        tv.tag_configure("blocked", foreground=PALETTE["bone_dim"])
 
         tv.bind("<Button-1>", self._on_row_click)
         self.tv = tv
@@ -340,13 +334,13 @@ class ModderApp:
         self.btn_uninstall = ttk.Button(ft, text="Uninstall", command=self.on_uninstall)
         self.btn_uninstall.pack(side=tk.RIGHT)
         _Tooltip(self.btn_uninstall,
-                 "With mods checked: remove just those.\n"
-                 "With nothing checked: remove everything and restore originals.")
+                 "With mods checked: remove just those from the chosen destination.\n"
+                 "With nothing checked: remove everything and restore originals for that destination.")
 
         self.btn_install = ttk.Button(ft, text="Install", command=self.on_install)
         self.btn_install.pack(side=tk.RIGHT, padx=(0, 6))
         _Tooltip(self.btn_install,
-                 "Install every checked mod into your Project Zomboid install.")
+                 "Install every checked mod into the chosen Project Zomboid install.")
 
     def _build_status_strip(self) -> None:
         wrap = ttk.Frame(self.tk, padding=(12, 8, 12, 4))
@@ -362,14 +356,11 @@ class ModderApp:
 
         self.progress = ttk.Progressbar(wrap, mode="indeterminate", length=180)
         self.progress.pack(side=tk.RIGHT)
-        # Don't show the bar until a run starts.
         self.progress.pack_forget()
 
         ttk.Frame(self.tk, style="Sep.TFrame", height=1).pack(fill=tk.X, padx=12)
 
     def _build_log(self) -> None:
-        # Disclosure row: toggle + copy button. Log Text itself is packed into
-        # self.log_body which we pack_forget to collapse.
         bar = ttk.Frame(self.tk, padding=(12, 4, 12, 0))
         bar.pack(fill=tk.X)
         self.btn_disclose = ttk.Button(bar, text="▸ Show details",
@@ -382,7 +373,6 @@ class ModderApp:
         _Tooltip(self.btn_copy, "Copy the full log to the clipboard.")
 
         self.log_body = ttk.Frame(self.tk, padding=(12, 4, 12, 10))
-        # Not packed yet — collapsed by default.
 
         self.log_text = tk.Text(self.log_body, height=10, wrap="word",
                                 font=("Consolas", 9), state=tk.DISABLED,
@@ -395,7 +385,6 @@ class ModderApp:
         self.log_text.configure(yscrollcommand=sb.set)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # Line tags drive colorization.
         self.log_text.tag_configure("step", foreground=PALETTE["bone"])
         self.log_text.tag_configure("info", foreground=PALETTE["bone_dim"])
         self.log_text.tag_configure("warn", foreground=PALETTE["warn"])
@@ -408,8 +397,7 @@ class ModderApp:
         self.tv.delete(*self.tv.get_children())
         try:
             cfg = read_config(self.root, required=False)
-            profile = load_profile(self.root, self.target, cfg=cfg, require_pz=False) \
-                if cfg and cfg.pz_install(self.target) else None
+            profile = load_profile(self.root, cfg=cfg) if cfg else None
         except Exception:
             profile = None
         mods_dir = self.root / "data" / "mods"
@@ -418,25 +406,38 @@ class ModderApp:
             self._update_primary_button()
             return
         installed_stack: list[str] = []
-        if profile and profile.state_file.exists():
-            installed_stack = read_state(profile.state_file).stack
+        if profile:
+            state = read_state(profile.state_file(self.install_to))
+            installed_stack = state.stack
+        has_blocked = False
         for name in list_mods(mods_dir):
             try:
                 mj = read_mod_json(mods_dir / name)
             except Exception:
                 continue
-            if mj.target != self.target:
-                continue  # filter off-target
-            status = "installed" if name in installed_stack else "available"
-            check = "☑" if name in self.checked else "☐"
+            blocked = mj.client_only and self.install_to == "server"
+            status = "installed" if name in installed_stack else ("N/A here" if blocked else "available")
+            check = "☑" if (name in self.checked and not blocked) else "☐"
             info = "ⓘ" if (mods_dir / name / "README.md").exists() else ""
+            kind = "client-only" if mj.client_only else "any"
+            tag_args = ("blocked",) if blocked else ()
             self.tv.insert("", tk.END, iid=name,
-                           values=(check, name, info, status, mj.description))
+                           values=(check, name, info, kind, status, mj.description),
+                           tags=tag_args)
+            if blocked:
+                has_blocked = True
+                self.checked.discard(name)
+        self._has_blocked = has_blocked
         self._update_primary_button()
+        self._update_install_button_state()
+
+    def _update_install_button_state(self) -> None:
+        # Simple rule: the button itself is always enabled; the preflight in
+        # on_install refuses checked clientOnly rows while install-to is server.
+        pass
 
     def _update_primary_button(self) -> None:
-        """Primary header button re-labels itself based on profile state."""
-        pristine = self.root / "data" / self.target / "src-pristine"
+        pristine = self.root / "data" / "workspace" / "src-pristine"
         if pristine.exists():
             self.btn_init.configure(text="Update from Game")
         else:
@@ -446,12 +447,14 @@ class ModderApp:
         row = self.tv.identify_row(event.y)
         if not row:
             return
-        # The info column is the 3rd in our column tuple — Treeview reports
-        # it as "#3". Clicking it opens the README; any other column toggles
-        # the checkbox as before.
+        # Clicking the info column opens the README.
         col = self.tv.identify_column(event.x)
         if col == "#3":
             self._open_readme(row)
+            return
+        # Don't allow checking blocked rows.
+        tags = self.tv.item(row, "tags") or ()
+        if "blocked" in tags:
             return
         if row in self.checked:
             self.checked.discard(row)
@@ -499,8 +502,6 @@ class ModderApp:
         try:
             markdown_render.render(md, text, PALETTE)
         except Exception as e:
-            # Renderer is best-effort — on any unexpected failure, fall back
-            # to plain text so the user can still read the file.
             text.configure(state=tk.NORMAL)
             text.delete("1.0", tk.END)
             text.insert(tk.END, f"(markdown render failed: {e})\n\n{md}")
@@ -529,19 +530,14 @@ class ModderApp:
         self._set_status("busy", self._cmd_busy_headline(), progress="indeterminate")
 
         def worker():
-            base_args = ["--root", str(self.root), "--target", self.target, *args]
+            base_args = ["--root", str(self.root), *args]
             env = os.environ.copy()
             if getattr(sys, "frozen", False):
-                # PyInstaller onefile: sys.executable IS necroid; call it directly.
                 cmd = [sys.executable, *base_args]
             else:
                 cmd = [sys.executable, "-m", "necroid", *base_args]
-                # Running from a dev checkout: subprocess needs the package parent on PYTHONPATH.
                 pkg_parent = str(Path(__file__).resolve().parent.parent)
                 env["PYTHONPATH"] = pkg_parent + os.pathsep + env.get("PYTHONPATH", "")
-            # CREATE_NO_WINDOW suppresses the fleeting console window Windows
-            # would otherwise allocate per subprocess (since the GUI itself
-            # detaches its own console early). No-op on non-Windows.
             popen_kwargs: dict = {}
             if sys.platform == "win32":
                 popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
@@ -621,7 +617,6 @@ class ModderApp:
         ttk.Button(btns, text="Copy log", command=self._copy_log).pack(side=tk.LEFT)
         ttk.Button(btns, text="OK", style="Primary.TButton",
                    command=dlg.destroy).pack(side=tk.RIGHT)
-        # Center relative to main window.
         dlg.update_idletasks()
         px = self.tk.winfo_rootx() + (self.tk.winfo_width() - dlg.winfo_width()) // 2
         py = self.tk.winfo_rooty() + (self.tk.winfo_height() - dlg.winfo_height()) // 3
@@ -631,11 +626,12 @@ class ModderApp:
         state = tk.NORMAL if enabled else tk.DISABLED
         for b in (self.btn_init, self.btn_install, self.btn_uninstall):
             b.configure(state=state)
+        self.install_to_combo.configure(state="readonly" if enabled else tk.DISABLED)
 
     def on_init(self) -> None:
-        # init or resync? If profile is bootstrapped already, run resync-pristine.
-        profile_dir = self.root / "data" / self.target
-        if (profile_dir / "src-pristine").exists():
+        # First-time setup or resync? Workspace pristine is the tell.
+        workspace_pristine = self.root / "data" / "workspace" / "src-pristine"
+        if workspace_pristine.exists():
             if not messagebox.askyesno(
                 "Update from game",
                 "Re-sync the frozen source from your Project Zomboid install?\n\n"
@@ -643,40 +639,35 @@ class ModderApp:
                 "if their patches no longer apply cleanly.",
             ):
                 return
-            self._run_cli(["resync-pristine"])
+            self._run_cli(["resync-pristine", "--to", self.install_to])
         else:
-            self._run_cli(["init"])
+            self._run_cli(["init", "--from", self.install_to])
 
     def on_install(self) -> None:
         names = sorted(self.checked)
         if not names:
             messagebox.showinfo("No selection", "Check at least one mod to install.")
             return
-        self._run_cli(["install", *names])
+        self._run_cli(["install", *names, "--to", self.install_to])
         self.checked.clear()
 
     def on_uninstall(self) -> None:
         names = sorted(self.checked)
         if not names:
-            # No checks = full uninstall. Confirm first.
             if not messagebox.askyesno(
                 "Uninstall all",
-                "Uninstall every mod and restore the original game files?",
+                f"Uninstall every mod from {self.install_to} and restore the original game files?",
             ):
                 return
-            self._run_cli(["uninstall"])
+            self._run_cli(["uninstall", "--to", self.install_to])
             return
-        self._run_cli(["uninstall", *names])
+        self._run_cli(["uninstall", *names, "--to", self.install_to])
         self.checked.clear()
 
     # --- status strip ---
 
     def _set_status(self, kind: str, text: str,
                     progress: Optional[str]) -> None:
-        """
-        kind: "idle" | "busy" | "success" | "warn" | "error"
-        progress: "indeterminate" | "determinate" | None (hide bar)
-        """
         color = {
             "idle": PALETTE["bone_dim"],
             "busy": PALETTE["accent"],
@@ -704,12 +695,9 @@ class ModderApp:
                 self.progress.configure(mode="determinate")
 
     def _parse_status_line(self, line: str) -> None:
-        """Inspect a raw log line and update the status strip accordingly."""
-        # Errors come first — they trump step messages.
         if line.startswith("ERROR:"):
             msg = line[len("ERROR:"):].strip()
             self._last_error = msg
-            # Keep busy headline until _on_done fires; just remember the error.
             return
         stripped = line.lstrip()
         if stripped.startswith("WARN:"):
@@ -725,7 +713,6 @@ class ModderApp:
                 friendly = text
                 break
         if step_n and step_total:
-            # Determinate progress: X/N.
             try:
                 pct = 100.0 * int(step_n) / int(step_total)
             except ValueError:
@@ -762,12 +749,6 @@ class ModderApp:
         self.log_text.configure(state=tk.DISABLED)
 
     def _log(self, msg: str, tag: Optional[str] = None) -> None:
-        """Write a line to the log with optional colorization tag.
-
-        Tag auto-detection when tag is None: strips the `==> ` / `  WARN:` /
-        `ERROR:` prefixes and applies the matching visual tag so the raw
-        stderr formatting doesn't leak to non-technical users.
-        """
         display, resolved_tag = self._classify_log_line(msg) if tag is None else (msg, tag)
         self.log_text.configure(state=tk.NORMAL)
         if resolved_tag:
@@ -789,8 +770,6 @@ class ModderApp:
             return (raw, "info" if raw == "[exit 0]" else "error")
         if raw.startswith("$ "):
             return (raw, "info")
-        # log.success() output is uncolored at this layer — detect by the
-        # phrases we know about.
         low = raw.lower()
         if "complete" in low or low.startswith("done."):
             return (raw, "success")
@@ -811,5 +790,5 @@ class ModderApp:
         return 0
 
 
-def launch(root: Path, target: Target) -> int:
-    return ModderApp(root=root, target=target).run()
+def launch(root: Path, initial_install_to: InstallTo) -> int:
+    return ModderApp(root=root, initial_install_to=initial_install_to).run()

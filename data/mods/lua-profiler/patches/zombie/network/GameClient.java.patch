@@ -1,0 +1,32 @@
+diff --git a/zombie/network/GameClient.java b/zombie/network/GameClient.java
+index 0a65c5e..7b54e79 100644
+--- a/zombie/network/GameClient.java
++++ b/zombie/network/GameClient.java
+@@ -1162,7 +1162,7 @@ public class GameClient {
+       int var7 = var0.getInt();
+       int var8 = var0.getInt();
+       int var9 = var0.getInt();
+-      ArrayList var10 = IsoWorld.instance.getMetaGrid().getZonesAt(var4, var5, var6);
++      ArrayList<IsoMetaGrid.Zone> var10 = IsoWorld.instance.getMetaGrid().getZonesAt(var4, var5, var6);
+       boolean var11 = false;
+ 
+       for (IsoMetaGrid.Zone var13 : var10) {
+@@ -1348,6 +1348,18 @@ public class GameClient {
+    }
+ 
+    public static void SendCommandToServer(String var0) {
++      // Client-side intercept: /luaprofile runs locally against this client's
++      // own Kahlua VM. Without this, PZ packets it to the dedicated server and
++      // the server-side LuaProfileCommand runs against *that* VM — useless for
++      // profiling what a connected client is actually doing.
++      if (var0 != null && (var0.equals("/luaprofile") || var0.startsWith("/luaprofile "))) {
++         String rest = var0.length() > 12 ? var0.substring(12).trim() : "";
++         String reply = zombie.Lua.LuaProfiler.handleCommand(
++                 zombie.Lua.LuaProfiler.tokenize(rest));
++         ChatManager.getInstance().showInfoMessage("LuaProfiler", reply);
++         return;
++      }
++
+       if (ServerOptions.clientOptionsList == null) {
+          ServerOptions.initClientCommandsHelp();
+       }

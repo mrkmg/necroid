@@ -4,7 +4,6 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from .. import logging_util as log
 from ..fsops import empty_dir
 from ..hashing import file_sha256
 from ..mod import ensure_mod_exists, patch_items, read_mod_json
@@ -12,22 +11,20 @@ from ..patching import patched_theirs_file
 from ..state import read_enter, read_state
 
 
-def _status_mod(profile, name: str) -> int:
+def _status_mod(profile, install_to: str, name: str) -> int:
     md = ensure_mod_exists(profile.mods_dir, name)
     mj = read_mod_json(md)
-    items = patch_items(md)
+    effective_to = "client" if mj.client_only else install_to
+    items = patch_items(md, effective_to)
     print(f"mod: {name}")
-    print(f"  target: {mj.target}")
+    print(f"  clientOnly: {mj.client_only}")
     if mj.description:
         print(f"  desc: {mj.description}")
     n_p = sum(1 for i in items if i.kind == "patch")
     n_n = sum(1 for i in items if i.kind == "new")
     n_d = sum(1 for i in items if i.kind == "delete")
-    print(f"  patches: {n_p} new: {n_n} delete: {n_d}")
+    print(f"  patches (for install_to={effective_to}): {n_p}  new: {n_n}  delete: {n_d}")
     if not items:
-        return 0
-    if mj.target != profile.target:
-        print(f"  (skipping applicability check — mod targets {mj.target}, active profile is {profile.target})")
         return 0
     scratch = profile.build / f"stage-scratch-status-{name}"
     empty_dir(scratch)
@@ -80,16 +77,19 @@ def _status_tree(profile) -> int:
             print(f"    {d}")
     es = read_enter(profile.enter_file)
     if es:
-        print(f"  entered stack: {', '.join(es.stack)}")
-    state = read_state(profile.state_file)
-    if state.installed:
-        print()
-        print(f"installed stack: {', '.join(state.stack)}  ({len(state.installed)} class files)")
+        print(f"  entered stack: {', '.join(es.stack)}  (as {es.install_as})")
+
+    for to in ("client", "server"):
+        state = read_state(profile.state_file(to))
+        if state.installed:
+            print()
+            print(f"installed to {to}: {', '.join(state.stack)}  ({len(state.installed)} class files)")
     return 0
 
 
 def run(args) -> int:
     profile = args.profile
+    install_to: str = args.install_to
     if args.name:
-        return _status_mod(profile, args.name)
+        return _status_mod(profile, install_to, args.name)
     return _status_tree(profile)

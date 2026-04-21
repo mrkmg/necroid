@@ -47,9 +47,13 @@ def apply_stack(
     pristine_dir: Path,
     mods_dir: Path,
     scratch_root: Path,
+    install_to: str,
 ) -> ApplyResult:
     """Apply `stack` (ordered list of mod names) into `work_dir`, which already
-       mirrors pristine. Mutates `work_dir` in place. Returns conflicts + touched map."""
+       mirrors pristine. Mutates `work_dir` in place. Returns conflicts + touched map.
+
+       `install_to` selects which destination's patches to use when a mod ships
+       per-destination postfixed files."""
     result = ApplyResult()
     new_owner: dict[str, str] = {}
 
@@ -57,7 +61,7 @@ def apply_stack(
     try:
         for mod_name in stack:
             md = ensure_mod_exists(mods_dir, mod_name)
-            items = patch_items(md)
+            items = patch_items(md, install_to)
             scratch = scratch_root / mod_name
             scratch.mkdir(parents=True, exist_ok=True)
 

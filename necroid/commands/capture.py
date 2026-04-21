@@ -1,16 +1,41 @@
-"""capture — diff src/ vs src-pristine/, rewrite mods/<name>/patches/."""
+"""capture — diff src/ vs src-pristine/, rewrite mods/<name>/patches/.
+
+The mod's postfix layout (generic `.patch` vs `.patch.{client|server}`) is
+preserved per-file:
+  - If the opposite destination already has a postfixed file for the same rel,
+    capture writes the entered-side variant as a matching postfix (keeps the
+    two variants distinct).
+  - Otherwise capture writes a shared (non-postfixed) file.
+
+Only patches matching the currently entered destination (install_as) are
+rewritten; opposite-destination postfixed files are preserved untouched.
+"""
 from __future__ import annotations
 
 import shutil
 from pathlib import Path
 
 from .. import logging_util as log
-from ..errors import TargetMismatch
 from ..fsops import ensure_dir
 from ..hashing import file_sha256
-from ..mod import ensure_mod_exists, patch_items, pristine_snapshot, read_mod_json, write_mod_json
+from ..mod import (
+    ensure_mod_exists,
+    parse_patch_filename,
+    patch_items,
+    pristine_snapshot,
+    prune_empty_dirs,
+    read_mod_json,
+    write_mod_json,
+)
 from ..patching import git_diff_no_index
-from ..state import utc_now_iso
+from ..state import read_enter, utc_now_iso
+
+
+def _existing_postfixed_opposite(patches_dir: Path, rel: str, kind: str, other: str) -> bool:
+    """Does a `.{other}`-postfixed file exist for (rel, kind) under patches/?"""
+    # rel is like "zombie/Lua/Foo.java"; patch filename is "zombie/Lua/Foo.java.<kind>.<other>"
+    target = patches_dir / f"{rel}.{kind}.{other}"
+    return target.is_file()
 
 
 def run(args) -> int:
@@ -18,22 +43,46 @@ def run(args) -> int:
     name = args.name
     md = ensure_mod_exists(p.mods_dir, name)
     mj = read_mod_json(md)
-    if mj.target != p.target:
-        raise TargetMismatch(
-            f"mod '{name}' targets {mj.target}; active profile is {p.target}\n"
-            f"    retry with --target {mj.target}"
+
+    # Figure out which destination's variant we're rewriting.
+    es = read_enter(p.enter_file)
+    install_as: str = es.install_as if es else args.install_as
+    if mj.client_only and install_as != "client":
+        raise SystemExit(
+            f"mod '{name}' is clientOnly but capture would run as install_as={install_as}. "
+            "Re-enter with --as client."
         )
+    other = "server" if install_as == "client" else "client"
 
     patches_dir = md / "patches"
-    log.info(f"capture {name}: diffing src/ vs src-pristine/")
-    if patches_dir.exists():
-        shutil.rmtree(patches_dir)
     ensure_dir(patches_dir)
+    log.info(f"capture {name} (as {install_as}): diffing src/ vs src-pristine/")
+
+    # Remove every file applicable to install_as (shared + `.{install_as}`).
+    # Opposite-side `.{other}` files stay put.
+    for fp in list(patches_dir.rglob("*")):
+        if not fp.is_file():
+            continue
+        rel_full = fp.relative_to(patches_dir).as_posix()
+        parsed = parse_patch_filename(rel_full)
+        if parsed is None:
+            continue
+        _rel, _kind, applies = parsed
+        if install_as in applies and other not in applies:
+            fp.unlink()  # postfixed for this side
+        elif applies == frozenset(("client", "server")):
+            fp.unlink()  # shared
+    prune_empty_dirs(patches_dir)
 
     src_zombie = p.src / "zombie"
     pristine_zombie = p.pristine / "zombie"
     if not src_zombie.exists():
         raise SystemExit(f"src/zombie/ not found at {src_zombie}")
+
+    def _out_name(rel: str, ext: str) -> str:
+        if _existing_postfixed_opposite(patches_dir, rel, ext, other):
+            return f"{rel}.{ext}.{install_as}"
+        return f"{rel}.{ext}"
 
     touched_count = 0
 
@@ -44,7 +93,7 @@ def run(args) -> int:
         rel = "zombie/" + java.relative_to(src_zombie).as_posix()
         pristine_file = p.pristine / rel
         if not pristine_file.exists():
-            dst = patches_dir / f"{rel}.new"
+            dst = patches_dir / _out_name(rel, "new")
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(java, dst)
             log.info(f"new:  {rel}")
@@ -55,7 +104,7 @@ def run(args) -> int:
         patch_bytes = git_diff_no_index(pristine_file, java, rel)
         if patch_bytes is None:
             continue
-        dst = patches_dir / f"{rel}.patch"
+        dst = patches_dir / _out_name(rel, "patch")
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_bytes(patch_bytes)
         log.info(f"mod:  {rel}")
@@ -67,14 +116,14 @@ def run(args) -> int:
             continue
         rel = "zombie/" + pr.relative_to(pristine_zombie).as_posix()
         if not (p.src / rel).exists():
-            dst = patches_dir / f"{rel}.delete"
+            dst = patches_dir / _out_name(rel, "delete")
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.write_bytes(b"")
             log.info(f"del:  {rel}")
             touched_count += 1
 
     # Refresh snapshot + updatedAt
-    items = patch_items(md)
+    items = patch_items(md, install_as)
     mj.pristine_snapshot = pristine_snapshot(p.pristine, items)
     mj.updated_at = utc_now_iso()
     write_mod_json(md, mj)

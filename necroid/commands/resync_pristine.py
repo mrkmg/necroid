@@ -1,5 +1,5 @@
-"""resync-pristine — after a PZ update, regenerate the profile from the new install
-and flag mods whose patches no longer apply."""
+"""resync-pristine — after a PZ update, regenerate the shared workspace from
+the source PZ install and flag mods whose patches no longer apply."""
 from __future__ import annotations
 
 import shutil
@@ -14,10 +14,12 @@ from . import init as init_cmd
 
 def run(args) -> int:
     p = args.profile
-    log.info("resync-pristine: re-running init with --force")
+    source = args.source  # populated in cli.py from --from (or config.workspace_source)
+    install_to = args.install_to  # used for postfix resolution during applicability check
+    log.info(f"resync-pristine [from={source}]: re-running init with --force")
     init_args = Namespace(
         root=args.root,
-        target=args.target,
+        source=source,
         pz_install=None,
         force=True,
     )
@@ -28,10 +30,10 @@ def run(args) -> int:
     for name in list_mods(p.mods_dir):
         md = p.mods_dir / name
         mj = read_mod_json(md)
-        if mj.target != p.target:
-            log.info(f"{name}: skip (targets {mj.target})")
-            continue
-        items = patch_items(md)
+        # For applicability checking, use the effective install destination;
+        # clientOnly mods are always checked against the client variant.
+        effective_to = "client" if mj.client_only else install_to
+        items = patch_items(md, effective_to)
         scratch = p.build / f"resync-scratch-{name}"
         empty_dir(scratch)
         try:

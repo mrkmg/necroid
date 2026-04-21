@@ -1,6 +1,6 @@
 {
   "name": "admin-xray",
-  "target": "client",
+  "clientOnly": true,
   "description": "Staff toggles: LOS (F9), transparent trees (Shift+F9).",
   "version": "0.3.0",
   "createdAt": "2026-04-18T22:33:55.1992536Z",

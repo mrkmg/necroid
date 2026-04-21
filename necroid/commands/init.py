@@ -1,21 +1,23 @@
-"""init — bootstrap a profile (client or server).
+"""init — bootstrap the shared workspace from one PZ install (client or server).
+
+Since client and server ship byte-identical Java class trees, one workspace
+serves both destinations. Pick whichever install you have via `--from`.
 
 Steps:
-    1. Resolve PZ install (flag -> config -> autodetect).
+    1. Resolve source PZ install (flag -> config -> autodetect -> default).
     2. Check external tools (java, javac, jar, git).
     3. Download tools/vineflower.jar.
-    4. Copy PZ top-level *.jar  -> <profile>/libs/
-    5. Copy PZ class subtrees    -> <profile>/classes-original/
-    6. Rejar each subtree        -> <profile>/libs/classpath-originals/<name>.jar
-    7. Write data/.mod-config.json.
-    8. Decompile classes-original/zombie -> <profile>/src-pristine/zombie (Vineflower).
-    9. Scaffold data/mods/ and <profile>/.mod-state.json.
+    4. Copy PZ top-level *.jar  -> workspace/libs/
+    5. Copy PZ class subtrees    -> workspace/classes-original/
+    6. Rejar each subtree        -> workspace/libs/classpath-originals/<name>.jar
+    7. Write data/.mod-config.json (records workspaceSource + the chosen install).
+    8. Decompile classes-original/zombie -> workspace/src-pristine/zombie (Vineflower).
+    9. Scaffold data/mods/.
 """
 from __future__ import annotations
 
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 from .. import logging_util as log
@@ -24,8 +26,7 @@ from ..decompile import ensure_vineflower, decompile_zombie
 from ..errors import ConfigError
 from ..fsops import ensure_dir, mirror_tree
 from ..hashing import file_sha256
-from ..profile import Profile, autodetect_server_install, load_profile
-from ..state import ModState, write_state
+from ..profile import autodetect_server_install, load_profile
 from ..tools import check_all, resolve
 
 
@@ -33,7 +34,7 @@ PZ_CLASS_SUBTREES = ("zombie", "astar", "com", "de", "fmod", "javax", "org", "se
 DEFAULT_CLIENT_INSTALL_WIN = Path(r"C:\Program Files (x86)\Steam\steamapps\common\ProjectZomboid")
 
 
-def _resolve_pz_install(target: str, existing: Path | None, flag: str | None, root: Path) -> Path:
+def _resolve_pz_install(source: str, existing: Path | None, flag: str | None, root: Path) -> Path:
     if flag:
         from ..config import expand_config_path
         p = expand_config_path(flag, root)
@@ -41,12 +42,12 @@ def _resolve_pz_install(target: str, existing: Path | None, flag: str | None, ro
             raise ConfigError(f"could not resolve --pz-install '{flag}'")
         return p
     if existing and existing.exists():
-        log.info(f"using configured {target}PzInstall: {existing}")
+        log.info(f"using configured {source}PzInstall: {existing}")
         return existing
-    if target == "client" and DEFAULT_CLIENT_INSTALL_WIN.exists():
+    if source == "client" and DEFAULT_CLIENT_INSTALL_WIN.exists():
         log.info(f"using default PZ install: {DEFAULT_CLIENT_INSTALL_WIN}")
         return DEFAULT_CLIENT_INSTALL_WIN
-    if target == "server":
+    if source == "server":
         # Try autodetect off the client install (if known), then $ROOT/pzserver.
         cfg = None
         try:
@@ -59,7 +60,7 @@ def _resolve_pz_install(target: str, existing: Path | None, flag: str | None, ro
             log.info(f"autodetected server install: {guess}")
             return guess
     raise ConfigError(
-        f"could not locate {target} PZ install.\n"
+        f"could not locate {source} PZ install.\n"
         f"    pass --pz-install '<path>' or edit data/.mod-config.json."
     )
 
@@ -111,9 +112,7 @@ def _rejar_originals(originals: Path, out_jar_dir: Path, force: bool) -> None:
                 log.info(f"[skip] libs/classpath-originals/{sub}.jar (up to date)")
                 continue
         log.info(f"libs/classpath-originals/{sub}.jar <- classes-original/{sub}")
-        # Modern `jar` tools (JDK 17+) write to a tmp file then rename into place,
-        # which fails with FileAlreadyExistsException if the target already exists.
-        # Pre-delete to make the operation idempotent.
+        # Pre-delete: modern `jar` refuses to overwrite on rename-into-place.
         if jar_path.exists():
             jar_path.unlink()
         proc = subprocess.run([jar_exe, "cf", str(jar_path), sub], cwd=str(originals))
@@ -123,17 +122,16 @@ def _rejar_originals(originals: Path, out_jar_dir: Path, force: bool) -> None:
 
 def run(args) -> int:
     root: Path = args.root
-    target: str = args.target
+    source: str = args.source  # populated in cli.py from --from (or default)
 
-    log.step(f"init [{target}] — step 1/9: resolve PZ install path")
-    # Pre-read config (non-required) so we can carry over the other target's install.
+    log.step(f"init [from={source}] — step 1/9: resolve PZ install path")
     try:
         cfg = read_config(root, required=False)
     except ConfigError:
         cfg = ModConfig(_path=config_path(root))
 
-    existing = cfg.pz_install(target)
-    pz = _resolve_pz_install(target, existing, args.pz_install, root)
+    existing = cfg.pz_install(source)
+    pz = _resolve_pz_install(source, existing, args.pz_install, root)
     if not pz.exists():
         raise ConfigError(f"PZ install dir does not exist: {pz}")
     log.info(str(pz))
@@ -146,15 +144,16 @@ def run(args) -> int:
     log.step(f"step 3/9: vineflower.jar (v{__import__('necroid.decompile', fromlist=['VINEFLOWER_VERSION']).VINEFLOWER_VERSION})")
     ensure_vineflower(root / "data" / "tools", force=args.force)
 
-    # Build the profile now that PZ install is known.
-    if target == "client":
+    # Record this install path into the config.
+    if source == "client":
         cfg.client_pz_install = pz
     else:
         cfg.server_pz_install = pz
+    cfg.workspace_source = source
 
-    profile = load_profile(root, target, cfg=cfg)
+    profile = load_profile(root, cfg=cfg)
 
-    content = profile.content_dir
+    content = profile.content_dir_for(source)
     if not content.exists():
         raise ConfigError(f"expected content dir does not exist: {content}")
     log.step(f"step 4/9: copy PZ jars -> {profile.libs.relative_to(root)}")
@@ -180,12 +179,9 @@ def run(args) -> int:
         force=args.force,
     )
 
-    log.step("step 9/9: scaffold mods/ + state")
+    log.step("step 9/9: scaffold mods/")
     ensure_dir(profile.mods_dir)
-    if not profile.state_file.exists():
-        write_state(profile.state_file, ModState())
-        log.info(f"created {profile.state_file}")
 
-    log.success(f"init [{target}] complete.")
-    log.info(f"next: necroid --target {target} new <mod-name>  then  capture <mod-name>")
+    log.success(f"init [from={source}] complete.")
+    log.info("next: `necroid new <mod-name>`  then  `capture <mod-name>`")
     return 0

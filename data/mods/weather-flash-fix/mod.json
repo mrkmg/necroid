@@ -1,6 +1,6 @@
 {
   "name": "weather-flash-fix",
-  "target": "client",
+  "clientOnly": true,
   "description": "Preserve client-modded climate values across the 10-minute server weather sync — no flash.",
   "version": "0.1.0",
   "createdAt": "2026-04-20T02:18:50.405064Z",

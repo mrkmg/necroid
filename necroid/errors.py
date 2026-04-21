@@ -30,8 +30,9 @@ class ModAlreadyExists(PzModderError):
     """Attempted to create a mod whose directory already exists."""
 
 
-class TargetMismatch(PzModderError):
-    """Named mod's target doesn't match active profile."""
+class ClientOnlyViolation(PzModderError):
+    """Attempted to use a clientOnly mod without a configured client PZ install,
+    or install such a mod to the server destination."""
 
 
 class ConflictError(PzModderError):
@@ -45,3 +46,7 @@ class ConflictError(PzModderError):
 
 class BuildError(PzModderError):
     """javac compile failure."""
+
+
+class ModJsonError(PzModderError):
+    """Malformed mod directory: bad patch file layout or inconsistent mod.json."""

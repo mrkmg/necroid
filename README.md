@@ -26,15 +26,17 @@ Necroid ships a bundle of Java-level mods for Project Zomboid plus a small app t
 
 Each mod ships with its own README — click through for behaviour notes, in-game commands, and compatibility caveats.
 
-| Mod | Target | What it does |
+| Mod | Client-only? | What it does |
 |---|---|---|
-| [admin-xray](data/mods/admin-xray/README.md) | client | Staff LOS toggle (F9). |
-| [gravymod](data/mods/gravymod/README.md) | server | Adds various lua utils and commands. |
-| [lua-profiler](data/mods/lua-profiler/README.md) | client | Per-mod Lua profiler with event/builtin/sample modes. Flame-graph output + mod/file filter. |
-| [more-zoom](data/mods/more-zoom/README.md) | client | Adds one extra zoom-out (300%) and one extra zoom-in (25%) level. |
-| [no-radio-fzzt](data/mods/no-radio-fzzt/README.md) | server | Disable all radio obfuscation server-side (weather interference + distance falloff). Clients receive the raw transmission text. |
-| [radio-fix](data/mods/radio-fix/README.md) | client | Remove weather-based radio interference. |
-| [weather-flash-fix](data/mods/weather-flash-fix/README.md) | client | Stops the 10-minute weather-resync flash when a Lua mod (e.g. Wasteland) is overriding client climate values. |
+| [admin-xray](data/mods/admin-xray/README.md) | yes | Staff LOS toggle (F9). |
+| [gravymod](data/mods/gravymod/README.md) | no | Adds various lua utils and commands. |
+| [lua-profiler](data/mods/lua-profiler/README.md) | no | Per-mod Lua profiler with event/builtin/sample modes. Flame-graph output + mod/file filter. |
+| [more-zoom](data/mods/more-zoom/README.md) | yes | Adds one extra zoom-out (300%) and one extra zoom-in (25%) level. |
+| [no-radio-fzzt](data/mods/no-radio-fzzt/README.md) | no | Disable all radio obfuscation server-side (weather interference + distance falloff). Clients receive the raw transmission text. |
+| [radio-fix](data/mods/radio-fix/README.md) | yes | Remove weather-based radio interference. |
+| [weather-flash-fix](data/mods/weather-flash-fix/README.md) | yes | Stops the 10-minute weather-resync flash when a Lua mod (e.g. Wasteland) is overriding client climate values. |
+
+"Client-only" mods require a Project Zomboid **client** install and can only be installed to the client. Non-client-only mods can install to either the client or the Dedicated Server.
 
 In the Necroid GUI, click the **ⓘ** next to any mod to read its README without leaving the app.
 
@@ -78,45 +80,52 @@ The mod list updates automatically. If something drifted (e.g. Steam ran a "Veri
 
 ## For server operators
 
-Necroid also supports the **Project Zomboid Dedicated Server** (Steam app `380870`, or a local `./pzserver/` install). Each target (client vs. server) has its own workspace, its own install state, and its own set of mods. A mod is authored for one target; the tool hard-errors if you try to apply a client mod to a server install (or vice-versa).
+Necroid also supports the **Project Zomboid Dedicated Server** (Steam app `380870`, or a local `./pzserver/` install). One shared workspace serves both — install destination is chosen per-install with `--to client|server` (default from `data/.mod-config.json` `defaultInstallTo`).
 
-Bootstrap the server profile alongside the client (or instead of it):
-
-```bash
-./necroid --target server init
-```
-
-Then run any command with `--target server`, or the single-dash shorthand `-server`:
+If you only have the dedicated server, bootstrap the workspace from it:
 
 ```bash
-./necroid --target server list
-./necroid --target server install my-server-mod
-./necroid --gui -server                   # GUI in server mode
+./necroid init --from server
 ```
 
-All the client troubleshooting applies equally to the server profile.
+Then install / uninstall / verify against whichever destination you care about:
+
+```bash
+./necroid list --to server
+./necroid install my-non-clientonly-mod --to server
+./necroid uninstall --to server
+./necroid --gui -server                   # GUI opens with install-to = server selected
+```
+
+Mods flagged `clientOnly: true` cannot install to the server — they need the game's rendering path. Everything else installs to either.
 
 ## CLI reference
 
 Most people never need this — install mods from the GUI and move on. If you're automating, scripting, or running headless on a dedicated-server box, here's the full surface:
 
 ```bash
-necroid list                         # all mods (off-target rows tagged *client / *server)
+necroid list                         # all mods (Client-only? column)
 necroid install <mod1> [mod2 ...]    # compile + install, stacking multiple mods
-necroid uninstall                    # restore everything
+necroid uninstall                    # restore everything for the chosen destination
 necroid uninstall <mod>              # remove one from the stack, rebuild the rest
-necroid status                       # working tree vs pristine + installed stack
+necroid status                       # working tree vs pristine + installed stacks (client + server)
 necroid status <mod>                 # per-mod patch applicability
 necroid verify                       # re-hash installed files to detect drift
 necroid resync-pristine              # after a PZ update: refresh the vanilla baseline
-necroid new <name> -d "..."          # scaffold a new mod
+necroid new <name> -d "..." [--client-only]  # scaffold a new mod
 necroid enter <mod1> [mod2 ...]      # reset working tree, apply a mod stack for editing
 necroid capture <mod>                # diff working tree vs pristine, rewrite patches
 necroid diff <mod>                   # print a mod's patches to stdout
 necroid reset                        # mirror pristine -> working tree, clear enter state
 ```
 
-All target-aware commands accept `--target {client,server}` (or `-server` shorthand). Default comes from `data/.mod-config.json` `defaultTarget`, falling back to `client`.
+Per-command flags:
+
+- `init` / `resync-pristine` take `--from {client,server}` (which PZ install seeds the shared workspace).
+- `install` / `uninstall` / `verify` / `list` / `status` take `--to {client,server}` (install destination).
+- `enter` takes `--as {client,server}` (postfix variant to apply when the mod ships per-destination variants — rare).
+
+Defaults come from `data/.mod-config.json` (`defaultInstallTo`, `workspaceSource`), falling back to `client`.
 
 ---
 
@@ -144,16 +153,16 @@ necroid/                              # this repo
 │   ├── mods/                         # tracked — the portable patch-set library
 │   │   └── <name>/{mod.json, patches/}
 │   ├── .mod-config.json              # local-only, written by `init`
+│   ├── .mod-enter.json               # local-only: current entered stack + install_as
+│   ├── .mod-state-client.json        # local-only: last install to client destination
+│   ├── .mod-state-server.json        # local-only: last install to server destination
 │   ├── tools/vineflower.jar          # local-only
-│   ├── client/                       # local-only, per-target PZ-sourced content
-│   │   ├── src/                      # editable working tree (reset by `enter`)
-│   │   ├── src-pristine/             # frozen pristine decompile
-│   │   ├── classes-original/         # verbatim PZ classes
-│   │   ├── libs/                     # PZ jars + classpath-originals/
-│   │   ├── build/                    # javac output + staging
-│   │   ├── .mod-state.json
-│   │   └── .mod-enter.json
-│   └── server/                       # same shape as client/
+│   └── workspace/                    # local-only, one shared PZ-sourced workspace
+│       ├── src/                      # editable working tree (reset by `enter`)
+│       ├── src-pristine/             # frozen pristine decompile
+│       ├── classes-original/         # verbatim PZ classes (identical client/server)
+│       ├── libs/                     # PZ jars + classpath-originals/
+│       └── build/                    # javac output + staging
 ├── dist/                             # local-only, output of build_dist.py
 ├── CLAUDE.md, README.md
 └── .gitignore
@@ -175,12 +184,12 @@ During development, `python -m necroid` works equivalently from the repo root.
 ### Authoring a mod
 
 ```bash
-necroid new my-mod -d "does a thing"     # scaffold data/mods/my-mod/
+necroid new my-mod -d "does a thing"     # scaffold data/mods/my-mod/ (add --client-only if it is)
 necroid enter my-mod                     # reset src/, apply patches
-# ...edit under data/<target>/src/zombie/...
+# ...edit under data/workspace/src/zombie/...
 necroid capture my-mod                   # rewrite patches from working tree
 necroid test                             # javac-only compile, no install (fast sanity check)
-necroid install my-mod                   # compile + install; play-test
+necroid install my-mod --to client       # compile + install; play-test
 ```
 
 For a stack (`enter mod-a mod-b`), captures always write to the **last** mod in the entered stack. To edit an upstream mod in a stack, re-enter with it last, or enter it alone.
@@ -236,7 +245,7 @@ End users and the release build do **not** need ImageMagick.
 
 ### Architecture deep-dive
 
-See [CLAUDE.md](CLAUDE.md) for: directory roles, install atomicity, javac constraints, target-mismatch rules, the PZ update flow, and what looks like bugs but isn't (decompiler quirks).
+See [CLAUDE.md](CLAUDE.md) for: directory roles, install atomicity, javac constraints, clientOnly rules, the PZ update flow, and what looks like bugs but isn't (decompiler quirks).
 
 ### License
 
