@@ -31,6 +31,25 @@ Mods are diff-based: each mod is a directory of unified diffs under `data/mods/<
 
 CLI surface for relationships: `necroid new --depends-on X --incompatible-with Y`, `necroid deps show <mod>`, `necroid deps add|remove <mod> --requires|--conflicts <other>`, `necroid uninstall <mod> --cascade` (cascades to any dependents still in the installed stack rather than erroring). GUI auto-pulls deps on check, prompts "also uncheck N dependents?" on uncheck, and refuses an incompatible check with a flashed tooltip. Relationship errors all inherit `PzModderError`: `ModDependencyMissing`, `ModIncompatibility`, `ModDependencyCycle`.
 
+**Mods can be imported from GitHub repos and refreshed in place.** Discovery walks four layouts: `<root>/mod.json` (single-mod), `<root>/<x>/mod.json` (depth 1), `<root>/<x>/<y>/mod.json` (depth 2), and `<root>/data/mods/<x>/mod.json` (Necroid canonical, e.g. this repo's bundled mods). The mod's canonical `<base>-<major>` dirname is **preserved verbatim** from upstream — never re-suffixed against the workspace. Per-major variants (`admin-xray-41` and `admin-xray-42`) coexist in the same repo on the same branch, and import filters to mods matching the workspace major by default (`--include-all-majors` to override). Bare-name `--mod` selectors (`--mod admin-xray`) auto-resolve to `<base>-<workspaceMajor>`; fully-qualified selectors (`--mod admin-xray-42`) match exactly and trigger pre-flight rejection on major mismatch. An `origin` block is stamped into `_extra` (rides the existing forward-compat dict in `mod.py:ModJson`):
+
+```json
+"origin": {
+  "type": "github", "repo": "owner/name", "ref": "main",
+  "subdir": "mods/admin-xray",
+  "commitSha": "<40-hex>", "archiveUrl": "https://codeload.github.com/...",
+  "importedAt": "<ISO-8601 UTC>", "upstreamVersion": "0.3.1"
+}
+```
+
+`subdir == ""` for single-mod repos. The presence of an `origin` block is what `necroid mod-update` uses to decide which mods are eligible for refresh. CLI surface: `necroid import <repo> [--ref] [--mod ...] [--all] [--list] [--json] [--name] [--force] [--include-all-majors]` and `necroid mod-update [name] [--check] [--force] [--include-peers] [--json]`. Errors: `ModImportError`, `ModUpdateError` (both inherit `PzModderError`). Implementation: `necroid/github.py` (URL parse, SHA resolve, archive fetch, `discover_mods()`), `necroid/commands/import_cmd.py`, `necroid/commands/mod_update.py`. Network: `urllib` only — no `git clone`, no extra deps. ≤2 GitHub REST calls per import (`/repos/{o}/{r}` only when `--ref` absent for the default branch, then `/commits/{ref}` for SHA); the archive itself is codeload, which is not REST-rate-limited. Per-mod commit is atomic via `<target>.new` rename so a failure mid-loop leaves earlier successes intact. `mod-update` groups targets by `(repo, ref)` so one archive download serves N peer mods. `mod-update` does **not** re-check the mod major — the dirname is the source of truth and never changes during refresh. A mod that is currently `enter`-ed is refused for update — clean first.
+
+**Per-major variants are siblings, not branches.** A repo can ship `admin-xray-41/` and `admin-xray-42/` on the same `main` branch. When PZ moves from 41 → 42, mod authors keep the 41 dir untouched and add a sibling 42 dir; users on each major pull the appropriate variant via `mod-update` against the same `(repo, ref)`. This avoids the per-game-major branching tax and keeps fixes shipping for old majors as long as the author cares to maintain them.
+
+`mod-update --check` writes results into `data/.update-cache-mods.json` (24h TTL, schema v1, gitignored). The GUI reads this cache to decorate the Version column with `⬆ <new>` badges and to drive the "N updates available" status-strip chip; the cache file is the single source of truth for "is upstream newer". The GUI also runs `mod-update --check` from the **Check Updates** header button and from the per-mod right-click menu.
+
+**Bundled mods participate in the same `mod-update` flow.** `packaging/build_dist.py:stamp_bundled_origins` walks the `data/mods/` tree being copied into the dist and stamps each mod's `mod.json` with `origin = {repo: "mrkmg/necroid", ref: "main", subdir: "data/mods/<dirname>", commitSha: "", ...}`. The empty `commitSha` is by design — the first `mod-update --check` resolves the real SHA and writes it back to the local `mod.json` (in the up-to-date branch of `_process_one`, mirroring the apply branch). Subsequent runs short-circuit the archive download via the SHA-equality check in `_process_group`. The source-tree `data/mods/*/mod.json` files are **not** stamped — they have no origin, so source installs (`pip install -e .`) treat them as local; only the dist-shipped variants carry the origin block. Users can "unbind" a bundled mod by deleting its `origin` block — it then behaves like a hand-authored mod and is ignored by `mod-update`. Stamp logic is idempotent and skips any mod that already has an origin (so re-runs and forks don't clobber).
+
 **Branding:** Name = Necroid. Tagline = "Beyond Workshop". Palette = Charcoals + Bone (see `necroid/gui.py` `PALETTE` dict). Brand assets live in `assets/`; `assets/necroid.png` is the 1024² source, and derived icons (`necroid-mark-256.png`, `necroid-icon-256.png`, `necroid-icon.ico`) are regenerated via `bash assets/build-assets.sh` (requires ImageMagick; end users don't need it).
 
 **Distribution model:** the repo is git-tracked for sharing with other modders, but nothing PZ-owned ships through git. `.gitignore` excludes `data/workspace/`, `data/tools/vineflower.jar`, `data/.mod-config.json`, `data/.mod-enter.json`, `data/.mod-state-*.json`, `dist/`, `build/`, and Python caches. On a fresh clone, `necroid init` reconstructs every local-only directory from the user's own Steam install — they must own a copy of PZ. Only `necroid/` (Python source), `packaging/`, `assets/`, `data/mods/` (the patch-set library), and docs are tracked. Releases ship via GitHub Releases at `github.com/mrkmg/necroid` — tag, run `packaging/build_dist.py`, zip `dist/`, attach to the tagged release.
@@ -40,7 +59,7 @@ CLI surface for relationships: `necroid new --depends-on X --incompatible-with Y
 Python 3.10+ (stdlib only — tkinter, subprocess, hashlib, urllib, json). Cross-platform (Windows / Linux / macOS). Two entry points:
 
 - **CLI** — full feature set. Developers and automation use this.
-- **GUI** (tkinter) — simplified end-user surface: Set Up / Update from Game, and a state-based checkbox list with a single **Apply Changes** button (plus **Revert** to drop pending edits). Checkboxes auto-seed from `data/.mod-state-<dest>.json` on load and on every destination flip; Apply Changes diffs the user's selection against the installed stack and shells out to `necroid install <desired> --to <dest>` (or `necroid uninstall --to <dest>` when the selection is empty). Launch with `--gui`. Themed charcoal/bone; logo + window icon load from `assets/`.
+- **GUI** (tkinter) — simplified end-user surface: Set Up / Update from Game, and a state-based checkbox list with a single **Apply Changes** button (plus **Revert** to drop pending edits). Checkboxes auto-seed from `data/.mod-state-<dest>.json` on load and on every destination flip; Apply Changes diffs the user's selection against the installed stack and shells out to `necroid install <desired> --to <dest>` (or `necroid uninstall --to <dest>` when the selection is empty). Header also has **Import…** (two-stage discover-then-select modal that shells `necroid import --list --json` then `necroid import …`) and **Check Updates** (shells `necroid mod-update --check`). Mod table includes Origin (`⤓` glyph for imported) and Version columns; outdated imports show a `⬆ <new>` badge. A per-row right-click menu exposes Check / Update / Update with peers / Reimport / Show origin / Open on GitHub. The status strip surfaces an "N updates available" chip when the update cache shows outdated mods. Launch with `--gui`. Themed charcoal/bone; logo + window icon load from `assets/`.
 
 External requirements on PATH: `git`, `java` (17+), `javac` (17+), `jar` (ships with JDK). `init` downloads Vineflower itself.
 
@@ -57,6 +76,15 @@ python -m necroid status                    # working tree vs pristine + both in
 python -m necroid status my-mod             # per-mod patch applicability
 python -m necroid verify --to client        # re-hash client-installed files
 python -m necroid resync-pristine           # after a PZ update
+
+# import + update from GitHub:
+python -m necroid import owner/repo                    # single-mod repo
+python -m necroid import owner/repo --list             # discover-only (multi-mod)
+python -m necroid import owner/repo --all              # multi-mod: import everything
+python -m necroid import owner/repo --mod admin-xray   # multi-mod: pick one (repeatable)
+python -m necroid mod-update                           # check + apply updates for every imported mod
+python -m necroid mod-update <name> --check            # dry-run; populates the GUI cache
+python -m necroid mod-update <name> --include-peers    # also refresh siblings sharing (repo, ref)
 
 # GUI:
 python -m necroid --gui                     # single window; install-to toggle in the header
@@ -154,6 +182,8 @@ There are **no tests and no linter** for the PZ-decompiled code — it's decompi
 - `data/workspace/build/stage-src/` — ephemeral install-staging tree.
 - `data/.mod-state-client.json` / `data/.mod-state-server.json` — per-destination runtime manifest of what the last install to that destination wrote; used by `uninstall --to <dest>`. Schema v1 records a `pzVersion` (the detected install version at install time), used by `verify` to surface "install has moved to a new patch since install" warnings.
 - `data/.mod-enter.json` — the single mod the working tree is currently "entered" on (`{mod, enteredAt, installAs}`), plus the `installAs` destination used when applying postfix variants. Legacy stacked entries (multiple mods) are treated as invalid on read — re-enter with a single mod.
+- `data/.update-cache-mods.json` — last `necroid mod-update --check` results per imported mod (`{version: 1, mods: {<dirname>: {checkedAt, localVersion, upstreamVersion, upstreamSha, status, message}}}`). 24h advisory TTL; consumed by the GUI to decorate Version-column badges and the "N updates available" status chip. Local-only; gitignored. Never blocks command success — write failures are swallowed.
+- `data/.import-tmp/` and `data/.update-tmp/` — ephemeral working dirs for the `import` / `mod-update` flows (zip + extracted archive). Wiped at the end of each invocation; safe to delete at any time.
 - `build/` — PyInstaller scratch + raw output. Local-only.
 - `dist/` — produced by `packaging/build_dist.py`: self-contained binary + `data/mods/`. Local-only; zipped and shipped via GitHub Releases.
 

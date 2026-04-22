@@ -49,7 +49,15 @@ from .errors import (
     ModIncompatibility,
     PzVersionDetectError,
 )
-from .mod import list_mods, mod_base_name, mod_major, read_mod_json
+from .mod import (
+    has_origin,
+    list_mods,
+    mod_base_name,
+    mod_major,
+    read_mod_json,
+    read_origin,
+)
+from .commands.mod_update import read_cache as read_update_cache
 from .profile import load_profile
 from .pzversion import PzVersion, detect_pz_version
 from .state import read_state
@@ -364,6 +372,20 @@ class ModderApp:
                  "First-time setup copies game files into this folder so mods\n"
                  "can be built. After setup, this re-syncs when the game updates.")
 
+        self.btn_check_updates = ttk.Button(right, text="Check Updates",
+                                            command=self.on_check_updates)
+        self.btn_check_updates.pack(side=tk.LEFT, padx=(8, 0))
+        _Tooltip(self.btn_check_updates,
+                 "Query GitHub for newer versions of every imported mod.\n"
+                 "Results decorate the Version column with ⬆ badges.")
+
+        self.btn_import = ttk.Button(right, text="Import…",
+                                     command=self.on_import_clicked)
+        self.btn_import.pack(side=tk.LEFT, padx=(8, 0))
+        _Tooltip(self.btn_import,
+                 "Pull mods from a GitHub repository.\n"
+                 "Single-mod and multi-mod repos both supported.")
+
         ttk.Frame(self.tk, style="Sep.TFrame", height=1).pack(fill=tk.X, padx=12)
 
     def _on_install_to_changed(self, _e=None) -> None:
@@ -503,20 +525,24 @@ class ModderApp:
         frame = ttk.Frame(self.tk, padding=(12, 8, 12, 0))
         frame.pack(fill=tk.BOTH, expand=True)
 
-        columns = ("check", "name", "info", "kind", "status", "desc")
+        columns = ("check", "name", "info", "origin", "kind", "version", "status", "desc")
         tv = ttk.Treeview(frame, columns=columns, show="headings", selectmode="none")
         tv.heading("check", text="")
         tv.heading("name", text="Mod")
         tv.heading("info", text="")
+        tv.heading("origin", text="")
         tv.heading("kind", text="Type")
+        tv.heading("version", text="Version")
         tv.heading("status", text="Status")
         tv.heading("desc", text="Description")
         tv.column("check", width=30, anchor=tk.CENTER, stretch=False)
         tv.column("name", width=170, anchor=tk.W)
-        tv.column("info", width=36, anchor=tk.CENTER, stretch=False)
+        tv.column("info", width=30, anchor=tk.CENTER, stretch=False)
+        tv.column("origin", width=30, anchor=tk.CENTER, stretch=False)
         tv.column("kind", width=78, anchor=tk.W, stretch=False)
+        tv.column("version", width=110, anchor=tk.W, stretch=False)
         tv.column("status", width=96, anchor=tk.W)
-        tv.column("desc", width=420, anchor=tk.W)
+        tv.column("desc", width=380, anchor=tk.W)
         tv.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         scroll = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tv.yview)
@@ -524,8 +550,12 @@ class ModderApp:
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
         tv.tag_configure("blocked", foreground=PALETTE["bone_dim"])
+        tv.tag_configure("outdated", foreground=PALETTE["warn"])
 
         tv.bind("<Button-1>", self._on_row_click)
+        # Right-click context menu — Button-3 on Win/Linux, Button-2 on macOS.
+        tv.bind("<Button-3>", self._on_row_context)
+        tv.bind("<Button-2>", self._on_row_context)
         self.tv = tv
 
     def _build_footer(self) -> None:
@@ -564,11 +594,37 @@ class ModderApp:
                                          anchor="w")
         self.status_headline.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+        # Outdated-mods chip — clickable, hidden when count == 0.
+        self.outdated_label_var = tk.StringVar(value="")
+        self.btn_outdated = ttk.Button(
+            wrap, textvariable=self.outdated_label_var,
+            style="Link.TButton", command=self.on_update_all,
+        )
+        # Not packed initially — _update_outdated_label controls visibility.
+
         self.progress = ttk.Progressbar(wrap, mode="indeterminate", length=180)
         self.progress.pack(side=tk.RIGHT)
         self.progress.pack_forget()
 
         ttk.Frame(self.tk, style="Sep.TFrame", height=1).pack(fill=tk.X, padx=12)
+
+    def _update_outdated_label(self) -> None:
+        n = int(getattr(self, "_outdated_count", 0) or 0)
+        if not hasattr(self, "btn_outdated"):
+            return
+        if n <= 0:
+            try:
+                self.btn_outdated.pack_forget()
+            except Exception:
+                pass
+            self.outdated_label_var.set("")
+            return
+        plural = "" if n == 1 else "s"
+        self.outdated_label_var.set(f"⬆ {n} update{plural} available")
+        try:
+            self.btn_outdated.pack(side=tk.RIGHT, padx=(0, 8))
+        except Exception:
+            pass
 
     def _build_log(self) -> None:
         bar = ttk.Frame(self.tk, padding=(12, 4, 12, 0))
@@ -673,6 +729,13 @@ class ModderApp:
         # `effective_client_only` for blocking decisions.
         self._rebuild_relation_maps(mods_dir, candidates)
 
+        # Pull update-cache once per refresh — drives outdated badges.
+        cache_doc = read_update_cache(self.root / "data") if cfg else {}
+        update_cache = dict((cache_doc.get("mods") or {}))
+        self._update_cache = update_cache
+        self._mj_by_name = {}      # name -> ModJson, for context menu / origin reads
+        outdated_count = 0
+
         has_blocked = False
         order: list[str] = []
         for name in candidates:
@@ -681,6 +744,7 @@ class ModderApp:
             except Exception:
                 continue
             order.append(name)
+            self._mj_by_name[name] = mj
             effective_co = self._effective_client_only.get(name, mj.client_only)
             blocked = effective_co and self.install_to == "server"
             if blocked:
@@ -699,7 +763,26 @@ class ModderApp:
                 except Exception:
                     pass
 
+            origin = read_origin(mj)
+            origin_glyph = "⤓" if origin else ""
+            cache_entry = update_cache.get(name) or {}
+            up_v = cache_entry.get("upstreamVersion")
+            cache_status = cache_entry.get("status", "")
+            is_outdated = (
+                origin and up_v and cache_status == "outdated"
+            )
+            if is_outdated:
+                version_cell = f"{mj.version}  ⬆ {up_v}"
+                outdated_count += 1
+            elif origin and up_v:
+                # Have cache + up-to-date.
+                version_cell = f"{mj.version}  ✓"
+            else:
+                version_cell = mj.version
+
             status = self._row_status(name, blocked=blocked) + drift
+            if is_outdated and "⚠" not in status:
+                status = "⚠ " + status if status else "⚠"
             check = "☑" if (name in self.checked and not blocked) else "☐"
             info = "ⓘ" if (mods_dir / name / "README.md").exists() else ""
             if mj.client_only:
@@ -709,19 +792,27 @@ class ModderApp:
             else:
                 kind = "any"
             display_name = mod_base_name(name)
-            tag_args = ("blocked",) if blocked else ()
+            tags: list[str] = []
+            if blocked:
+                tags.append("blocked")
+            if is_outdated:
+                tags.append("outdated")
+            tag_args = tuple(tags)
             desc = self._decorate_desc(name, mj)
             self.tv.insert("", tk.END, iid=name,
-                           values=(check, display_name, info, kind, status, desc),
+                           values=(check, display_name, info, origin_glyph,
+                                   kind, version_cell, status, desc),
                            tags=tag_args)
             if blocked:
                 has_blocked = True
         self.mod_order = order
         self._has_blocked = has_blocked
+        self._outdated_count = outdated_count
         if mismatch_reason:
             self._log(mismatch_reason, tag="warn")
         self._update_primary_button()
         self._update_apply_button_state()
+        self._update_outdated_label()
 
     def _rebuild_relation_maps(self, mods_dir: Path, candidates: list[str]) -> None:
         """Compute per-mod dep closure, incompat set, effective clientOnly.
@@ -839,9 +930,14 @@ class ModderApp:
             return
         tags = self.tv.item(name, "tags") or ()
         blocked = "blocked" in tags
+        outdated = "outdated" in tags
         vals = list(self.tv.item(name, "values"))
         vals[0] = "☑" if (name in self.checked and not blocked) else "☐"
-        vals[4] = self._row_status(name, blocked=blocked)
+        # Column order: check, name, info, origin, kind, version, status, desc
+        status = self._row_status(name, blocked=blocked)
+        if outdated and "⚠" not in status:
+            status = "⚠ " + status if status else "⚠"
+        vals[6] = status
         self.tv.item(name, values=vals)
 
     def _compute_desired(self) -> list[str]:
@@ -1145,7 +1241,12 @@ class ModderApp:
 
     def _set_buttons(self, enabled: bool) -> None:
         state = tk.NORMAL if enabled else tk.DISABLED
-        for b in (self.btn_init, self.btn_apply, self.btn_revert):
+        widgets = [self.btn_init, self.btn_apply, self.btn_revert]
+        for opt in ("btn_import", "btn_check_updates", "btn_outdated"):
+            w = getattr(self, opt, None)
+            if w is not None:
+                widgets.append(w)
+        for b in widgets:
             b.configure(state=state)
         self.install_to_combo.configure(state="readonly" if enabled else tk.DISABLED)
         if enabled:
@@ -1246,6 +1347,179 @@ class ModderApp:
         lines.append("")
         lines.append(f"Final stack: {', '.join(desired)}")
         return messagebox.askyesno("Apply changes", "\n".join(lines))
+
+    # --- import / mod-update integration ---
+
+    def on_import_clicked(self) -> None:
+        if self._busy:
+            return
+        _ImportDialog(self)
+
+    def on_check_updates(self) -> None:
+        """Run `mod-update --check` in the background to refresh the cache,
+        then redraw rows. Uses the same _run_cli pipeline so log output streams
+        into the existing log pane and failure surfaces via the failure dialog."""
+        if self._busy:
+            return
+        self._run_cli(["mod-update", "--check"])
+
+    def on_update_all(self) -> None:
+        if self._busy:
+            return
+        n = int(getattr(self, "_outdated_count", 0) or 0)
+        if n <= 0:
+            messagebox.showinfo("No updates", "No imported mods are outdated.")
+            return
+        if not messagebox.askyesno(
+            "Update mods",
+            f"Update {n} outdated mod(s) from their source repos?\n\n"
+            "Mods that are currently entered will be skipped.",
+        ):
+            return
+        self._run_cli(["mod-update"])
+
+    def _on_row_context(self, event) -> None:
+        row = self.tv.identify_row(event.y)
+        if not row:
+            return
+        if self._busy:
+            return
+        mj = (getattr(self, "_mj_by_name", {}) or {}).get(row)
+        if mj is None:
+            try:
+                mj = read_mod_json(self.root / "data" / "mods" / row)
+            except Exception:
+                return
+
+        origin = read_origin(mj)
+        is_imported = bool(origin)
+        # Currently-entered guard.
+        try:
+            from .state import read_enter
+            from .profile import load_profile as _load
+            cfg = read_config(self.root, required=False)
+            prof = _load(self.root, cfg=cfg) if cfg else _load(self.root)
+            entered = read_enter(prof.enter_file)
+        except Exception:
+            entered = None
+        is_entered = bool(entered and entered.mod == row)
+
+        # Collect peers sharing (repo, ref).
+        peers: list[str] = []
+        if is_imported:
+            for other_name, other_mj in (self._mj_by_name or {}).items():
+                if other_name == row:
+                    continue
+                o = read_origin(other_mj)
+                if not o:
+                    continue
+                if (o.get("repo") == origin.get("repo")
+                        and o.get("ref") == origin.get("ref")):
+                    peers.append(other_name)
+
+        m = tk.Menu(self.tk, tearoff=0,
+                    bg=PALETTE["char_700"], fg=PALETTE["bone"],
+                    activebackground=PALETTE["char_500"],
+                    activeforeground=PALETTE["bone"])
+
+        m.add_command(
+            label="Check for update",
+            command=lambda r=row: self._run_cli(["mod-update", r, "--check"]),
+            state=tk.NORMAL if is_imported else tk.DISABLED,
+        )
+        m.add_command(
+            label="Update now",
+            command=lambda r=row: self._run_cli(["mod-update", r]),
+            state=tk.NORMAL if (is_imported and not is_entered) else tk.DISABLED,
+        )
+        peers_label = (f"Update with peers from same repo  ({len(peers)})"
+                       if peers else "Update with peers from same repo")
+        m.add_command(
+            label=peers_label,
+            command=lambda r=row: self._run_cli(["mod-update", r, "--include-peers"]),
+            state=tk.NORMAL if (is_imported and peers and not is_entered) else tk.DISABLED,
+        )
+        m.add_separator()
+        m.add_command(
+            label="Reimport (force)",
+            command=lambda r=row, o=origin: self._reimport_mod(r, o),
+            state=tk.NORMAL if (is_imported and not is_entered) else tk.DISABLED,
+        )
+        m.add_command(
+            label="Show origin",
+            command=lambda r=row, o=origin: self._show_origin_dialog(r, o),
+            state=tk.NORMAL if is_imported else tk.DISABLED,
+        )
+        m.add_command(
+            label="Open on GitHub",
+            command=lambda o=origin: self._open_origin_in_browser(o),
+            state=tk.NORMAL if is_imported else tk.DISABLED,
+        )
+        if (self.root / "data" / "mods" / row / "README.md").exists():
+            m.add_separator()
+            m.add_command(label="Show README",
+                          command=lambda r=row: self._open_readme(r))
+
+        try:
+            m.tk_popup(event.x_root, event.y_root)
+        finally:
+            m.grab_release()
+
+    def _reimport_mod(self, name: str, origin: dict) -> None:
+        if not messagebox.askyesno(
+            "Reimport mod",
+            f"Force-reimport '{name}' from {origin.get('repo')}@{origin.get('ref')}?\n\n"
+            "Local mod.json + patches will be overwritten.",
+        ):
+            return
+        base = mod_base_name(name)
+        args = ["import", str(origin.get("repo")), "--ref", str(origin.get("ref")),
+                "--mod", str(origin.get("subdir") or base),
+                "--name", base, "--force"]
+        self._run_cli(args)
+
+    def _show_origin_dialog(self, name: str, origin: dict) -> None:
+        import json as _json
+        body = _json.dumps(origin, indent=2)
+        dlg = tk.Toplevel(self.tk)
+        dlg.title(f"Origin — {name}")
+        dlg.transient(self.tk)
+        dlg.configure(bg=PALETTE["char_900"])
+        ttk.Label(dlg, text=f"Origin of {name}", style="Brand.TLabel").pack(
+            anchor="w", padx=16, pady=(14, 4))
+        txt = tk.Text(dlg, width=64, height=12,
+                      bg=PALETTE["char_700"], fg=PALETTE["bone"],
+                      font=("Consolas", 10), borderwidth=0)
+        txt.pack(padx=16, pady=(0, 12))
+        txt.insert("1.0", body)
+        txt.configure(state=tk.DISABLED)
+        btns = ttk.Frame(dlg)
+        btns.pack(fill=tk.X, padx=12, pady=(0, 12))
+
+        def _copy():
+            self.tk.clipboard_clear()
+            self.tk.clipboard_append(body)
+
+        ttk.Button(btns, text="Copy", command=_copy).pack(side=tk.LEFT)
+        ttk.Button(btns, text="Close", style="Primary.TButton",
+                   command=dlg.destroy).pack(side=tk.RIGHT)
+
+    def _open_origin_in_browser(self, origin: dict) -> None:
+        import webbrowser
+        repo = str(origin.get("repo") or "")
+        ref = str(origin.get("ref") or "")
+        subdir = str(origin.get("subdir") or "")
+        if not repo:
+            return
+        url = f"https://github.com/{repo}"
+        if ref:
+            url += f"/tree/{ref}"
+            if subdir:
+                url += f"/{subdir}"
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
 
     # --- status strip ---
 
@@ -1375,3 +1649,356 @@ class ModderApp:
 
 def launch(root: Path, initial_install_to: InstallTo) -> int:
     return ModderApp(root=root, initial_install_to=initial_install_to).run()
+
+
+# ---------------------------------------------------------------------------
+# Import dialog — two-stage (Discover → Select)
+# ---------------------------------------------------------------------------
+
+class _ImportDialog:
+    """Modal that walks the user through:
+        1. enter repo URL / ref → run `import --list --json` to discover
+        2. select which mods to pull (multi-select treeview)
+        3. submit → dispatches `import` via the parent's _run_cli pipeline.
+
+    Long-running ops (discovery + import) run in worker threads. UI updates
+    happen on the Tk thread via `after()`.
+    """
+
+    def __init__(self, app: "ModderApp") -> None:
+        self.app = app
+        self.discovered: list[dict] = []
+        self.workspace_major: int = int(getattr(app, "_ws_major", 0) or 0)
+        # Stage 2 state.
+        self._row_check_vars: dict[str, tk.BooleanVar] = {}
+        self._row_major_ok: dict[str, bool] = {}
+
+        self.dlg = tk.Toplevel(app.tk)
+        self.dlg.title("Import mods from GitHub")
+        self.dlg.transient(app.tk)
+        self.dlg.configure(bg=PALETTE["char_900"])
+        self.dlg.geometry("640x520")
+
+        # --- Stage 1 (always present) ---
+        self.stage1 = ttk.Frame(self.dlg, padding=(16, 14, 16, 8))
+        self.stage1.pack(fill=tk.X)
+
+        ttk.Label(self.stage1, text="Repository", style="Brand.TLabel").pack(anchor="w")
+        ttk.Label(self.stage1,
+                  text="owner/repo, or any github.com URL "
+                       "(optionally including /tree/<branch>).",
+                  style="Tagline.TLabel", wraplength=600).pack(anchor="w", pady=(0, 6))
+
+        self.repo_var = tk.StringVar()
+        self.repo_var.trace_add("write", lambda *a: self._validate_repo())
+        self.repo_entry = ttk.Entry(self.stage1, textvariable=self.repo_var, width=60)
+        self.repo_entry.pack(anchor="w", fill=tk.X, pady=(0, 4))
+
+        self.repo_hint_var = tk.StringVar(value="")
+        self.repo_hint = ttk.Label(self.stage1, textvariable=self.repo_hint_var,
+                                   style="Tagline.TLabel", foreground=PALETTE["error"])
+        self.repo_hint.pack(anchor="w")
+
+        ref_row = ttk.Frame(self.stage1)
+        ref_row.pack(anchor="w", fill=tk.X, pady=(8, 0))
+        ttk.Label(ref_row, text="Branch / tag (optional):",
+                  style="Tagline.TLabel").pack(side=tk.LEFT)
+        self.ref_var = tk.StringVar()
+        ttk.Entry(ref_row, textvariable=self.ref_var, width=30).pack(
+            side=tk.LEFT, padx=(8, 0))
+
+        # --- Stage 2 container (hidden until Discover succeeds) ---
+        self.stage2_wrap = ttk.Frame(self.dlg, padding=(16, 8, 16, 8))
+        # Not packed yet.
+
+        # --- Footer (buttons + spinner) ---
+        self.footer = ttk.Frame(self.dlg, padding=(16, 8, 16, 14))
+        self.footer.pack(side=tk.BOTTOM, fill=tk.X)
+
+        self.spinner = ttk.Progressbar(self.footer, mode="indeterminate", length=120)
+        # not packed initially
+
+        self.btn_cancel = ttk.Button(self.footer, text="Cancel",
+                                     command=self.dlg.destroy)
+        self.btn_cancel.pack(side=tk.LEFT)
+
+        self.btn_back = ttk.Button(self.footer, text="Back",
+                                   command=self._back_to_stage1)
+        # not packed initially
+
+        self.btn_primary = ttk.Button(self.footer, text="Discover",
+                                      style="Primary.TButton",
+                                      command=self._on_discover)
+        self.btn_primary.pack(side=tk.RIGHT)
+        self.btn_primary.configure(state=tk.DISABLED)
+
+        # Inline error banner (shown if discovery / import fails).
+        self.error_var = tk.StringVar(value="")
+        self.error_label = ttk.Label(self.dlg, textvariable=self.error_var,
+                                     style="Tagline.TLabel",
+                                     foreground=PALETTE["error"],
+                                     wraplength=600, padding=(16, 0, 16, 0))
+        # Not packed unless an error occurs.
+
+        self._discover_queue: queue.Queue = queue.Queue()
+        self._import_queue: queue.Queue = queue.Queue()
+
+        self.repo_entry.focus_set()
+
+    # ---- Stage 1: validate + discover ----
+
+    def _validate_repo(self) -> None:
+        raw = self.repo_var.get().strip()
+        if not raw:
+            self.repo_hint_var.set("")
+            self.btn_primary.configure(state=tk.DISABLED)
+            return
+        try:
+            from .github import parse_github_ref
+            parse_github_ref(raw)
+            self.repo_hint_var.set("")
+            self.btn_primary.configure(state=tk.NORMAL)
+        except Exception as e:
+            self.repo_hint_var.set(str(e))
+            self.btn_primary.configure(state=tk.DISABLED)
+
+    def _on_discover(self) -> None:
+        self._clear_error()
+        self.btn_primary.configure(state=tk.DISABLED, text="Discovering…")
+        self.spinner.pack(side=tk.RIGHT, padx=(0, 8))
+        self.spinner.start(80)
+
+        repo = self.repo_var.get().strip()
+        ref = self.ref_var.get().strip()
+        args = ["import", repo, "--list", "--json"]
+        if ref:
+            args.extend(["--ref", ref])
+
+        def worker():
+            base_args = ["--root", str(self.app.root), *args]
+            env = os.environ.copy()
+            if getattr(sys, "frozen", False):
+                cmd = [sys.executable, *base_args]
+            else:
+                cmd = [sys.executable, "-m", "necroid", *base_args]
+                pkg_parent = str(Path(__file__).resolve().parent.parent)
+                env["PYTHONPATH"] = pkg_parent + os.pathsep + env.get("PYTHONPATH", "")
+            popen_kwargs: dict = {}
+            if sys.platform == "win32":
+                popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+            try:
+                proc = subprocess.run(
+                    cmd, cwd=str(self.app.root),
+                    capture_output=True, text=True, env=env, **popen_kwargs,
+                )
+            except Exception as e:
+                self._discover_queue.put({"ok": False, "error": str(e)})
+                return
+            if proc.returncode != 0:
+                self._discover_queue.put({
+                    "ok": False,
+                    "error": (proc.stderr or proc.stdout or "command failed").strip(),
+                })
+                return
+            try:
+                payload = __import__("json").loads(proc.stdout)
+            except Exception as e:
+                self._discover_queue.put({
+                    "ok": False,
+                    "error": f"could not parse discovery output: {e}",
+                })
+                return
+            self._discover_queue.put({"ok": True, "payload": payload})
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.dlg.after(120, self._poll_discover)
+
+    def _poll_discover(self) -> None:
+        try:
+            r = self._discover_queue.get_nowait()
+        except queue.Empty:
+            self.dlg.after(120, self._poll_discover)
+            return
+        self.spinner.stop()
+        self.spinner.pack_forget()
+        self.btn_primary.configure(text="Discover", state=tk.NORMAL)
+        if not r.get("ok"):
+            self._show_error(r.get("error") or "discovery failed")
+            return
+        payload = r["payload"]
+        self.discovered = list(payload.get("mods") or [])
+        self.workspace_major = int(payload.get("workspaceMajor") or self.workspace_major)
+        if not self.discovered:
+            self._show_error("repo contains no importable mods")
+            return
+        self._build_stage2()
+
+    # ---- Stage 2: select + import ----
+
+    def _build_stage2(self) -> None:
+        self.stage1.pack_forget()
+        for child in self.stage2_wrap.winfo_children():
+            child.destroy()
+        self.stage2_wrap.pack(fill=tk.BOTH, expand=True, after=None)
+
+        repo = self.repo_var.get().strip()
+        ref = self.ref_var.get().strip() or "(default branch)"
+        ttk.Label(self.stage2_wrap,
+                  text=f"{repo} @ {ref} — {len(self.discovered)} mod(s)",
+                  style="Brand.TLabel").pack(anchor="w")
+        ttk.Label(self.stage2_wrap,
+                  text=f"Workspace major: {self.workspace_major}. "
+                       "Mods that don't match the workspace major are disabled.",
+                  style="Tagline.TLabel", wraplength=600).pack(anchor="w", pady=(0, 8))
+
+        # Treeview with checkboxes (simulated via the first column).
+        cols = ("check", "subdir", "name", "version", "kind", "expected")
+        tv = ttk.Treeview(self.stage2_wrap, columns=cols,
+                          show="headings", selectmode="none", height=10)
+        tv.heading("check", text="")
+        tv.heading("subdir", text="Subdir")
+        tv.heading("name", text="Mod (dir)")
+        tv.heading("version", text="Version")
+        tv.heading("kind", text="Type")
+        tv.heading("expected", text="PZ Major")
+        tv.column("check", width=30, anchor=tk.CENTER, stretch=False)
+        tv.column("subdir", width=160, anchor=tk.W)
+        tv.column("name", width=160, anchor=tk.W)
+        tv.column("version", width=70, anchor=tk.W, stretch=False)
+        tv.column("kind", width=80, anchor=tk.W, stretch=False)
+        tv.column("expected", width=80, anchor=tk.W, stretch=False)
+        tv.pack(fill=tk.BOTH, expand=True)
+        tv.tag_configure("incompat", foreground=PALETTE["error"])
+
+        self._row_check_vars.clear()
+        self._row_major_ok.clear()
+
+        for dm in self.discovered:
+            mod_major = dm.get("modMajor")
+            major_ok = bool(dm.get("majorOk", True))
+            checked = major_ok  # default: select compatible rows
+            self._row_check_vars[dm["subdir"]] = tk.BooleanVar(value=checked)
+            self._row_major_ok[dm["subdir"]] = major_ok
+            check_glyph = "☑" if checked else ("☒" if not major_ok else "☐")
+            kind = "client-only" if dm.get("clientOnly") else "any"
+            major_cell = (str(mod_major) if mod_major is not None
+                          else "(no suffix)")
+            tags = ("incompat",) if not major_ok else ()
+            dirname_cell = dm.get("dirname") or dm.get("name") or ""
+            tv.insert("", tk.END, iid=dm["subdir"],
+                      values=(check_glyph, dm["subdir"] or "<root>",
+                              dirname_cell, dm["version"], kind, major_cell),
+                      tags=tags)
+
+        def on_click(event):
+            row = tv.identify_row(event.y)
+            if not row:
+                return
+            if not self._row_major_ok.get(row, True):
+                return  # disabled
+            v = self._row_check_vars[row]
+            v.set(not v.get())
+            vals = list(tv.item(row, "values"))
+            vals[0] = "☑" if v.get() else "☐"
+            tv.item(row, values=vals)
+            self._update_primary_label()
+            self._update_name_field()
+
+        tv.bind("<Button-1>", on_click)
+        self._stage2_tv = tv
+
+        # --name override row.
+        name_row = ttk.Frame(self.stage2_wrap, padding=(0, 8, 0, 0))
+        name_row.pack(fill=tk.X)
+        ttk.Label(name_row, text="Override mod base name:",
+                  style="Tagline.TLabel").pack(side=tk.LEFT)
+        self.name_var = tk.StringVar()
+        self.name_entry = ttk.Entry(name_row, textvariable=self.name_var, width=24)
+        self.name_entry.pack(side=tk.LEFT, padx=(8, 8))
+        self.name_hint_var = tk.StringVar(value="(only when one mod selected)")
+        ttk.Label(name_row, textvariable=self.name_hint_var,
+                  style="Tagline.TLabel").pack(side=tk.LEFT)
+        self._update_name_field()
+
+        # Force checkbox.
+        self.force_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(self.stage2_wrap, text="Overwrite existing mods (--force)",
+                        variable=self.force_var).pack(anchor="w", pady=(8, 0))
+
+        # Footer rebuild — now includes Back, Import N.
+        self.btn_cancel.pack_forget()
+        self.btn_primary.pack_forget()
+        self.btn_back.pack(side=tk.LEFT)
+        self.btn_cancel.pack(side=tk.LEFT, padx=(8, 0))
+        self.btn_primary.configure(text="Import 0", command=self._on_import)
+        self.btn_primary.pack(side=tk.RIGHT)
+        self._update_primary_label()
+
+    def _update_name_field(self) -> None:
+        n = sum(1 for v in self._row_check_vars.values() if v.get())
+        if n == 1:
+            self.name_entry.configure(state=tk.NORMAL)
+            self.name_hint_var.set("(blank = use upstream name)")
+        else:
+            self.name_var.set("")
+            self.name_entry.configure(state=tk.DISABLED)
+            self.name_hint_var.set("(only when one mod selected)")
+
+    def _update_primary_label(self) -> None:
+        n = sum(1 for v in self._row_check_vars.values() if v.get())
+        self.btn_primary.configure(
+            text=f"Import {n}",
+            state=tk.NORMAL if n > 0 else tk.DISABLED,
+        )
+
+    def _back_to_stage1(self) -> None:
+        self.stage2_wrap.pack_forget()
+        self.stage1.pack(fill=tk.X, before=self.footer)
+        self.btn_back.pack_forget()
+        self.btn_cancel.pack_forget()
+        self.btn_primary.pack_forget()
+        self.btn_cancel.pack(side=tk.LEFT)
+        self.btn_primary.configure(text="Discover", command=self._on_discover)
+        self.btn_primary.pack(side=tk.RIGHT)
+        self._validate_repo()
+
+    def _on_import(self) -> None:
+        self._clear_error()
+        selected_subdirs = [s for s, v in self._row_check_vars.items() if v.get()]
+        if not selected_subdirs:
+            return
+        repo = self.repo_var.get().strip()
+        ref = self.ref_var.get().strip()
+        all_selected = (len(selected_subdirs) == len(self.discovered))
+
+        args = ["import", repo]
+        if ref:
+            args.extend(["--ref", ref])
+        if all_selected and len(selected_subdirs) > 1:
+            args.append("--all")
+        else:
+            for s in selected_subdirs:
+                args.extend(["--mod", s])
+        if len(selected_subdirs) == 1 and self.name_var.get().strip():
+            args.extend(["--name", self.name_var.get().strip()])
+        if self.force_var.get():
+            args.append("--force")
+
+        self.dlg.destroy()
+        self.app._run_cli(args)
+
+    # ---- Error display ----
+
+    def _show_error(self, msg: str) -> None:
+        self.error_var.set(msg)
+        try:
+            self.error_label.pack(side=tk.TOP, fill=tk.X, before=self.footer)
+        except Exception:
+            self.error_label.pack(side=tk.TOP, fill=tk.X)
+
+    def _clear_error(self) -> None:
+        self.error_var.set("")
+        try:
+            self.error_label.pack_forget()
+        except Exception:
+            pass

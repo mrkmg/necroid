@@ -24,6 +24,9 @@
 /data/.mod-state-client.json
 /data/.mod-state-server.json
 /data/.update-cache.json
+/data/.update-cache-mods.json
+/data/.import-tmp/
+/data/.update-tmp/
 
 # -----------------------------------------------------------------------------
 # Build output (PyInstaller + wheels)

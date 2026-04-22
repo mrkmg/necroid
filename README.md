@@ -44,6 +44,141 @@ Some mods declare **dependencies** on other mods (e.g. `transparent-all` depends
 
 In the Necroid GUI, click the **ⓘ** next to any mod to read its README without leaving the app.
 
+## Importing mods from GitHub
+
+Necroid can pull mods directly from a GitHub repository — single-mod repos (one mod at the root) and multi-mod repos (several mods under `mods/<name>/`) are both supported.
+
+- **GUI**: click **Import…** in the header. Enter `owner/repo` (or any github.com URL) and an optional branch / tag. Necroid discovers the available mods and shows them in a checklist — pick one or many, then **Import**. Mods that don't match your workspace's PZ major are flagged red and disabled.
+- **CLI**:
+  ```bash
+  necroid import owner/repo                    # single-mod repo: imports the one
+  necroid import owner/repo --list             # discover only; print the available mods
+  necroid import owner/repo --all              # multi-mod: import every mod found
+  necroid import owner/repo --mod admin-xray   # multi-mod: import a specific mod (repeatable)
+  necroid import owner/repo --ref v1.2.0       # pin to a tag or branch
+  necroid import owner/repo --force            # overwrite existing mods of the same name
+  ```
+
+Imported mods land at `data/mods/<base>-<workspaceMajor>/` — the same layout as locally-authored mods. Each imported mod's `mod.json` records an `origin` block (repo, ref, subdir, commit SHA) so it can be refreshed later.
+
+### Updating imported mods
+
+- **GUI**: click **Check Updates** in the header. Necroid queries each imported mod's source repo and decorates the Version column with a `⬆ <new>` badge when an update is available. The status strip shows a clickable `N updates available` chip — click it to update them all in one go. Right-click any imported row for **Update now**, **Update with peers from same repo**, **Reimport (force)**, **Show origin**, or **Open on GitHub**.
+- **CLI**:
+  ```bash
+  necroid mod-update                    # check + apply updates for every imported mod
+  necroid mod-update --check            # dry-run: report what would change
+  necroid mod-update admin-xray         # one mod by name
+  necroid mod-update admin-xray --include-peers   # also any mods sharing the same repo+ref
+  necroid mod-update --force            # apply even if upstream version is older or equal
+  ```
+
+Updates are atomic per-mod: `mod.json` and `patches/` are replaced wholesale, but local-only fields (`pristineSnapshot`, `expectedVersion`, `createdAt`) are preserved. A mod that's currently `enter`-ed is skipped to avoid clobbering your in-progress edits — `necroid clean <mod>` first if you really mean it.
+
+When several mods come from the same repo + ref, `mod-update` fetches the archive once and refreshes all of them together.
+
+### Publishing your own mods on GitHub
+
+A Necroid mod is a directory named `<base>-<PZ-major>` (e.g. `admin-xray-41`) containing `mod.json` + `patches/`. Push that to a GitHub repo and anyone can pull it with `necroid import <your-repo>`. No registry, no manifest, no build step on the user's end.
+
+> **The `-<major>` suffix is part of the mod's identity, not a local convention.** Necroid keeps the suffix verbatim through import and update, so per-PZ-major variants of the same mod can live side by side both in your repo and in your users' installs. If you support PZ 41 and PZ 42, ship both as `<base>-41` and `<base>-42` in the same repo on the same branch — no need to maintain separate branches per game major.
+
+**Single-mod repo** (one mod, one PZ major).
+
+```
+my-cool-mod-41/                 # your repo's root — note the -41 suffix
+├── mod.json                    # "name": "my-cool-mod-41"
+├── patches/
+│   ├── zombie/Foo.java.patch
+│   └── zombie/Bar.java.new
+└── README.md                   # optional but nice
+```
+
+**Single mod, multiple PZ majors** (most common pattern). Two mod dirs in the same repo:
+
+```
+my-cool-mod/                    # your repo's root (any name; not parsed)
+├── README.md
+├── my-cool-mod-41/
+│   ├── mod.json                # "name": "my-cool-mod-41", expectedVersion: "41.78.19"
+│   └── patches/
+└── my-cool-mod-42/
+    ├── mod.json                # "name": "my-cool-mod-42", expectedVersion: "42.0.0"
+    └── patches/
+```
+
+A user on PZ 41 imports it; Necroid takes `my-cool-mod-41` and ignores the 42 variant. A user on PZ 42 gets the other one. Same `git pull`, same `mod-update`.
+
+**Mod pack / collection** (several mods bundled together — Necroid's own bundled mods use this layout):
+
+```
+my-mod-pack/
+├── README.md
+└── data/
+    └── mods/
+        ├── thing-one-41/
+        │   ├── mod.json
+        │   └── patches/
+        ├── thing-one-42/
+        │   ├── mod.json
+        │   └── patches/
+        └── thing-two-41/
+            ├── mod.json
+            └── patches/
+```
+
+Necroid walks `<root>/`, `<root>/<x>/`, `<root>/<x>/<y>/`, and `<root>/data/mods/<x>/` looking for mod.json files — so all four layouts above work.
+
+#### Step-by-step
+
+1. **Author the mod locally.** `necroid new my-cool-mod -d "what it does"`, then `necroid enter my-cool-mod`, edit under `src-my-cool-mod/`, and `necroid capture my-cool-mod` until it builds (`necroid test`) and behaves in-game (`necroid install my-cool-mod --to client`). Necroid will create the dir as `data/mods/my-cool-mod-<workspaceMajor>/` (e.g. `my-cool-mod-41`) automatically — the `-<major>` suffix is added by `necroid new` from your bound workspace major.
+2. **Bump the version** in `mod.json` — `version: "0.1.0"` → `0.1.1`, etc. `mod-update` uses semver-style ordering on this field, so monotonically-increasing values trigger refreshes for your users.
+3. **Make sure `expectedVersion` is set** to the PZ version you authored against (e.g. `"41.78.19"`). The dir suffix's major (`-41`) is the hard gate; `expectedVersion` is the soft hint Necroid uses to surface "you might want to recapture" warnings on minor / patch drift.
+4. **Initialize a fresh GitHub repo.** Push the `my-cool-mod-41` directory verbatim — keep the suffix:
+   ```bash
+   cd data/mods/my-cool-mod-41
+   git init
+   git add mod.json patches/ README.md
+   git commit -m "Initial release"
+   git branch -M main
+   git remote add origin https://github.com/<you>/my-cool-mod.git
+   git push -u origin main
+   ```
+   You can also publish from the parent dir if you want a wrapper README at the repo root — Necroid finds the mod either way.
+5. **(Optional) Tag a release** so users can pin to a specific version: `git tag v0.1.1 && git push --tags`. They run `necroid import <you>/my-cool-mod --ref v0.1.1` to lock in.
+6. **Tell users:** `necroid import <you>/my-cool-mod`. From then on, `necroid mod-update` (or the GUI's **Check Updates** button) pulls every new version you publish.
+
+#### What ships and what doesn't
+
+`necroid import` copies everything except `.git*` and `.github/` from each mod's source dir into the user's `data/mods/<dirname>/`. The dirname comes from your upstream — `<base>-<major>` is preserved verbatim. So you can include a `README.md`, a `LICENSE`, screenshots, etc. — they all travel with the mod and the GUI shows the README when the user clicks the **ⓘ** glyph next to your mod.
+
+`mod.json` is rewritten on import: the user's local `pristineSnapshot`, `expectedVersion`, and `createdAt` survive across re-imports; everything else (description, version, clientOnly, dependencies, incompatibleWith) is taken from your upstream copy. Your `version` field is what drives "an update is available". Necroid stamps an `origin` block into the imported `mod.json` so it remembers where to fetch from.
+
+#### Supporting a new PZ major
+
+When PZ moves from 41 → 42:
+
+1. Don't touch your existing `my-cool-mod-41/`. It stays exactly as it is, and existing users on PZ 41 keep getting fixes from it.
+2. Add a sibling `my-cool-mod-42/` with `mod.json.name = "my-cool-mod-42"` and `expectedVersion = "42.x.x"`. Recapture the patches against PZ 42's pristine.
+3. Push both. Users on PZ 41 keep pulling 41 fixes; users on PZ 42 import the 42 variant.
+
+No branching, no separate tags, no per-major maintenance burden — both variants live on `main` and both get fresh fixes whenever you push.
+
+#### Multi-mod repo notes
+
+If you ship several mods together, users can pick what they want:
+
+```bash
+necroid import you/my-pack --list             # show what's in the repo
+necroid import you/my-pack --all              # take everything matching their PZ major
+necroid import you/my-pack --mod thing-one    # one mod (auto-resolves to thing-one-<workspaceMajor>)
+necroid import you/my-pack --mod thing-one-42 # explicit (must match workspace major or use --include-all-majors)
+```
+
+The GUI's Import dialog shows the same list with checkboxes. Mods whose `-<major>` doesn't match the workspace are flagged red and disabled by default. Mods inside the same repo share `(repo, ref)` in their `origin` block, so `mod-update` fetches your repo archive once and refreshes them all together.
+
+If a user has imported several of your mods and you remove one upstream, their next `mod-update` will surface a clear "upstream no longer contains '<subdir>'" error for the deleted one — they decide whether to delete it locally too.
+
 ## Install
 
 1. Install these one-time prerequisites:
@@ -76,12 +211,39 @@ If something drifted (e.g. Steam ran a "Verify Integrity of Game Files" pass and
 
 ## Updates
 
-Necroid checks GitHub Releases for a newer version once a day in the background.
+Necroid has **two** independent update channels:
+
+1. **The Necroid binary itself** — checked once a day in the background, applied via `necroid update`.
+2. **Mods** — both the bundled ones (admin-xray, gravymod, etc.) and any you imported from third-party repos. Refreshed via `necroid mod-update` or the GUI's **Check Updates** button.
+
+These are decoupled on purpose: you don't have to download a fresh binary just because admin-xray got a small fix.
+
+### Updating the binary
 
 - **GUI**: a yellow banner appears below the header when an update is available — click **Install Update** and Necroid downloads the new binary, swaps it in place, and closes. Re-open it to start using the new version. Click **Dismiss** to ignore the banner for the current session.
 - **CLI**: a one-line `update available: vX.Y.Z → vA.B.C (run: necroid update)` notice prints after any command (silenced when stderr is redirected — scripts stay clean). Run `necroid update` to apply, `necroid update --check` to just check, or `necroid update --rollback` to swap back to the previous binary if something went wrong. Set `NECROID_NO_UPDATE_CHECK=1` to disable background checks entirely.
 
 Self-update only works for the packaged binary you downloaded from the [Releases page](https://github.com/mrkmg/necroid/releases). If you installed from source (`pip install -e .`), use `git pull` instead. On Windows, if Necroid lives under `C:\Program Files`, the update needs an elevated shell — run as administrator. Your installed mods, your Project Zomboid install, and `data/.mod-config.json` are never touched by the updater; only the `necroid` binary itself is replaced.
+
+### Updating mods (bundled + imported)
+
+Bundled mods ship with their `mod.json` already wired to point back at `mrkmg/necroid` — Necroid treats them just like any third-party imported mod. So one command refreshes everything:
+
+```bash
+necroid mod-update              # check + apply updates for every mod
+necroid mod-update --check      # dry-run; populates the GUI badges
+```
+
+In the GUI, **Check Updates** in the header does the same and decorates the Version column with `⬆ <new>` badges; the "N updates available" chip in the status strip is a one-click bulk update.
+
+What this means in practice:
+
+- **You don't have to redownload the binary** just to get newer admin-xray patches. `necroid mod-update` pulls them from `mrkmg/necroid`'s `main` branch. Same flow as a third-party mod.
+- **The same goes for third-party mods.** A mod you imported from `someone/their-cool-mod` refreshes from that repo. Necroid groups updates by source repo, so several mods from the same upstream share one archive download.
+- **Mods you're actively editing (`enter`-ed) are skipped.** No clobbering of your in-progress work.
+- **Local-only fields are preserved** across updates — `pristineSnapshot`, `expectedVersion`, `createdAt`. Upstream wins on `description`, `version`, `clientOnly`, dependencies, and the `patches/` directory.
+
+If you want to "freeze" a bundled mod and stop refreshing it from upstream — e.g. you've hand-edited it — delete the `origin` block from its `data/mods/<mod>/mod.json`. `mod-update` skips any mod without an origin.
 
 ## Troubleshooting
 
@@ -149,6 +311,13 @@ necroid resync-pristine              # after a PZ update: refresh the vanilla ba
 necroid update                       # check + self-update from GitHub Releases (packaged binary only)
 necroid update --check               # check only, don't download
 necroid update --rollback            # swap back to the previous binary
+necroid import <repo> [--mod ...]    # pull mod(s) from a GitHub repo into data/mods/
+necroid import <repo> --list [--json]   # discover mods in a repo without installing
+necroid import <repo> --all          # multi-mod repo: import every mod for the workspace major
+necroid import <repo> --all --include-all-majors   # also pull non-current-major variants (rare)
+necroid mod-update                   # check + update every imported mod from its source
+necroid mod-update <mod> [--check]   # one mod (--check = dry-run, populates the GUI cache)
+necroid mod-update <mod> --include-peers   # also refresh siblings sharing the same (repo, ref)
 necroid new <name> -d "..." [--client-only]  # scaffold a new mod
 necroid enter <mod1> [mod2 ...]      # reset working tree, apply a mod stack for editing
 necroid capture <mod>                # diff working tree vs pristine, rewrite patches

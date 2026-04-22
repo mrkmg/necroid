@@ -30,9 +30,11 @@ from .commands import (
     deps_cmd,
     diff as diff_cmd,
     enter as enter_cmd,
+    import_cmd,
     init as init_cmd,
     install_cmd,
     list_cmd,
+    mod_update as mod_update_cmd,
     new as new_cmd,
     reset as reset_cmd,
     resync_pristine as resync_cmd,
@@ -172,6 +174,42 @@ def _build_parser() -> argparse.ArgumentParser:
     s.add_argument("--post-restart-cleanup", dest="post_restart_cleanup",
                    action="store_true", help=argparse.SUPPRESS)
 
+    s = sub.add_parser("import",
+                       help="pull mods from a GitHub repo into data/mods/")
+    s.add_argument("repo",
+                   help="owner/repo or a github.com URL (optionally including /tree/<ref>)")
+    s.add_argument("--ref", default=None,
+                   help="branch, tag, or commit SHA (default: repo's default branch)")
+    s.add_argument("--mod", dest="mod_selectors", action="append", default=[],
+                   metavar="SELECTOR",
+                   help="select a mod from the repo by subdir or bare name (repeatable)")
+    s.add_argument("--all", dest="select_all", action="store_true",
+                   help="import every discovered mod that matches the workspace major")
+    s.add_argument("--include-all-majors", dest="include_all_majors", action="store_true",
+                   help="also import mods for non-current PZ majors (filtered out of "
+                        "list/install until you switch workspaces; rare)")
+    s.add_argument("--list", dest="list_only", action="store_true",
+                   help="discover and list mods only; do not import")
+    s.add_argument("--json", action="store_true",
+                   help="emit machine-readable discovery output (use with --list)")
+    s.add_argument("--name", dest="name_override", default=None,
+                   help="override the mod dir base (only when importing exactly one mod)")
+    s.add_argument("--force", action="store_true",
+                   help="overwrite existing target dirs")
+
+    s = sub.add_parser("mod-update",
+                       help="check / update imported mods from their source repos")
+    s.add_argument("name", nargs="?", default=None,
+                   help="optional bare or fully-qualified mod name (default: every imported mod)")
+    s.add_argument("--check", dest="check_only", action="store_true",
+                   help="dry-run: report what would update; populate the cache")
+    s.add_argument("--force", action="store_true",
+                   help="apply even if upstream is older or same version")
+    s.add_argument("--include-peers", dest="include_peers", action="store_true",
+                   help="when a name is given, also update siblings sharing the same (repo, ref)")
+    s.add_argument("--json", action="store_true",
+                   help="emit machine-readable per-mod result objects to stdout")
+
     s = sub.add_parser("resync-pristine", help="after a PZ update: regenerate pristine, check mods")
     s.add_argument("--from", dest="from_install", choices=("client", "server"), default=None,
                    help="which install to re-seed from (default: config.workspaceSource)")
@@ -202,6 +240,8 @@ _HANDLERS = {
     "resync-pristine": resync_cmd.run,
     "deps": deps_cmd.run,
     "update": update_cmd.run,
+    "import": import_cmd.run,
+    "mod-update": mod_update_cmd.run,
 }
 
 

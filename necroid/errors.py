@@ -85,3 +85,13 @@ class UpdateError(PzModderError):
     """Self-updater failed: network, asset missing, permission, or a malformed
     release zip. Raised by `necroid update`. Opportunistic background checks
     swallow these silently (`quiet=True` paths in `updater`)."""
+
+
+class ModImportError(PzModderError):
+    """`necroid import` failed: bad URL, network, no mod.json found upstream,
+    PZ-major mismatch, target dir collision, or selection mismatch."""
+
+
+class ModUpdateError(PzModderError):
+    """`necroid mod-update` failed: missing origin, mod is currently entered,
+    upstream subdir vanished, or network/parse failure."""

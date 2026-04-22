@@ -333,3 +333,51 @@ def pristine_snapshot(pristine_dir: Path, items: list[PatchItem]) -> str:
         h = file_sha256(p) or "ABSENT"
         parts.append(f"{it.rel}|{h}")
     return string_sha256("\n".join(parts))
+
+
+# --- Origin metadata (imported-from-GitHub) ------------------------------
+#
+# Stored as a top-level "origin" object inside mod.json, riding through the
+# `_extra` dict on ModJson. No dataclass field — keeps the schema forward-
+# compat and means a hand-written mod (no origin) round-trips identically.
+
+_ORIGIN_KEY = "origin"
+_ORIGIN_REQUIRED_FIELDS = (
+    "type", "repo", "ref", "subdir", "commitSha",
+    "archiveUrl", "importedAt", "upstreamVersion",
+)
+
+
+def has_origin(mj: ModJson) -> bool:
+    """True if this mod was imported (has an origin block we can update from)."""
+    o = mj._extra.get(_ORIGIN_KEY)
+    return isinstance(o, dict) and bool(o.get("repo"))
+
+
+def read_origin(mj: ModJson) -> dict | None:
+    """Return the origin block as a plain dict, or None if absent.
+
+    Does not validate field completeness — callers that need strict origins
+    should check has_origin() and individual fields. Returns a copy to avoid
+    accidental mutation of `_extra`."""
+    o = mj._extra.get(_ORIGIN_KEY)
+    if not isinstance(o, dict):
+        return None
+    return dict(o)
+
+
+def write_origin(mj: ModJson, *, type: str = "github",
+                 repo: str, ref: str, subdir: str, commitSha: str,
+                 archiveUrl: str, importedAt: str, upstreamVersion: str) -> None:
+    """Set / replace the origin block on `mj` in place. Caller must persist via
+    write_mod_json afterward."""
+    mj._extra[_ORIGIN_KEY] = {
+        "type": type,
+        "repo": repo,
+        "ref": ref,
+        "subdir": subdir,
+        "commitSha": commitSha,
+        "archiveUrl": archiveUrl,
+        "importedAt": importedAt,
+        "upstreamVersion": upstreamVersion,
+    }

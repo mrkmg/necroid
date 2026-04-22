@@ -17,6 +17,8 @@ Requires PyInstaller. Each platform builds locally (no cross-compile).
 """
 from __future__ import annotations
 
+import datetime as _dt
+import json
 import platform
 import shutil
 import subprocess
@@ -173,10 +175,15 @@ def copy_layout(binary: Path) -> None:
     if sys.platform != "win32":
         dest_binary.chmod(0o755)
 
-    # Bundled mods
+    # Bundled mods. Stamp each mod.json with an `origin` block pointing back
+    # at this repo so `necroid mod-update` refreshes bundled mods via the same
+    # GitHub-fetch pipeline as user-imported ones. Without this, the only way
+    # to get newer bundled mods would be to re-download the whole binary.
     src_mods = REPO_ROOT / "data" / "mods"
     if src_mods.exists():
-        shutil.copytree(src_mods, DIST / "data" / "mods")
+        dst_mods = DIST / "data" / "mods"
+        shutil.copytree(src_mods, dst_mods)
+        stamp_bundled_origins(dst_mods)
 
     # Empty tools placeholder
     (DIST / "data" / "tools").mkdir(parents=True, exist_ok=True)
@@ -207,6 +214,56 @@ def copy_layout(binary: Path) -> None:
         encoding="utf-8",
     )
     print(f"\nDist written to {DIST}")
+
+
+BUNDLED_REPO = "mrkmg/necroid"
+BUNDLED_REF = "main"
+
+
+def stamp_bundled_origins(dist_mods_dir: Path) -> None:
+    """Write an `origin` block into each bundled mod.json under `dist_mods_dir`.
+
+    Pointing at `mrkmg/necroid` @ `main` means `necroid mod-update` works on
+    bundled mods exactly like user-imported ones — the same archive download +
+    version-compare loop. Bundled mods on-disk are left without a commitSha
+    initially; the first `mod-update --check` resolves it.
+
+    Skips any mod.json that already has an origin block (someone wired it up
+    by hand, or this dist was built off another fork's repo). Idempotent —
+    safe to re-run.
+    """
+    now = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    stamped = 0
+    for child in sorted(dist_mods_dir.iterdir()):
+        mj_path = child / "mod.json"
+        if not mj_path.is_file():
+            continue
+        try:
+            data = json.loads(mj_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            print(f"warning: could not stamp origin on {mj_path} (unreadable)")
+            continue
+        if isinstance(data.get("origin"), dict) and data["origin"].get("repo"):
+            continue  # respect existing origin
+        # `subdir` is the path WITHIN the upstream repo where this mod's
+        # mod.json lives. For bundled mods that's `data/mods/<dirname>`.
+        data["origin"] = {
+            "type": "github",
+            "repo": BUNDLED_REPO,
+            "ref": BUNDLED_REF,
+            "subdir": f"data/mods/{child.name}",
+            # Empty SHA on first ship — first `mod-update --check` populates it.
+            "commitSha": "",
+            "archiveUrl": (
+                f"https://codeload.github.com/{BUNDLED_REPO}/zip/refs/heads/{BUNDLED_REF}"
+            ),
+            "importedAt": now,
+            "upstreamVersion": str(data.get("version") or ""),
+        }
+        mj_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        stamped += 1
+    print(f"stamped origin on {stamped} bundled mod(s) "
+          f"(repo={BUNDLED_REPO}, ref={BUNDLED_REF})")
 
 
 def write_archive() -> Path:
