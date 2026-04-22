@@ -9,6 +9,9 @@ Per-command flags:
     init / resync-pristine:   --from {client,server}
     enter:                    --as   {client,server}
     install / uninstall / verify / list / status:  --to {client,server}
+    uninstall:                --cascade
+    new:                      --depends-on MOD / --incompatible-with MOD
+    deps:                     show <mod> | add|remove <mod> --requires|--conflicts MOD
 """
 from __future__ import annotations
 
@@ -24,6 +27,7 @@ from .profile import find_root, load_profile, resolve_install_to, resolve_source
 from .commands import (
     capture as capture_cmd,
     clean as clean_cmd,
+    deps_cmd,
     diff as diff_cmd,
     enter as enter_cmd,
     init as init_cmd,
@@ -72,6 +76,12 @@ def _build_parser() -> argparse.ArgumentParser:
     s.add_argument("--description", "-d", default="")
     s.add_argument("--client-only", dest="client_only", action="store_true",
                    help="mark the new mod as clientOnly (install allowed only to client PZ)")
+    s.add_argument("--depends-on", dest="deps", action="append", default=[],
+                   metavar="MOD",
+                   help="declare a dependency on another mod (repeatable; bare mod name)")
+    s.add_argument("--incompatible-with", dest="incompat", action="append", default=[],
+                   metavar="MOD",
+                   help="declare an incompatibility with another mod (repeatable; bare mod name)")
 
     s = sub.add_parser("list", help="tabular view of all mods")
     s.add_argument("--to", dest="install_to", choices=("client", "server"), default=None,
@@ -117,6 +127,31 @@ def _build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("uninstall", help="restore everything, or remove named mods and rebuild")
     s.add_argument("mods", nargs="*")
     s.add_argument("--to", dest="install_to", choices=("client", "server"), default=None)
+    s.add_argument("--cascade", action="store_true",
+                   help="also remove any installed mods that transitively depend on the named ones")
+
+    s = sub.add_parser("deps", help="view or edit a mod's dependency / incompatibility lists")
+    deps_sub = s.add_subparsers(dest="deps_action", metavar="<action>")
+    deps_sub.required = True
+
+    ds = deps_sub.add_parser("show", help="print a mod's dependencies + incompatibleWith")
+    ds.add_argument("mod")
+
+    da = deps_sub.add_parser("add", help="add a dependency or incompatibility")
+    da.add_argument("mod")
+    g = da.add_mutually_exclusive_group(required=True)
+    g.add_argument("--requires", metavar="OTHER",
+                   help="bare name of a mod this one depends on")
+    g.add_argument("--conflicts", metavar="OTHER",
+                   help="bare name of a mod this one is incompatible with")
+
+    dr = deps_sub.add_parser("remove", help="remove a dependency or incompatibility")
+    dr.add_argument("mod")
+    g = dr.add_mutually_exclusive_group(required=True)
+    g.add_argument("--requires", metavar="OTHER",
+                   help="bare name of a declared dependency to drop")
+    g.add_argument("--conflicts", metavar="OTHER",
+                   help="bare name of a declared incompatibility to drop")
 
     sub.add_parser("test", help="compile changed + new .java files in the entered mod's src-<mod>/ (no install)")
 
@@ -151,6 +186,7 @@ _HANDLERS = {
     "test": test_cmd.run,
     "verify": verify_cmd.run,
     "resync-pristine": resync_cmd.run,
+    "deps": deps_cmd.run,
 }
 
 

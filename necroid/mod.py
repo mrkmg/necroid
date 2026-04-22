@@ -1,6 +1,6 @@
 """mod.json and patch enumeration.
 
-Schema (v5):
+Schema (v6):
     {
       "name": "lua-profiler",
       "clientOnly": false,                          # default false
@@ -9,8 +9,16 @@ Schema (v5):
       "expectedVersion": "41.78.19",                # PZ version at last capture
       "createdAt": "...",
       "updatedAt": "...",
-      "pristineSnapshot": "<sha256>"
+      "pristineSnapshot": "<sha256>",
+      "dependencies": ["other-mod"],                # bare names; default []
+      "incompatibleWith": ["rival-mod"]             # bare names; default []
     }
+
+`dependencies` and `incompatibleWith` both hold **bare** mod names (no
+`-<major>` suffix). They're resolved against the workspace major at
+enter/install/capture time via `_resolve.resolve_mod`. This matches the
+CLI's bare-name ergonomics and survives workspace rebinding across PZ
+majors transparently.
 
 clientOnly mods require a configured client PZ install and may only be
 installed to the client destination.
@@ -72,6 +80,8 @@ class ModJson:
     created_at: str = ""
     updated_at: str = ""
     pristine_snapshot: str = ""
+    dependencies: list[str] = field(default_factory=list)       # bare mod names
+    incompatible_with: list[str] = field(default_factory=list)  # bare mod names
     _extra: dict = field(default_factory=dict, repr=False)
 
     def to_json(self) -> dict:
@@ -84,6 +94,8 @@ class ModJson:
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
             "pristineSnapshot": self.pristine_snapshot,
+            "dependencies": list(self.dependencies),
+            "incompatibleWith": list(self.incompatible_with),
         }
         o.update(self._extra)
         return o
@@ -91,8 +103,11 @@ class ModJson:
     @staticmethod
     def from_json(o: dict) -> "ModJson":
         known = {"name", "clientOnly", "description", "version", "expectedVersion",
-                 "createdAt", "updatedAt", "pristineSnapshot"}
+                 "createdAt", "updatedAt", "pristineSnapshot",
+                 "dependencies", "incompatibleWith"}
         extra = {k: v for k, v in o.items() if k not in known}
+        deps_raw = o.get("dependencies") or []
+        inc_raw = o.get("incompatibleWith") or []
         return ModJson(
             name=o["name"],
             client_only=bool(o.get("clientOnly", False)),
@@ -102,6 +117,8 @@ class ModJson:
             created_at=o.get("createdAt", ""),
             updated_at=o.get("updatedAt", ""),
             pristine_snapshot=o.get("pristineSnapshot", "") or "",
+            dependencies=[str(x) for x in deps_raw if isinstance(x, str)],
+            incompatible_with=[str(x) for x in inc_raw if isinstance(x, str)],
             _extra=extra,
         )
 
@@ -190,12 +207,16 @@ def write_mod_json(md: Path, mj: ModJson) -> None:
 
 
 def new_mod_json(name: str, description: str = "", client_only: bool = False,
-                 expected_version: str = "") -> ModJson:
+                 expected_version: str = "",
+                 dependencies: list[str] | None = None,
+                 incompatible_with: list[str] | None = None) -> ModJson:
     now = utc_now_iso()
     return ModJson(
         name=name, client_only=client_only, description=description, version="0.1.0",
         expected_version=expected_version,
         created_at=now, updated_at=now, pristine_snapshot="",
+        dependencies=list(dependencies or []),
+        incompatible_with=list(incompatible_with or []),
     )
 
 

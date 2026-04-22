@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .. import logging_util as log
 from ..config import read_config
+from ..depgraph import expand_stack, validate_incompat
 from ..errors import ClientOnlyViolation
 from ..install import install_stack
 from ..mod import ensure_mod_exists, read_mod_json
@@ -24,9 +25,19 @@ def run(args) -> int:
         raise SystemExit("usage: necroid install <mod1> [mod2 ...]  [--to client|server] [--replace]")
 
     cfg = read_config(args.root)
-    names = [resolve_mod(p.mods_dir, cfg.workspace_major, n) for n in raw_names]
+    user_names = [resolve_mod(p.mods_dir, cfg.workspace_major, n) for n in raw_names]
 
-    # Validate all named mods exist; preflight clientOnly rule.
+    # Pull in every transitive dep, topo order (deps before dependents).
+    names = expand_stack(p.mods_dir, cfg.workspace_major, user_names)
+    pulled_in = [n for n in names if n not in user_names]
+    if pulled_in:
+        log.info(f"pulling in deps: [{', '.join(pulled_in)}]")
+
+    # Validate the full resolved stack — either side's incompat declaration
+    # wins.
+    validate_incompat(p.mods_dir, cfg.workspace_major, names)
+
+    # Preflight clientOnly rule across the full resolved stack (covers deps).
     for name in names:
         md = ensure_mod_exists(p.mods_dir, name)
         mj = read_mod_json(md)
@@ -74,6 +85,10 @@ def run(args) -> int:
             log.info(f"installing fresh {install_to} stack: [{', '.join(merged)}]")
         else:
             log.info(f"adding [{', '.join(added)}] to current {install_to} stack [{', '.join(current)}] -> [{', '.join(merged)}]")
+
+    # Re-validate the full merged stack — additive merges can surface a
+    # conflict between a newly-added mod and one already installed.
+    validate_incompat(p.mods_dir, cfg.workspace_major, merged)
 
     install_stack(p, merged, install_to=install_to)
     return 0

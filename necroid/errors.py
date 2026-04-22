@@ -64,3 +64,18 @@ class PzMajorMismatch(PzModderError):
     """Hard gate: a mod's major version (encoded in its dir name) does not
     match the workspace major, or a target PZ install's detected major does
     not match the workspace major."""
+
+
+class ModDependencyMissing(PzModderError):
+    """A mod declares a dependency that doesn't exist as a mod dir at the
+    workspace major. Raised at enter/install/capture time, and also when
+    uninstalling a mod would orphan a dependent mod that's still installed."""
+
+
+class ModIncompatibility(PzModderError):
+    """Two mods in the resolved stack declare each other (or one declares the
+    other) as incompatible. Install / enter aborts before touching anything."""
+
+
+class ModDependencyCycle(PzModderError):
+    """Dependency graph has a cycle. Message includes the offending path."""

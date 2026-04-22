@@ -41,7 +41,13 @@ from tkinter import messagebox, ttk
 from .assets import HEADER_MARK, WINDOW_ICON_FULL, WINDOW_ICON_SKULL, asset_path
 from .config import read_config
 from . import markdown_render
-from .errors import PzVersionDetectError
+from .depgraph import resolve_deps, reverse_dependents
+from .errors import (
+    ModDependencyCycle,
+    ModDependencyMissing,
+    ModIncompatibility,
+    PzVersionDetectError,
+)
 from .mod import list_mods, mod_base_name, mod_major, read_mod_json
 from .profile import load_profile
 from .pzversion import PzVersion, detect_pz_version
@@ -154,6 +160,13 @@ class ModderApp:
         self.checked: set[str] = set()
         self.installed_stack: list[str] = []
         self.mod_order: list[str] = []
+        self._ws_major: int = 0
+        # Relation maps (keyed by canonical mod dir name, e.g. admin-xray-41).
+        # Populated in refresh_mods; used by row-click and apply preflight.
+        self._dep_closure: dict[str, list[str]] = {}
+        self._incompat: dict[str, set[str]] = {}
+        self._effective_client_only: dict[str, bool] = {}
+        self._dep_graph_error: dict[str, str] = {}
 
         self.tk = tk.Tk()
         self.tk.title("Necroid")
@@ -500,6 +513,12 @@ class ModderApp:
         else:
             candidates = list_mods(mods_dir, include_all=True)
 
+        self._ws_major = int(ws_major or 0)
+
+        # Recompute relation maps before rendering rows — row rendering reads
+        # `effective_client_only` for blocking decisions.
+        self._rebuild_relation_maps(mods_dir, candidates)
+
         has_blocked = False
         order: list[str] = []
         for name in candidates:
@@ -508,7 +527,8 @@ class ModderApp:
             except Exception:
                 continue
             order.append(name)
-            blocked = mj.client_only and self.install_to == "server"
+            effective_co = self._effective_client_only.get(name, mj.client_only)
+            blocked = effective_co and self.install_to == "server"
             if blocked:
                 # Blocked rows can't be part of the selection on this dest.
                 self.checked.discard(name)
@@ -528,11 +548,17 @@ class ModderApp:
             status = self._row_status(name, blocked=blocked) + drift
             check = "☑" if (name in self.checked and not blocked) else "☐"
             info = "ⓘ" if (mods_dir / name / "README.md").exists() else ""
-            kind = "client-only" if mj.client_only else "any"
+            if mj.client_only:
+                kind = "client-only"
+            elif effective_co:
+                kind = "client-only*"  # via dep
+            else:
+                kind = "any"
             display_name = mod_base_name(name)
             tag_args = ("blocked",) if blocked else ()
+            desc = self._decorate_desc(name, mj)
             self.tv.insert("", tk.END, iid=name,
-                           values=(check, display_name, info, kind, status, mj.description),
+                           values=(check, display_name, info, kind, status, desc),
                            tags=tag_args)
             if blocked:
                 has_blocked = True
@@ -542,6 +568,104 @@ class ModderApp:
             self._log(mismatch_reason, tag="warn")
         self._update_primary_button()
         self._update_apply_button_state()
+
+    def _rebuild_relation_maps(self, mods_dir: Path, candidates: list[str]) -> None:
+        """Compute per-mod dep closure, incompat set, effective clientOnly.
+        Tolerant: a broken mod graph doesn't poison the whole view — its
+        error is recorded and the row still renders (uncheckable)."""
+        self._dep_closure = {}
+        self._incompat = {n: set() for n in candidates}
+        self._effective_client_only = {}
+        self._dep_graph_error = {}
+        ws_major = self._ws_major
+
+        # Cache mod.jsons in a local dict to avoid re-reads.
+        mjs: dict = {}
+        for n in candidates:
+            try:
+                mjs[n] = read_mod_json(mods_dir / n)
+            except Exception:
+                continue
+
+        if not ws_major:
+            # Without a workspace major, dep resolution is meaningless — bail
+            # gracefully; every row will look dep-free.
+            for n in candidates:
+                self._dep_closure[n] = []
+                self._effective_client_only[n] = bool(
+                    mjs.get(n) and mjs[n].client_only
+                )
+            return
+
+        for n in candidates:
+            mj = mjs.get(n)
+            if mj is None:
+                continue
+            try:
+                closure = resolve_deps(mods_dir, ws_major, n)
+            except (ModDependencyMissing, ModDependencyCycle) as e:
+                self._dep_graph_error[n] = str(e)
+                closure = []
+            self._dep_closure[n] = closure
+            eff = bool(mj.client_only)
+            for d in closure:
+                dm = mjs.get(d)
+                if dm and dm.client_only:
+                    eff = True
+                    break
+            self._effective_client_only[n] = eff
+
+        # Incompatibilities: symmetric — if A lists B or B lists A, mark both.
+        for n in candidates:
+            mj = mjs.get(n)
+            if mj is None:
+                continue
+            for other_bare in mj.incompatible_with:
+                other = f"{other_bare}-{ws_major}"
+                if other in self._incompat:
+                    self._incompat[n].add(other)
+                    self._incompat[other].add(n)
+
+    def _decorate_desc(self, name: str, mj) -> str:
+        extras: list[str] = []
+        if mj.dependencies:
+            extras.append(f"requires: {', '.join(mj.dependencies)}")
+        if mj.incompatible_with:
+            extras.append(f"conflicts: {', '.join(mj.incompatible_with)}")
+        err = self._dep_graph_error.get(name)
+        if err:
+            extras.append(f"⚠ {err}")
+        base = mj.description or ""
+        if not extras:
+            return base
+        tail = " [" + "; ".join(extras) + "]"
+        return (base + tail) if base else tail.lstrip()
+
+    def _checked_incompat_for(self, name: str) -> list[str]:
+        """Which currently-checked mods would conflict with `name`?"""
+        inc = self._incompat.get(name, set())
+        return [m for m in inc if m in self.checked]
+
+    def _flash_tooltip(self, anchor_widget: tk.Widget, text: str,
+                       duration_ms: int = 2200) -> None:
+        """One-shot transient tooltip below `anchor_widget`. Used to explain
+        refused toggles in the mod list."""
+        try:
+            x = anchor_widget.winfo_rootx() + 12
+            y = anchor_widget.winfo_rooty() + anchor_widget.winfo_height() + 4
+        except tk.TclError:
+            return
+        tip = tk.Toplevel(self.tk)
+        tip.wm_overrideredirect(True)
+        tip.wm_geometry(f"+{x}+{y}")
+        tip.configure(bg=PALETTE["warn"])
+        tk.Label(
+            tip, text=text,
+            bg=PALETTE["warn"], fg=PALETTE["char_900"],
+            font=("Segoe UI", 9, "bold"), padx=10, pady=6,
+            justify="left",
+        ).pack()
+        self.tk.after(duration_ms, lambda: tip.destroy() if tip.winfo_exists() else None)
 
     def _row_status(self, name: str, *, blocked: bool) -> str:
         if blocked:
@@ -615,11 +739,94 @@ class ModderApp:
         if "blocked" in tags:
             return
         if row in self.checked:
-            self.checked.discard(row)
+            self._try_uncheck(row)
         else:
-            self.checked.add(row)
-        self._update_row(row)
+            self._try_check(row)
         self._update_apply_button_state()
+
+    def _try_check(self, row: str) -> None:
+        """Check `row` and auto-pull deps. Refuse (with tooltip) if the
+        resulting set would contain an incompatibility with something already
+        checked, or if the dep graph is broken."""
+        err = self._dep_graph_error.get(row)
+        if err:
+            self._flash_tooltip(self.tv, f"cannot check '{mod_base_name(row)}': {err}")
+            return
+
+        # Incompatibility check against the full resolved closure.
+        closure = self._dep_closure.get(row, [])
+        conflict_pairs: list[tuple[str, str]] = []
+        new_set = set(self.checked) | {row} | set(closure)
+        for m in new_set:
+            for other in self._incompat.get(m, set()):
+                if other in new_set and (other, m) not in conflict_pairs:
+                    conflict_pairs.append((m, other))
+        if conflict_pairs:
+            a, b = conflict_pairs[0]
+            self._flash_tooltip(
+                self.tv,
+                f"'{mod_base_name(a)}' conflicts with '{mod_base_name(b)}' — "
+                f"uncheck one first",
+            )
+            return
+
+        # Pull in deps. If any dep is blocked (effective clientOnly on a
+        # server destination), refuse up-front.
+        for d in closure:
+            if d not in self.mod_order:
+                continue  # not visible in current filtered list
+            if self._effective_client_only.get(d) and self.install_to == "server":
+                self._flash_tooltip(
+                    self.tv,
+                    f"'{mod_base_name(row)}' requires client-only mod "
+                    f"'{mod_base_name(d)}' — switch Install to: client",
+                )
+                return
+
+        self.checked.add(row)
+        added_deps: list[str] = []
+        for d in closure:
+            if d not in self.checked and d in self.mod_order:
+                self.checked.add(d)
+                added_deps.append(d)
+        self._update_row(row)
+        for d in added_deps:
+            self._update_row(d)
+        if added_deps:
+            pretty = ", ".join(mod_base_name(d) for d in added_deps)
+            self._flash_tooltip(
+                self.tv, f"also checked dependencies: {pretty}",
+                duration_ms=1800,
+            )
+
+    def _try_uncheck(self, row: str) -> None:
+        """Uncheck `row`; if any currently-checked mod depends on it,
+        prompt the user to cascade the uncheck."""
+        # Find dependents of `row` within the current checked set.
+        dependents: list[str] = []
+        if self._ws_major:
+            try:
+                dependents = reverse_dependents(
+                    self.root / "data" / "mods", self._ws_major, row,
+                    within=list(self.checked),
+                )
+            except Exception:
+                dependents = []
+        if dependents:
+            pretty = ", ".join(mod_base_name(d) for d in dependents)
+            ok = messagebox.askyesno(
+                "Also uncheck dependents?",
+                f"'{mod_base_name(row)}' is required by:\n\n  {pretty}\n\n"
+                f"Also uncheck {len(dependents)} dependent mod(s)?",
+            )
+            if not ok:
+                return  # abort — don't touch `row` or its dependents
+            for d in dependents:
+                self.checked.discard(d)
+        self.checked.discard(row)
+        self._update_row(row)
+        for d in dependents:
+            self._update_row(d)
 
     def _open_readme(self, mod_name: str) -> None:
         path = self.root / "data" / "mods" / mod_name / "README.md"
@@ -828,18 +1035,28 @@ class ModderApp:
             mods_dir = self.root / "data" / "mods"
             offenders: list[str] = []
             for name in desired:
-                try:
-                    mj = read_mod_json(mods_dir / name)
-                except Exception:
-                    continue
-                if mj.client_only:
+                if self._effective_client_only.get(name):
                     offenders.append(name)
             if offenders:
                 messagebox.showerror(
                     "Client-only mods can't go to server",
-                    "These mods are client-only and can't be installed to server:\n\n  "
+                    "These mods are client-only (directly or via a dependency) "
+                    "and can't be installed to server:\n\n  "
                     + "\n  ".join(offenders)
                     + "\n\nUncheck them or switch Install to: client.",
+                )
+                return
+
+        # Incompatibility preflight: the row-click path already blocks this,
+        # but verify once more against the full desired set before we commit.
+        for m in desired:
+            conflicts = [o for o in self._incompat.get(m, set()) if o in desired]
+            if conflicts:
+                messagebox.showerror(
+                    "Incompatible mods",
+                    f"'{mod_base_name(m)}' is declared incompatible with:\n\n  "
+                    + "\n  ".join(mod_base_name(c) for c in conflicts)
+                    + "\n\nUncheck one side.",
                 )
                 return
 

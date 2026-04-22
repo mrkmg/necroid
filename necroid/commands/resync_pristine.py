@@ -14,13 +14,21 @@ from argparse import Namespace
 
 from .. import logging_util as log
 from ..config import read_config
-from ..errors import ConfigError, PzMajorMismatch, PzVersionDetectError
-from ..fsops import empty_dir
+from ..depgraph import resolve_deps
+from ..errors import (
+    ConfigError,
+    ModDependencyCycle,
+    ModDependencyMissing,
+    PzMajorMismatch,
+    PzVersionDetectError,
+)
+from ..fsops import empty_dir, mirror_tree
 from ..install import uninstall_all
 from ..mod import list_mods, patch_items, pristine_snapshot, read_mod_json, write_mod_json
 from ..patching import patched_theirs_file
-from ..profile import require_pz_install
+from ..profile import existing_subtrees, require_pz_install
 from ..pzversion import detect_pz_version
+from ..stackapply import apply_stack
 from ..state import read_state
 from . import init as init_cmd
 
@@ -106,6 +114,7 @@ def run(args) -> int:
 
     log.step("checking mod patches against new pristine...")
     any_stale = False
+    subs = existing_subtrees(p.pristine)
     for name in list_mods(p.mods_dir, workspace_major=cfg.workspace_major):
         md = p.mods_dir / name
         mj = read_mod_json(md)
@@ -113,6 +122,21 @@ def run(args) -> int:
         # clientOnly mods are always checked against the client variant.
         effective_to = "client" if mj.client_only else install_to
         items = patch_items(md, effective_to)
+
+        # Build the baseline: pristine + applied deps. Dependent mods'
+        # patches are captured against this baseline, so we must check
+        # applicability against the same thing (plain pristine would show
+        # every dep-overlapping patch as STALE).
+        try:
+            deps = resolve_deps(p.mods_dir, cfg.workspace_major, name)
+        except (ModDependencyMissing, ModDependencyCycle) as e:
+            log.warn(f"{name}: dep graph broken — {e}")
+            any_stale = True
+            continue
+
+        baseline_dir, cleanup_baseline = _build_baseline(
+            p, name, deps, effective_to, subs
+        )
         scratch = p.build / f"resync-scratch-{name}"
         empty_dir(scratch)
         try:
@@ -120,13 +144,14 @@ def run(args) -> int:
             for it in items:
                 if it.kind != "patch":
                     continue
-                theirs = patched_theirs_file(p.pristine, scratch, it.file, it.rel)
+                theirs = patched_theirs_file(baseline_dir, scratch, it.file, it.rel)
                 if theirs is None:
                     stale.append(it.rel)
             if not stale:
-                mj.pristine_snapshot = pristine_snapshot(p.pristine, items)
+                mj.pristine_snapshot = pristine_snapshot(baseline_dir, items)
                 write_mod_json(md, mj)
-                log.info(f"{name}: OK ({len(items)} item(s), snapshot refreshed)")
+                tag = " (vs pristine+deps)" if deps else ""
+                log.info(f"{name}: OK ({len(items)} item(s), snapshot refreshed{tag})")
             else:
                 any_stale = True
                 log.warn(f"{name}: STALE — re-enter and re-capture manually")
@@ -135,4 +160,35 @@ def run(args) -> int:
         finally:
             if scratch.exists():
                 shutil.rmtree(scratch, ignore_errors=True)
+            cleanup_baseline()
     return 1 if any_stale else 0
+
+
+def _build_baseline(profile, name: str, deps: list[str],
+                    install_to: str, subs: list[str]):
+    """Construct a throw-away pristine+deps tree for `name`. For dep-less
+    mods, returns the profile's pristine dir and a no-op cleanup."""
+    if not deps:
+        return profile.pristine, lambda: None
+    root = profile.build / "resync-baseline" / name
+    empty_dir(root)
+    for sub in subs:
+        mirror_tree(profile.pristine / sub, root / sub)
+    result = apply_stack(
+        stack=deps,
+        work_dir=root,
+        pristine_dir=profile.pristine,
+        mods_dir=profile.mods_dir,
+        scratch_root=profile.build / "resync-baseline-scratch",
+        install_to=install_to,
+    )
+    if result.conflicts:
+        # A dep's own patches are stale — surface it and fall back to pristine
+        # so the outer check still runs (and will flag this mod STALE too).
+        log.warn(
+            f"{name}: dep baseline could not be built cleanly; "
+            f"falling back to pristine for applicability check"
+        )
+        shutil.rmtree(root, ignore_errors=True)
+        return profile.pristine, lambda: None
+    return root, lambda: shutil.rmtree(root, ignore_errors=True)

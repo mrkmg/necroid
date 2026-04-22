@@ -1,0 +1,14 @@
+{
+  "name": "transparent-all-41",
+  "clientOnly": false,
+  "description": "extend admin-xray Shift+F9 to fade every static IsoObject on screen, not just trees",
+  "version": "0.2.0",
+  "expectedVersion": "41.78.19",
+  "createdAt": "2026-04-22T13:46:46.341930Z",
+  "updatedAt": "2026-04-22T14:21:47.898587Z",
+  "pristineSnapshot": "531299074d4d10360f383dfc2730e62f30571567b1caa59a7e5aae1ca309dfc0",
+  "dependencies": [
+    "admin-xray"
+  ],
+  "incompatibleWith": []
+}

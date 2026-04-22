@@ -1,0 +1,51 @@
+diff --git a/zombie/iso/IsoObject.java b/zombie/iso/IsoObject.java
+index d1782fc..f3fee03 100644
+--- a/zombie/iso/IsoObject.java
++++ b/zombie/iso/IsoObject.java
+@@ -1018,7 +1018,7 @@ public class IsoObject implements Serializable, Thumpable {
+             }
+ 
+             if (var25.hasFlags(256)) {
+-               Object var31 = null;
++               String var31 = null;
+                if (var25.hasFlags(512)) {
+                   var31 = zombie.GameWindow.ReadString(var1);
+                } else {
+@@ -1026,8 +1026,8 @@ public class IsoObject implements Serializable, Thumpable {
+                }
+ 
+                if (var31 != null && !var31.isEmpty()) {
+-                  this.overlaySprite = IsoSpriteManager.instance.getSprite((String)var31);
+-                  this.overlaySprite.name = (String)var31;
++                  this.overlaySprite = IsoSpriteManager.instance.getSprite(var31);
++                  this.overlaySprite.name = var31;
+                }
+             }
+ 
+@@ -2515,6 +2515,15 @@ public class IsoObject implements Serializable, Thumpable {
+    }
+ 
+    public void render(float var1, float var2, float var3, ColorInfo var4, boolean var5, boolean var6, Shader var7) {
++      int xrayPi = -1;
++      float xrayOldA = 0.0F;
++      float xrayOldT = 0.0F;
++      if (zombie.transparent_all.TransparentAll.shouldFade(this)) {
++         xrayPi = IsoCamera.frameState.playerIndex;
++         xrayOldA = this.getAlpha(xrayPi);
++         xrayOldT = this.getTargetAlpha(xrayPi);
++         this.setAlphaAndTarget(xrayPi, zombie.transparent_all.TransparentAll.XRAY_ALPHA);
++      }
+       if (!this.isSpriteInvisible()) {
+          this.prepareToRender(var4);
+          int var8 = IsoCamera.frameState.playerIndex;
+@@ -2563,6 +2572,10 @@ public class IsoObject implements Serializable, Thumpable {
+          this.debugRenderItemHeight(var1, var2, var3);
+          this.debugRenderSurface(var1, var2, var3);
+       }
++      if (xrayPi >= 0) {
++         this.setAlpha(xrayPi, xrayOldA);
++         this.setTargetAlpha(xrayPi, xrayOldT);
++      }
+    }
+ 
+    private void debugRenderItemHeight(float var1, float var2, float var3) {

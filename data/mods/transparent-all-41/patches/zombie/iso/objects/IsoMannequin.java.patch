@@ -1,0 +1,28 @@
+diff --git a/zombie/iso/objects/IsoMannequin.java b/zombie/iso/objects/IsoMannequin.java
+index 6872782..769078b 100644
+--- a/zombie/iso/objects/IsoMannequin.java
++++ b/zombie/iso/objects/IsoMannequin.java
+@@ -394,6 +394,12 @@ public class IsoMannequin extends IsoObject implements IHumanVisual {
+    @Override
+    public void render(float var1, float var2, float var3, ColorInfo var4, boolean var5, boolean var6, Shader var7) {
+       int var8 = IsoCamera.frameState.playerIndex;
++      boolean xrayFade = zombie.transparent_all.TransparentAll.shouldFade(this);
++      float xrayOldA = xrayFade ? this.getAlpha(var8) : 0.0F;
++      float xrayOldT = xrayFade ? this.getTargetAlpha(var8) : 0.0F;
++      if (xrayFade) {
++         this.setAlphaAndTarget(var8, zombie.transparent_all.TransparentAll.XRAY_ALPHA);
++      }
+       var1 += 0.5F;
+       var2 += 0.5F;
+       this.calcScreenPos(var1, var2, var3);
+@@ -445,6 +451,10 @@ public class IsoMannequin extends IsoObject implements IHumanVisual {
+             }
+          }
+       }
++      if (xrayFade) {
++         this.setAlpha(var8, xrayOldA);
++         this.setTargetAlpha(var8, xrayOldT);
++      }
+    }
+ 
+    @Override

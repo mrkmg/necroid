@@ -1,4 +1,13 @@
-"""capture — diff src-<name>/ vs src-pristine/, rewrite mods/<name>/patches/.
+"""capture — diff src-<name>/ vs baseline, rewrite mods/<name>/patches/.
+
+The baseline is `src-pristine/` plus every transitive dependency of <name>
+applied on top (in topo order). For a mod with no deps the baseline is just
+pristine, so behaviour matches the legacy flow.
+
+A dependent mod's captured patches therefore represent only what it adds
+*beyond* its deps — the deps' own patch sets stay authoritative for their
+contribution. At enter time `apply_stack([*deps, name])` reproduces the
+working tree, keeping the round-trip consistent.
 
 The mod's postfix layout (generic `.patch` vs `.patch.{client|server}`) is
 preserved per-file:
@@ -17,7 +26,9 @@ from pathlib import Path
 
 from .. import logging_util as log
 from ..config import read_config
-from ..fsops import ensure_dir
+from ..depgraph import resolve_deps
+from ..errors import ConflictError
+from ..fsops import ensure_dir, empty_dir, mirror_tree
 from ..hashing import file_sha256
 from ..mod import (
     ensure_mod_exists,
@@ -30,6 +41,7 @@ from ..mod import (
 )
 from ..patching import git_diff_no_index
 from ..profile import existing_subtrees
+from ..stackapply import apply_stack
 from ..state import read_enter, utc_now_iso
 from ._resolve import resolve_mod
 
@@ -69,9 +81,23 @@ def run(args) -> int:
             f"no working tree at {src_dir} — run `necroid enter {name}` first."
         )
 
+    # Build the baseline tree = pristine + applied deps. For dep-less mods
+    # the baseline is a verbatim mirror of pristine, so the downstream diff
+    # logic is unchanged from the pre-deps behaviour.
+    deps = resolve_deps(p.mods_dir, cfg.workspace_major, name)
+    baseline_dir, cleanup_baseline = _materialise_baseline(
+        p, cfg.workspace_major, name, deps, install_as
+    )
+
     patches_dir = md / "patches"
     ensure_dir(patches_dir)
-    log.info(f"capture {name} (as {install_as}): diffing {src_dir.name}/ vs src-pristine/")
+    if deps:
+        log.info(
+            f"capture {name} (as {install_as}): diffing {src_dir.name}/ vs "
+            f"pristine+[{', '.join(deps)}]"
+        )
+    else:
+        log.info(f"capture {name} (as {install_as}): diffing {src_dir.name}/ vs src-pristine/")
 
     # Remove every file applicable to install_as (shared + `.{install_as}`).
     # Opposite-side `.{other}` files stay put.
@@ -100,55 +126,99 @@ def run(args) -> int:
 
     touched_count = 0
 
-    # Modified + new (every subtree that has a src/ counterpart)
-    for sub in subs:
-        src_sub = src_dir / sub
-        if not src_sub.exists():
-            continue
-        for java in sorted(src_sub.rglob("*.java")):
-            if not java.is_file():
+    try:
+        # Modified + new (every subtree that has a src/ counterpart).
+        # Reference = baseline (pristine + deps), not raw pristine.
+        for sub in subs:
+            src_sub = src_dir / sub
+            if not src_sub.exists():
                 continue
-            rel = f"{sub}/" + java.relative_to(src_sub).as_posix()
-            pristine_file = p.pristine / rel
-            if not pristine_file.exists():
-                dst = patches_dir / _out_name(rel, "new")
+            for java in sorted(src_sub.rglob("*.java")):
+                if not java.is_file():
+                    continue
+                rel = f"{sub}/" + java.relative_to(src_sub).as_posix()
+                baseline_file = baseline_dir / rel
+                if not baseline_file.exists():
+                    dst = patches_dir / _out_name(rel, "new")
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(java, dst)
+                    log.info(f"new:  {rel}")
+                    touched_count += 1
+                    continue
+                if file_sha256(java) == file_sha256(baseline_file):
+                    continue
+                patch_bytes = git_diff_no_index(baseline_file, java, rel)
+                if patch_bytes is None:
+                    continue
+                dst = patches_dir / _out_name(rel, "patch")
                 dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(java, dst)
-                log.info(f"new:  {rel}")
-                touched_count += 1
-                continue
-            if file_sha256(java) == file_sha256(pristine_file):
-                continue
-            patch_bytes = git_diff_no_index(pristine_file, java, rel)
-            if patch_bytes is None:
-                continue
-            dst = patches_dir / _out_name(rel, "patch")
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            dst.write_bytes(patch_bytes)
-            log.info(f"mod:  {rel}")
-            touched_count += 1
-
-    # Deleted — any pristine file with no src/ counterpart
-    for sub in subs:
-        pristine_sub = p.pristine / sub
-        for pr in sorted(pristine_sub.rglob("*.java")):
-            if not pr.is_file():
-                continue
-            rel = f"{sub}/" + pr.relative_to(pristine_sub).as_posix()
-            if not (src_dir / rel).exists():
-                dst = patches_dir / _out_name(rel, "delete")
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                dst.write_bytes(b"")
-                log.info(f"del:  {rel}")
+                dst.write_bytes(patch_bytes)
+                log.info(f"mod:  {rel}")
                 touched_count += 1
 
-    # Refresh snapshot, updatedAt, and stamp expectedVersion from workspace.
-    items = patch_items(md, install_as)
-    mj.pristine_snapshot = pristine_snapshot(p.pristine, items)
-    mj.updated_at = utc_now_iso()
-    if cfg.workspace_version:
-        mj.expected_version = cfg.workspace_version
-    write_mod_json(md, mj)
+        # Deleted — any baseline file with no src/ counterpart.
+        for sub in subs:
+            baseline_sub = baseline_dir / sub
+            if not baseline_sub.exists():
+                continue
+            for br in sorted(baseline_sub.rglob("*.java")):
+                if not br.is_file():
+                    continue
+                rel = f"{sub}/" + br.relative_to(baseline_sub).as_posix()
+                if not (src_dir / rel).exists():
+                    dst = patches_dir / _out_name(rel, "delete")
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    dst.write_bytes(b"")
+                    log.info(f"del:  {rel}")
+                    touched_count += 1
+
+        # Refresh snapshot (hashed against the baseline so the invariant
+        # "snapshot of what we diffed against" holds for dependent mods too),
+        # updatedAt, and expectedVersion from workspace.
+        items = patch_items(md, install_as)
+        mj.pristine_snapshot = pristine_snapshot(baseline_dir, items)
+        mj.updated_at = utc_now_iso()
+        if cfg.workspace_version:
+            mj.expected_version = cfg.workspace_version
+        write_mod_json(md, mj)
+    finally:
+        cleanup_baseline()
 
     log.success(f"captured {touched_count} file(s) into {patches_dir}")
     return 0
+
+
+def _materialise_baseline(
+    profile, ws_major: int, name: str, deps: list[str], install_as: str,
+):
+    """Build a fresh pristine+deps tree under profile.build/capture-baseline/<name>.
+    Returns (baseline_dir, cleanup_fn). For dep-less mods, returns the real
+    pristine dir and a no-op cleanup (avoids copying ~1600 files for nothing)."""
+    if not deps:
+        return profile.pristine, lambda: None
+
+    baseline_root = profile.build / "capture-baseline" / name
+    empty_dir(baseline_root)
+    subs = existing_subtrees(profile.pristine)
+    for sub in subs:
+        mirror_tree(profile.pristine / sub, baseline_root / sub)
+    result = apply_stack(
+        stack=deps,
+        work_dir=baseline_root,
+        pristine_dir=profile.pristine,
+        mods_dir=profile.mods_dir,
+        scratch_root=profile.build / "capture-baseline-scratch",
+        install_to=install_as,
+    )
+    if result.conflicts:
+        # Clean up before we raise so subsequent runs start fresh.
+        shutil.rmtree(baseline_root, ignore_errors=True)
+        log.error("dependency baseline CONFLICTS (capture aborted):")
+        for cf in result.conflicts:
+            print(f"  {cf.rel}  [{cf.type}]  mods: {', '.join(cf.mods)}")
+        raise ConflictError([c.to_dict() for c in result.conflicts])
+
+    def _cleanup() -> None:
+        shutil.rmtree(baseline_root, ignore_errors=True)
+
+    return baseline_root, _cleanup

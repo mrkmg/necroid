@@ -6,13 +6,19 @@ from pathlib import Path
 
 from .. import logging_util as log
 from ..config import read_config
-from ..errors import PzVersionDetectError
-from ..fsops import empty_dir
+from ..depgraph import resolve_deps
+from ..errors import (
+    ModDependencyCycle,
+    ModDependencyMissing,
+    PzVersionDetectError,
+)
+from ..fsops import empty_dir, mirror_tree
 from ..hashing import file_sha256
 from ..mod import ensure_mod_exists, patch_items, read_mod_json
 from ..patching import patched_theirs_file
 from ..profile import existing_subtrees
 from ..pzversion import PzVersion, detect_pz_version
+from ..stackapply import apply_stack
 from ..state import read_enter, read_state
 from ._resolve import resolve_mod
 
@@ -61,6 +67,16 @@ def _status_mod(profile, install_to: str, name: str) -> int:
     print(f"  clientOnly: {mj.client_only}")
     if mj.description:
         print(f"  desc: {mj.description}")
+    if mj.dependencies:
+        print(f"  dependencies: {', '.join(mj.dependencies)}")
+        # Flag any deps that don't resolve yet so authors catch typos early.
+        for d in mj.dependencies:
+            try:
+                resolve_mod(profile.mods_dir, cfg.workspace_major, d)
+            except Exception as e:
+                log.warn(f"dependency '{d}' doesn't resolve: {e}")
+    if mj.incompatible_with:
+        print(f"  incompatibleWith: {', '.join(mj.incompatible_with)}")
 
     # PZ version diagnostic.
     detected = _detect_destination_version(profile, effective_to)
@@ -79,13 +95,26 @@ def _status_mod(profile, install_to: str, name: str) -> int:
     print(f"  patches (for install_to={effective_to}): {n_p}  new: {n_n}  delete: {n_d}")
     if not items:
         return 0
+
+    # Build a baseline = pristine + applied deps so dependent mods' patches
+    # are checked for applicability against the same tree they were captured
+    # from (plain pristine would flag every dep-overlapping patch as STALE).
+    try:
+        deps = resolve_deps(profile.mods_dir, cfg.workspace_major, name)
+    except (ModDependencyMissing, ModDependencyCycle) as e:
+        print(f"  (dep graph broken: {e}) — applicability checked against pristine")
+        deps = []
+
+    baseline_dir, cleanup_baseline = _baseline_for_status(
+        profile, name, deps, effective_to
+    )
     scratch = profile.build / f"stage-scratch-status-{name}"
     empty_dir(scratch)
     stale_any = False
     try:
         for it in items:
             if it.kind == "patch":
-                theirs = patched_theirs_file(profile.pristine, scratch, it.file, it.rel)
+                theirs = patched_theirs_file(baseline_dir, scratch, it.file, it.rel)
                 tag = "ok" if theirs else "STALE"
                 if not theirs:
                     stale_any = True
@@ -95,7 +124,33 @@ def _status_mod(profile, install_to: str, name: str) -> int:
     finally:
         if scratch.exists():
             shutil.rmtree(scratch, ignore_errors=True)
+        cleanup_baseline()
     return 1 if stale_any else 0
+
+
+def _baseline_for_status(profile, name: str, deps: list[str], install_to: str):
+    """Throwaway pristine+deps tree for a dependent mod's status check.
+    Dep-less mods reuse the real pristine dir."""
+    if not deps:
+        return profile.pristine, lambda: None
+    root = profile.build / "status-baseline" / name
+    empty_dir(root)
+    subs = existing_subtrees(profile.pristine)
+    for sub in subs:
+        mirror_tree(profile.pristine / sub, root / sub)
+    result = apply_stack(
+        stack=deps,
+        work_dir=root,
+        pristine_dir=profile.pristine,
+        mods_dir=profile.mods_dir,
+        scratch_root=profile.build / "status-baseline-scratch",
+        install_to=install_to,
+    )
+    if result.conflicts:
+        log.warn(f"  (dep baseline wouldn't build — falling back to pristine)")
+        shutil.rmtree(root, ignore_errors=True)
+        return profile.pristine, lambda: None
+    return root, lambda: shutil.rmtree(root, ignore_errors=True)
 
 
 def _status_tree(profile) -> int:

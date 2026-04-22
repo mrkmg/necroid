@@ -1,7 +1,7 @@
 # TODO
 
 1. Add groups for mods - e.g. "Utility", "Fun", "Admin", etc.
-2. Add support for dependent mods. Should provide layered diff applications. For dev: add the dependency. When you enter, it first applies the dependencies, then applies the mod itself. Capturing will capture against pristine + dependents, so the diff of a mod will not include the changes from its dependencies, but the changes from the dependencies to the current state. Applying the mod will include the dependencies. This allows for better modularity and reuse of mods. Need to be smart and make sure changes are applied in the correct order when installing.
+2. New Mod: Multi Login - Currently, when you enable the login queue only one person at a time can process in the queue. This mod will allow you to configure and have multiple process through. 
 
 ## Ideas - Possible Enhancements
 

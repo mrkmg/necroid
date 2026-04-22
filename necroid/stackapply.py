@@ -122,12 +122,18 @@ def _handle_patch(
         r.conflicts.append(Conflict(it.rel, "patch-target-missing", [mod_name]))
         return
 
-    if it.rel not in r.touched:
-        # Fast path: target unchanged from pristine, apply directly.
-        if git_apply_file(it.file, work_dir, it.rel):
-            r.touched[it.rel] = mod_name
-            return
-        # Fall through to 3-way if fast path fails.
+    # Fast path: apply the patch directly to the current work_dir state.
+    # Covers both (a) target unchanged from pristine, and (b) a dependent
+    # mod whose patch was authored against pristine + an already-applied
+    # ancestor mod — in that case work_dir already contains the ancestor's
+    # mutations, which is exactly the state the patch expects.
+    if git_apply_file(it.file, work_dir, it.rel):
+        r.touched[it.rel] = mod_name
+        return
+    # Fast path failed: fall back to a 3-way merge against pristine. This
+    # handles independent mods that both modify the same file against plain
+    # pristine (and thus neither side's patch applies to the other's mutated
+    # work_dir directly).
 
     theirs = patched_theirs_file(pristine_dir, scratch, it.file, it.rel)
     if theirs is None:

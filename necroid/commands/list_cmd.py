@@ -28,8 +28,8 @@ def run(args) -> int:
             print("(no mods defined; run `necroid new <name>`)")
         return 0
 
-    hdr = "{:<26} {:<10} {:<10} {:>5} {:>4} {:>4}  {}".format(
-        "MOD", "PZ", "CLI-ONLY", "PATCH", "NEW", "DEL", "DESCRIPTION")
+    hdr = "{:<26} {:<10} {:<10} {:>5} {:>4} {:>4}  {:<20} {:<16} {}".format(
+        "MOD", "PZ", "CLI-ONLY", "PATCH", "NEW", "DEL", "DEPS", "INCOMPATIBLE", "DESCRIPTION")
     print(hdr)
     print("-" * len(hdr))
     for name in mods:
@@ -66,8 +66,11 @@ def run(args) -> int:
         n_n = sum(1 for i in items if i.kind == "new")
         n_d = sum(1 for i in items if i.kind == "delete")
         tag = "yes" if mj.client_only else "no"
-        print("{:<26} {:<10} {:<10} {:>5} {:>4} {:>4}  {}".format(
-            display_name[:26], pz_col[:10], tag, n_p, n_n, n_d, mj.description))
+        deps_col = ",".join(mj.dependencies) if mj.dependencies else "—"
+        inc_col = ",".join(mj.incompatible_with) if mj.incompatible_with else "—"
+        print("{:<26} {:<10} {:<10} {:>5} {:>4} {:>4}  {:<20} {:<16} {}".format(
+            display_name[:26], pz_col[:10], tag, n_p, n_n, n_d,
+            deps_col[:20], inc_col[:16], mj.description))
     if ws_major and show_all:
         print(f"\n(workspace bound to PZ major {ws_major}; non-matching mods are not installable.)")
     return 0
