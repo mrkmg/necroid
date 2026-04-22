@@ -23,12 +23,17 @@ from ..util import logging_util as log
 from ..core.config import read_config
 from ..errors import ConfigError, ModNotFound, ModUpdateError
 from ..util.fsops import ensure_dir
-from ..remote.github import (
+from ..remote._archive import (
     DiscoveredMod,
+    copy_mod_tree,
     discover_mods,
-    download_repo_zip,
     extract_archive,
-    resolve_commit_sha,
+)
+from ..remote._providers import (
+    PROVIDER_GITHUB,
+    PROVIDER_GITLAB,
+    download_origin_zip,
+    resolve_origin_sha,
 )
 from ..core.mod import (
     list_mods,
@@ -85,10 +90,18 @@ def run(args) -> int:
             print(json.dumps({"results": []}, indent=2))
         return 0
 
-    # --- Group by (repo, ref) ---
-    groups: dict[tuple[str, str], list[_Target]] = {}
+    # --- Group by (provider, host, repo, ref) ---
+    # ``host`` is "" for github (canonical host implied). Including provider +
+    # host in the key prevents cross-host GitLab peers from being lumped
+    # together when they happen to share a ``namespace/project`` path.
+    groups: dict[tuple[str, str, str, str], list[_Target]] = {}
     for t in targets:
-        key = (t.origin.get("repo", ""), t.origin.get("ref", ""))
+        key = (
+            t.origin.get("type") or PROVIDER_GITHUB,
+            str(t.origin.get("host") or ""),
+            t.origin.get("repo", ""),
+            t.origin.get("ref", ""),
+        )
         groups.setdefault(key, []).append(t)
 
     results: list[dict] = []
@@ -97,9 +110,9 @@ def run(args) -> int:
         shutil.rmtree(tmp_root, ignore_errors=True)
 
     try:
-        for (repo, ref), group in groups.items():
+        for (provider, host, repo, ref), group in groups.items():
             results.extend(_process_group(
-                repo=repo, ref=ref, group=group,
+                provider=provider, host=host, repo=repo, ref=ref, group=group,
                 profile=profile, ws_major=ws_major,
                 enter_state=enter_state,
                 check_only=check_only, force=force,
@@ -181,7 +194,8 @@ def _resolve_named(mods_dir: Path, ws_major: int, name: str) -> str:
 # Per-group processing
 # ---------------------------------------------------------------------------
 
-def _process_group(*, repo: str, ref: str, group: list[_Target],
+def _process_group(*, provider: str, host: str, repo: str, ref: str,
+                   group: list[_Target],
                    profile, ws_major: int, enter_state,
                    check_only: bool, force: bool,
                    tmp_root: Path) -> list[dict]:
@@ -191,17 +205,22 @@ def _process_group(*, repo: str, ref: str, group: list[_Target],
                         upstream_version=None, upstream_sha=None)
                 for t in group]
 
+    # Shape validation: github always needs ``owner/repo``; gitlab needs at
+    # least one ``/`` for ``namespace/project`` and tolerates more segments.
     if "/" not in repo:
         return [_result(t, status="error",
                         message=f"origin.repo malformed: {repo!r}",
                         upstream_version=None, upstream_sha=None)
                 for t in group]
-    owner, repo_name = repo.split("/", 1)
 
-    log.step(f"checking {repo}@{ref} ({len(group)} mod(s))")
+    host_note = f" ({provider} {host})" if host else ""
+    log.step(f"checking {repo}@{ref}{host_note} ({len(group)} mod(s))")
 
+    # All mods in this group share the same origin shape — use the first one
+    # to drive the dispatch.
+    origin_for_dispatch = group[0].origin
     try:
-        sha_info = resolve_commit_sha(owner, repo_name, ref)
+        sha_info = resolve_origin_sha(origin_for_dispatch, ref)
     except Exception as e:
         return [_result(t, status="error",
                         message=str(e),
@@ -227,14 +246,15 @@ def _process_group(*, repo: str, ref: str, group: list[_Target],
 
     # Need the archive — fetch once.
     ensure_dir(tmp_root)
-    group_tmp = tmp_root / f"{owner}-{repo_name}-{new_sha[:12]}"
+    group_stem = repo.replace("/", "-")
+    group_tmp = tmp_root / f"{group_stem}-{new_sha[:12]}"
     if group_tmp.exists():
         shutil.rmtree(group_tmp, ignore_errors=True)
     ensure_dir(group_tmp)
     zip_path = group_tmp / "archive.zip"
     try:
-        url = download_repo_zip(owner, repo_name, ref, is_tag=sha_info.is_tag,
-                                dest=zip_path)
+        url = download_origin_zip(origin_for_dispatch, ref,
+                                   is_tag=sha_info.is_tag, dest=zip_path)
         wrapper = extract_archive(zip_path, group_tmp / "x")
         upstream = discover_mods(wrapper)
     except Exception as e:
@@ -249,7 +269,8 @@ def _process_group(*, repo: str, ref: str, group: list[_Target],
         results.append(_process_one(
             t=t, by_subdir=by_subdir, profile=profile, ws_major=ws_major,
             enter_state=enter_state, new_sha=new_sha,
-            archive_url_str=url, repo=repo, ref=ref,
+            archive_url_str=url, provider=provider, host=host,
+            repo=repo, ref=ref,
             check_only=check_only, force=force,
         ))
     return results
@@ -257,6 +278,7 @@ def _process_group(*, repo: str, ref: str, group: list[_Target],
 
 def _process_one(*, t: _Target, by_subdir: dict, profile, ws_major: int,
                  enter_state, new_sha: str, archive_url_str: str,
+                 provider: str, host: str,
                  repo: str, ref: str, check_only: bool, force: bool) -> dict:
     subdir = t.origin.get("subdir", "")
     dm = by_subdir.get(subdir)
@@ -291,6 +313,7 @@ def _process_one(*, t: _Target, by_subdir: dict, profile, ws_major: int,
         if t.origin.get("commitSha") != new_sha:
             write_origin(
                 local_mj,
+                type=provider, host=host or None,
                 repo=repo, ref=ref, subdir=subdir,
                 commitSha=new_sha,
                 archiveUrl=t.origin.get("archiveUrl") or archive_url_str,
@@ -315,7 +338,6 @@ def _process_one(*, t: _Target, by_subdir: dict, profile, ws_major: int,
     staging = profile.mods_dir / (t.dirname + ".new")
     if staging.exists():
         shutil.rmtree(staging, ignore_errors=True)
-    from ..remote.github import copy_mod_tree
     copy_mod_tree(dm.src_path, staging)
 
     # Compose new mod.json — preserve some local fields, take others from upstream.
@@ -328,6 +350,7 @@ def _process_one(*, t: _Target, by_subdir: dict, profile, ws_major: int,
     new_mj.updated_at = now
     write_origin(
         new_mj,
+        type=provider, host=host or None,
         repo=repo, ref=ref, subdir=subdir,
         commitSha=new_sha, archiveUrl=archive_url_str,
         importedAt=now, upstreamVersion=new_v,

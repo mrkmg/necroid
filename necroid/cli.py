@@ -175,9 +175,10 @@ def _build_parser() -> argparse.ArgumentParser:
                    action="store_true", help=argparse.SUPPRESS)
 
     s = sub.add_parser("import",
-                       help="pull mods from a GitHub repo into data/mods/")
+                       help="pull mods from a GitHub or GitLab repo into mods/")
     s.add_argument("repo",
-                   help="owner/repo or a github.com URL (optionally including /tree/<ref>)")
+                   help="owner/repo, a github.com URL, or a GitLab URL "
+                        "(including self-hosted; optionally /tree/<ref>)")
     s.add_argument("--ref", default=None,
                    help="branch, tag, or commit SHA (default: repo's default branch)")
     s.add_argument("--mod", dest="mod_selectors", action="append", default=[],

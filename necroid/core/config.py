@@ -19,7 +19,7 @@ and `originalsDir` are optional.
 for `resync-pristine` (re-hydrates from the same source unless `--from` overrides).
 
 `workspaceMajor` is the PZ major version the workspace is bound to (e.g. 41).
-Mod dirs under `data/mods/` are suffixed with `-<major>` and filtered against
+Mod dirs under `mods/` are suffixed with `-<major>` and filtered against
 this value in every surface (list, status, install, GUI). Set at `init` time
 from `workspaceVersion`. Changing it requires `resync-pristine --force-major-change`.
 

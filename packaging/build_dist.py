@@ -2,8 +2,8 @@
 
 Produces `<repo-root>/dist/`:
     necroid(.exe)
+    mods/         (copied from <repo-root>/mods)
     data/
-      mods/       (copied from <repo-root>/data/mods)
       tools/      (empty placeholder; first run self-extracts vineflower)
     README.txt
 
@@ -186,9 +186,9 @@ def copy_layout(binary: Path) -> None:
     # at this repo so `necroid mod-update` refreshes bundled mods via the same
     # GitHub-fetch pipeline as user-imported ones. Without this, the only way
     # to get newer bundled mods would be to re-download the whole binary.
-    src_mods = REPO_ROOT / "data" / "mods"
+    src_mods = REPO_ROOT / "mods"
     if src_mods.exists():
-        dst_mods = DIST / "data" / "mods"
+        dst_mods = DIST / "mods"
         shutil.copytree(src_mods, dst_mods)
         stamp_bundled_origins(dst_mods)
 
@@ -214,7 +214,7 @@ def copy_layout(binary: Path) -> None:
         "GUI (client):   ./necroid --gui\n"
         "GUI (server):   ./necroid --gui -server\n"
         "\n"
-        "Bundled mods in data/mods/. Edit data/.mod-config.json to point at\n"
+        "Bundled mods in mods/. Edit data/.mod-config.json to point at\n"
         "your PZ install paths (or run `init` and it'll autodetect).\n"
         "\n"
         "Updates + source: https://github.com/mrkmg/necroid\n",
@@ -253,12 +253,12 @@ def stamp_bundled_origins(dist_mods_dir: Path) -> None:
         if isinstance(data.get("origin"), dict) and data["origin"].get("repo"):
             continue  # respect existing origin
         # `subdir` is the path WITHIN the upstream repo where this mod's
-        # mod.json lives. For bundled mods that's `data/mods/<dirname>`.
+        # mod.json lives. For bundled mods that's `mods/<dirname>`.
         data["origin"] = {
             "type": "github",
             "repo": BUNDLED_REPO,
             "ref": BUNDLED_REF,
-            "subdir": f"data/mods/{child.name}",
+            "subdir": f"mods/{child.name}",
             # Empty SHA on first ship — first `mod-update --check` populates it.
             "commitSha": "",
             "archiveUrl": (

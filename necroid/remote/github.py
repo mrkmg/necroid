@@ -10,17 +10,23 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import urllib.error
 import urllib.parse
 import urllib.request
-import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 from ..errors import ModImportError
-from ..core.mod import ModJson
+# Shared, provider-agnostic helpers re-exported for back-compat with callers
+# that import these names from ``github``.
+from ._archive import (  # noqa: F401  (re-export)
+    CommitResolution,
+    DiscoveredMod,
+    copy_mod_tree,
+    discover_mods,
+    extract_archive,
+)
 from .updater import _USER_AGENT, _http_download
 
 
@@ -131,12 +137,6 @@ def resolve_default_branch(owner: str, repo: str, *, timeout: float = 10.0) -> s
     return branch
 
 
-@dataclass
-class CommitResolution:
-    sha: str
-    is_tag: bool  # informational; codeload URL builder uses this
-
-
 def resolve_commit_sha(owner: str, repo: str, ref: str, *, timeout: float = 10.0) -> CommitResolution:
     """Resolve a branch / tag / sha to a 40-hex commit SHA via /commits/{ref}.
 
@@ -191,169 +191,6 @@ def download_repo_zip(owner: str, repo: str, ref: str, *, is_tag: bool,
     return url
 
 
-# --- Extraction -----------------------------------------------------------
-
-def extract_archive(zip_path: Path, dest_dir: Path) -> Path:
-    """Extract `zip_path` into `dest_dir`. Refuses entries that would escape
-    the destination (zip-slip). Returns the wrapper directory inside dest_dir
-    (GitHub archives always wrap content in `<owner>-<repo>-<sha>/`).
-    """
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(zip_path, "r") as zf:
-        names = zf.namelist()
-        if not names:
-            raise ModImportError("archive is empty")
-        for n in names:
-            # Reject absolute paths and `..` traversal.
-            np = Path(n)
-            if np.is_absolute() or any(p == ".." for p in np.parts):
-                raise ModImportError(f"archive contains unsafe entry: {n}")
-        zf.extractall(dest_dir)
-
-    # Identify wrapper dir.
-    children = [p for p in dest_dir.iterdir() if not p.name.startswith(".")]
-    dirs = [p for p in children if p.is_dir()]
-    if len(dirs) != 1 or any(p.is_file() for p in children):
-        raise ModImportError(
-            "archive layout unexpected (no single top-level wrapper dir)"
-        )
-    return dirs[0]
-
-
-# --- Multi-mod discovery --------------------------------------------------
-
-@dataclass
-class DiscoveredMod:
-    """A `mod.json` found inside an extracted repo.
-
-    `dirname` is the canonical Necroid mod-dir name — `<base>-<major>`. We
-    derive it from the final path component of `subdir` if it parses, else
-    from `mj.name` if that parses, else fall back to the raw subdir/name.
-    Callers must verify `dirname` actually parses cleanly before treating
-    it as a target.
-
-    `mod_major` is the int extracted from `dirname`, or None if it did not
-    parse. None means the mod is missing the required `-<digits>` suffix
-    and cannot be imported.
-    """
-    subdir: str           # forward-slash, "" when at the repo root
-    mj: ModJson
-    src_path: Path = field(default_factory=Path)  # absolute dir containing mod.json
-    dirname: str = ""     # canonical `<base>-<major>` (preserved from upstream)
-    mod_major: Optional[int] = None
-
-
-def discover_mods(extracted_root: Path) -> list[DiscoveredMod]:
-    """Find every mod.json under `extracted_root`.
-
-    Layouts supported (walked in this order, results merged):
-      <root>/mod.json                       single-mod repo
-      <root>/<name>/mod.json                depth 1 — flat container
-      <root>/<container>/<name>/mod.json    depth 2 — e.g. mods/admin-xray-41/
-      <root>/data/mods/<name>/mod.json      depth 3 — Necroid canonical layout
-                                            (this repo + any fork shipping
-                                            bundled mods that way)
-
-    De-duped by subdir. Mixed-depth layouts are accepted; the caller can
-    inspect each `DiscoveredMod.subdir` to flag oddities.
-    """
-    out: list[DiscoveredMod] = []
-
-    root_mj = extracted_root / "mod.json"
-    if root_mj.is_file():
-        out.append(_load_discovered(extracted_root, ""))
-
-    # Depth 1 + 2.
-    for child in sorted(extracted_root.iterdir()):
-        if not child.is_dir() or _is_skip_dir(child.name):
-            continue
-        mj_path = child / "mod.json"
-        if mj_path.is_file():
-            out.append(_load_discovered(extracted_root, child.name))
-            continue
-        for grand in sorted(child.iterdir()):
-            if not grand.is_dir() or _is_skip_dir(grand.name):
-                continue
-            if (grand / "mod.json").is_file():
-                out.append(_load_discovered(
-                    extracted_root, f"{child.name}/{grand.name}"))
-
-    # Necroid canonical layout: `data/mods/<name>/mod.json`. Always probed,
-    # even when the depth-1/2 walk found other mods, so a repo can mix layouts.
-    canonical = extracted_root / "data" / "mods"
-    if canonical.is_dir():
-        for child in sorted(canonical.iterdir()):
-            if not child.is_dir() or _is_skip_dir(child.name):
-                continue
-            if (child / "mod.json").is_file():
-                out.append(_load_discovered(
-                    extracted_root, f"data/mods/{child.name}"))
-
-    if not out:
-        raise ModImportError(
-            "repo contains no mod.json "
-            "(looked at root, one/two levels deep, and data/mods/*)"
-        )
-
-    # De-dup by subdir.
-    seen: dict[str, DiscoveredMod] = {}
-    for dm in out:
-        seen.setdefault(dm.subdir, dm)
-    return list(seen.values())
-
-
-def _load_discovered(root: Path, subdir: str) -> DiscoveredMod:
-    from ..core.mod import parse_mod_dirname
-
-    src = root if subdir == "" else (root / subdir)
-    try:
-        raw = json.loads((src / "mod.json").read_text(encoding="utf-8"))
-        mj = ModJson.from_json(raw)
-    except (OSError, json.JSONDecodeError, KeyError) as e:
-        loc = subdir or "<root>"
-        raise ModImportError(f"upstream mod.json at '{loc}' is not valid JSON / schema: {e}")
-
-    # Canonical dirname rules:
-    #   1. Trailing path component of subdir, IF it parses as `<base>-<major>`.
-    #   2. mj.name, IF it parses as `<base>-<major>`.
-    #   3. Whatever we have, with mod_major=None — the import preflight rejects
-    #      this path with a clear "needs -<major> suffix" error.
-    candidate_names: list[str] = []
-    if subdir:
-        candidate_names.append(subdir.rsplit("/", 1)[-1])
-    if mj.name:
-        candidate_names.append(mj.name)
-
-    dirname = candidate_names[0] if candidate_names else ""
-    mod_major = None
-    for cand in candidate_names:
-        parsed = parse_mod_dirname(cand)
-        if parsed is not None:
-            dirname = cand
-            mod_major = parsed[1]
-            break
-
-    return DiscoveredMod(subdir=subdir, mj=mj, src_path=src,
-                         dirname=dirname, mod_major=mod_major)
-
-
-_SKIP_DIRS = frozenset({".git", ".github", "__pycache__", "node_modules"})
-
-
-def _is_skip_dir(name: str) -> bool:
-    return name in _SKIP_DIRS or name.startswith(".")
-
-
-# --- File copy with skip rules --------------------------------------------
-
-def copy_mod_tree(src: Path, dst: Path) -> None:
-    """Copy a discovered mod tree (mod.json, patches/, README, …) into a
-    fresh destination, skipping `.git*` and `.github/`. Destination must not
-    exist."""
-    if dst.exists():
-        raise ModImportError(f"copy target already exists: {dst}")
-    shutil.copytree(src, dst, ignore=_copy_ignore)
-
-
-def _copy_ignore(_src: str, names: list[str]) -> set[str]:
-    return {n for n in names if _is_skip_dir(n)}
+# Extraction, multi-mod discovery, and mod-tree copy live in
+# ``necroid/remote/_archive.py`` — they're provider-agnostic. Re-exported at
+# the top of this file so existing callers keep working.

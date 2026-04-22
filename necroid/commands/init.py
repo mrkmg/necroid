@@ -12,7 +12,7 @@ Steps:
     6. Rejar each subtree        -> workspace/libs/classpath-originals/<name>.jar
     7. Detect PZ version via probe; confirm workspace major; write config.
     8. Decompile every present class subtree -> workspace/src-pristine/ (Vineflower).
-    9. Scaffold data/mods/ and migrate legacy unversioned mod dirs.
+    9. Scaffold mods/ and write a default .gitignore if none exists.
 """
 from __future__ import annotations
 
@@ -199,12 +199,59 @@ def run(args) -> int:
         force=args.force,
     )
 
-    log.step("step 9/9: scaffold mods/")
+    log.step("step 9/9: scaffold mods/ + default .gitignore")
     ensure_dir(profile.mods_dir)
+    _ensure_default_gitignore(root)
 
     log.success(f"init [from={source}] complete. Workspace bound to PZ {cfg.workspace_version} (major {cfg.workspace_major}).")
     log.info("next: `necroid new <mod-name>`  then  `capture <mod-name>`")
     return 0
+
+
+DEFAULT_GITIGNORE = """\
+# -----------------------------------------------------------------------------
+# Necroid — local-only files. Your mods live at /mods/ and should be committed.
+# Everything below is regenerated from your own PZ install via `necroid init`.
+# -----------------------------------------------------------------------------
+
+# Shared workspace populated by `necroid init` from your PZ install.
+/data/workspace/
+
+# Per-mod editable working trees — `necroid enter <mod>` seeds one at /src-<mod>/.
+/src-*/
+
+# Downloaded tooling. tools/ dir itself is tracked via .gitkeep; contents are not.
+/data/tools/*
+!/data/tools/.gitkeep
+
+# Local runtime state
+/data/.mod-config.json
+/data/.mod-enter.json
+/data/.mod-state-client.json
+/data/.mod-state-server.json
+/data/.update-cache.json
+/data/.update-cache-mods.json
+/data/.import-tmp/
+/data/.update-tmp/
+
+# Build output (if you're building Necroid itself)
+/dist/
+/build/
+"""
+
+
+def _ensure_default_gitignore(root: Path) -> None:
+    """Write a default `.gitignore` covering every Necroid-generated path.
+
+    No-op when one already exists — never clobber a user's gitignore.
+    This is what makes the 3rd-party dev flow one-step: drop necroid in
+    your repo, `init`, and the local-only paths are already ignored.
+    """
+    gi = root / ".gitignore"
+    if gi.exists():
+        return
+    gi.write_text(DEFAULT_GITIGNORE, encoding="utf-8")
+    log.info(f"wrote {gi}")
 
 
 def _choose_workspace_major(detected_major: int, args) -> int:

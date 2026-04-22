@@ -3,7 +3,7 @@
 Workflow: check GitHub Releases for a newer tag, download the matching
 platform zip, extract the binary into place, restart.
 
-Only the binary is replaced. Bundled `data/mods/` and `data/tools/` in the
+Only the binary is replaced. Bundled `mods/` and `data/tools/` in the
 release zip are ignored — the user's mod library + local Vineflower cache
 must not be touched.
 

@@ -102,7 +102,7 @@ class Profile:
 
     # --- shared ---
     @property
-    def mods_dir(self) -> Path:      return self.data_dir / "mods"
+    def mods_dir(self) -> Path:      return self.root / "mods"
     @property
     def tools_dir(self) -> Path:     return self.data_dir / "tools"
     @property

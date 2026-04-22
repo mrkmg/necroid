@@ -29,7 +29,7 @@ parses to a major version that MUST agree with the mod dir's `-<major>`
 suffix (a loader-level cross-check). Only the minor/patch are allowed to
 drift — and only with a soft warning at install time.
 
-Mod dir names encode the PZ major: `data/mods/<base>-<major>/` (e.g.
+Mod dir names encode the PZ major: `mods/<base>-<major>/` (e.g.
 `admin-xray-41`). The suffix is authoritative for compatibility filtering.
 Legacy unsuffixed dirs are migrated at `init` time.
 
@@ -368,10 +368,15 @@ def read_origin(mj: ModJson) -> dict | None:
 
 def write_origin(mj: ModJson, *, type: str = "github",
                  repo: str, ref: str, subdir: str, commitSha: str,
-                 archiveUrl: str, importedAt: str, upstreamVersion: str) -> None:
+                 archiveUrl: str, importedAt: str, upstreamVersion: str,
+                 host: str | None = None) -> None:
     """Set / replace the origin block on `mj` in place. Caller must persist via
-    write_mod_json afterward."""
-    mj._extra[_ORIGIN_KEY] = {
+    write_mod_json afterward.
+
+    `host` is optional and stored only when truthy — absent means the provider's
+    canonical host (github.com for github). GitLab origins must supply `host`
+    (e.g. "gitlab.com" or a self-hosted instance)."""
+    out: dict = {
         "type": type,
         "repo": repo,
         "ref": ref,
@@ -381,3 +386,6 @@ def write_origin(mj: ModJson, *, type: str = "github",
         "importedAt": importedAt,
         "upstreamVersion": upstreamVersion,
     }
+    if host:
+        out["host"] = host
+    mj._extra[_ORIGIN_KEY] = out

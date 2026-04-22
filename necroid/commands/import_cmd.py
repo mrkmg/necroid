@@ -1,17 +1,19 @@
-"""import — pull mods from a GitHub repo into data/mods/<base>-<major>/.
+"""import — pull mods from a GitHub or GitLab repo into mods/<base>-<major>/.
 
-Mods are identified by their canonical `<base>-<major>` dirname (same shape
-as locally-authored ones). Per-major variants coexist: a repo may carry
-`admin-xray-41/` and `admin-xray-42/` side by side, and an import filters
-to the workspace's bound major by default.
+The upstream repo is expected to follow the canonical Necroid layout:
+`<repo-root>/mods/<base>-<major>/mod.json`. Mods are identified by their
+canonical `<base>-<major>` dirname (same shape as locally-authored ones).
+Per-major variants coexist: a repo may carry `admin-xray-41/` and
+`admin-xray-42/` side by side, and an import filters to the workspace's
+bound major by default.
 
-    necroid import owner/repo                 # single-mod : imports the one
-    necroid import owner/repo                 # multi-mod  : errors with hint
-    necroid import owner/repo --list          # discover only (text)
-    necroid import owner/repo --list --json   # discover only (machine-readable, GUI)
-    necroid import owner/repo --all           # import every mod that matches workspace major
-    necroid import owner/repo --mod foo       # bare base resolves against workspace major
-    necroid import owner/repo --mod foo-41    # exact dirname (must match workspace major)
+    necroid import owner/repo                          # GitHub, bare slug
+    necroid import https://gitlab.com/ns/proj          # GitLab, full URL
+    necroid import owner/repo --list                   # discover only (text)
+    necroid import owner/repo --list --json            # discover only (machine-readable, GUI)
+    necroid import owner/repo --all                    # import every mod that matches workspace major
+    necroid import owner/repo --mod foo                # bare base resolves against workspace major
+    necroid import owner/repo --mod foo-41             # exact dirname (must match workspace major)
     necroid import owner/repo --include-all-majors --all
         # also pull mods for non-current majors (rare; e.g. preparing for a PZ migration)
 
@@ -33,11 +35,15 @@ from ..remote.github import (
     DiscoveredMod,
     copy_mod_tree,
     discover_mods,
-    download_repo_zip,
     extract_archive,
     parse_github_ref,
-    resolve_commit_sha,
-    resolve_default_branch,
+)
+from ..remote import github as _gh_mod
+from ..remote import gitlab as _gl_mod
+from ..remote._providers import (
+    PROVIDER_GITHUB,
+    PROVIDER_GITLAB,
+    detect_provider,
 )
 from ..core.mod import (
     list_mods,
@@ -58,11 +64,26 @@ def run(args) -> int:
         )
     ws_major = int(cfg.workspace_major)
 
-    # --- Resolve repo + ref ---
-    gh = parse_github_ref(args.repo)
-    ref = args.ref or gh.ref_from_url or resolve_default_branch(gh.owner, gh.repo)
-    log.step(f"resolving {gh.owner}/{gh.repo}@{ref}")
-    sha_info = resolve_commit_sha(gh.owner, gh.repo, ref)
+    # --- Resolve repo + ref (provider-dispatched) ---
+    provider = detect_provider(args.repo)
+    if provider == PROVIDER_GITLAB:
+        gl = _gl_mod.parse_gitlab_ref(args.repo)
+        provider_host: str | None = gl.host
+        repo_full = gl.project_path
+        ref_from_url = gl.ref_from_url
+        ref = args.ref or ref_from_url or _gl_mod.resolve_default_branch(
+            gl.host, gl.project_path)
+        log.step(f"resolving {repo_full}@{ref} (gitlab {gl.host})")
+        sha_info = _gl_mod.resolve_commit_sha(gl.host, gl.project_path, ref)
+    else:
+        gh = parse_github_ref(args.repo)
+        provider_host = None  # github.com implied; not stored in origin
+        repo_full = f"{repo_full}"
+        ref_from_url = gh.ref_from_url
+        ref = args.ref or ref_from_url or _gh_mod.resolve_default_branch(
+            gh.owner, gh.repo)
+        log.step(f"resolving {repo_full}@{ref}")
+        sha_info = _gh_mod.resolve_commit_sha(gh.owner, gh.repo, ref)
     log.info(f"commit {sha_info.sha[:7]} ({'tag' if sha_info.is_tag else 'branch/sha'})")
 
     # --- Download + extract ---
@@ -71,9 +92,18 @@ def run(args) -> int:
         shutil.rmtree(tmp_root, ignore_errors=True)
     ensure_dir(tmp_root)
     try:
-        zip_path = tmp_root / f"{gh.owner}-{gh.repo}-{sha_info.sha[:12]}.zip"
-        url = download_repo_zip(gh.owner, gh.repo, ref, is_tag=sha_info.is_tag,
-                                dest=zip_path)
+        zip_stem = repo_full.replace("/", "-")
+        zip_path = tmp_root / f"{zip_stem}-{sha_info.sha[:12]}.zip"
+        if provider == PROVIDER_GITLAB:
+            url = _gl_mod.download_repo_zip(
+                gl.host, gl.project_path, ref,
+                is_tag=sha_info.is_tag, dest=zip_path,
+            )
+        else:
+            url = _gh_mod.download_repo_zip(
+                gh.owner, gh.repo, ref,
+                is_tag=sha_info.is_tag, dest=zip_path,
+            )
         log.info(f"downloaded {zip_path.name}")
         extract_dir = tmp_root / "x"
         wrapper = extract_archive(zip_path, extract_dir)
@@ -86,11 +116,11 @@ def run(args) -> int:
             if getattr(args, "json", False):
                 _emit_json_discovery(discovered, ws_major)
             else:
-                _emit_text_discovery(gh.owner, gh.repo, ref, discovered, ws_major)
+                _emit_text_discovery(repo_full, ref, discovered, ws_major)
             return 0
 
         # --- Selection ---
-        selected = _resolve_selection(discovered, args, gh, ws_major)
+        selected = _resolve_selection(discovered, args, repo_full, ws_major)
 
         # --- Pre-flight (no writes) ---
         _preflight(selected, ws_major, profile.mods_dir, args)
@@ -101,7 +131,8 @@ def run(args) -> int:
             for dm in selected:
                 _commit_one(
                     dm=dm, profile=profile,
-                    repo_full=f"{gh.owner}/{gh.repo}", ref=ref,
+                    provider=provider, host=provider_host,
+                    repo_full=repo_full, ref=ref,
                     sha=sha_info.sha, archive_url_str=url,
                 )
                 committed.append(dm.dirname)
@@ -134,7 +165,7 @@ def run(args) -> int:
                     )
 
         log.success(
-            f"imported {len(committed)} mod(s) from {gh.owner}/{gh.repo}@{ref} "
+            f"imported {len(committed)} mod(s) from {repo_full}@{ref} "
             f"({sha_info.sha[:7]})"
         )
         return 0
@@ -146,9 +177,9 @@ def run(args) -> int:
 # Discovery output
 # ---------------------------------------------------------------------------
 
-def _emit_text_discovery(owner: str, repo: str, ref: str,
+def _emit_text_discovery(repo_full: str, ref: str,
                          discovered: list[DiscoveredMod], ws_major: int) -> None:
-    print(f"{owner}/{repo} @ {ref} — {len(discovered)} mod(s):")
+    print(f"{repo_full} @ {ref} — {len(discovered)} mod(s):")
     for dm in discovered:
         loc = dm.subdir or "<root>"
         ev = (dm.mj.expected_version or "").strip()
@@ -191,7 +222,7 @@ def _emit_json_discovery(discovered: list[DiscoveredMod], ws_major: int) -> None
 # Selection
 # ---------------------------------------------------------------------------
 
-def _resolve_selection(discovered: list[DiscoveredMod], args, gh,
+def _resolve_selection(discovered: list[DiscoveredMod], args, repo_full: str,
                        ws_major: int) -> list[DiscoveredMod]:
     """Pick which discovered mods to import.
 
@@ -265,12 +296,12 @@ def _resolve_selection(discovered: list[DiscoveredMod], args, gh,
     avail = _availability_line(discovered)
     if not in_scope:
         raise ModImportError(
-            f"repo {gh.owner}/{gh.repo} contains {len(discovered)} mod(s), "
+            f"repo {repo_full} contains {len(discovered)} mod(s), "
             f"none for PZ major {ws_major}.\n  available: {avail}\n"
             f"  pass --include-all-majors to import a non-matching variant"
         )
     raise ModImportError(
-        f"repo {gh.owner}/{gh.repo} contains {len(in_scope)} mods at PZ "
+        f"repo {repo_full} contains {len(in_scope)} mods at PZ "
         f"major {ws_major}; pass --all or --mod <name> [--mod ...]\n"
         f"  available: {avail}"
     )
@@ -379,6 +410,7 @@ def _preflight(selected: list[DiscoveredMod], ws_major: int,
 # ---------------------------------------------------------------------------
 
 def _commit_one(*, dm: DiscoveredMod, profile,
+                provider: str, host: str | None,
                 repo_full: str, ref: str, sha: str,
                 archive_url_str: str) -> None:
     """Atomically install one discovered mod into profile.mods_dir.
@@ -402,6 +434,8 @@ def _commit_one(*, dm: DiscoveredMod, profile,
     now = utc_now_iso()
     write_origin(
         mj,
+        type=provider,
+        host=host,
         repo=repo_full,
         ref=ref,
         subdir=dm.subdir,

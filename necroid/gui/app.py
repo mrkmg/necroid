@@ -181,15 +181,15 @@ class ModderApp:
                                             command=self.on_check_updates)
         self.btn_check_updates.pack(side=tk.LEFT, padx=(8, 0))
         Tooltip(self.btn_check_updates,
-                 "Query GitHub for newer versions of every imported mod.\n"
-                 "Results decorate the Version column with ⬆ badges.")
+                 "Query upstream (GitHub or GitLab) for newer versions of every\n"
+                 "imported mod. Results decorate the Version column with ⬆ badges.")
 
         self.btn_import = ttk.Button(right, text="Import…",
                                      command=self.on_import_clicked)
         self.btn_import.pack(side=tk.LEFT, padx=(8, 0))
         Tooltip(self.btn_import,
-                 "Pull mods from a GitHub repository.\n"
-                 "Single-mod and multi-mod repos both supported.")
+                 "Pull mods from a GitHub or GitLab repository\n"
+                 "(canonical `mods/<name>/mod.json` layout).")
 
         ttk.Frame(self.tk, style="Sep.TFrame", height=1).pack(fill=tk.X, padx=12)
 
@@ -458,7 +458,7 @@ class ModderApp:
         else:
             self.pz_label_var.set("")
 
-        mods_dir = self.root / "data" / "mods"
+        mods_dir = self.root / "mods"
         if not mods_dir.exists():
             self._log(f"(no mods directory at {mods_dir}; run Set Up)", tag="info")
             self.installed_stack = []
@@ -1024,7 +1024,7 @@ class ModderApp:
         # but a stale state file could theoretically have a clientOnly mod in
         # the stack after a mod.json flip.
         if self.install_to == "server":
-            mods_dir = self.root / "data" / "mods"
+            mods_dir = self.root / "mods"
             offenders: list[str] = []
             for name in desired:
                 if self._effective_client_only.get(name):
@@ -1188,7 +1188,7 @@ class ModderApp:
             state=tk.NORMAL if is_imported else tk.DISABLED,
         )
         m.add_command(
-            label="Open on GitHub",
+            label="Open origin in browser",
             command=lambda o=origin: self._open_origin_in_browser(o),
             state=tk.NORMAL if is_imported else tk.DISABLED,
         )
@@ -1209,8 +1209,10 @@ class ModderApp:
             "Local mod.json + patches will be overwritten.",
         ):
             return
+        from ..remote._providers import import_arg_for_origin
         base = mod_base_name(name)
-        args = ["import", str(origin.get("repo")), "--ref", str(origin.get("ref")),
+        repo_arg = import_arg_for_origin(origin) or str(origin.get("repo") or "")
+        args = ["import", repo_arg, "--ref", str(origin.get("ref")),
                 "--mod", str(origin.get("subdir") or base),
                 "--name", base, "--force"]
         self._run_cli(args)
@@ -1243,16 +1245,10 @@ class ModderApp:
 
     def _open_origin_in_browser(self, origin: dict) -> None:
         import webbrowser
-        repo = str(origin.get("repo") or "")
-        ref = str(origin.get("ref") or "")
-        subdir = str(origin.get("subdir") or "")
-        if not repo:
+        from ..remote._providers import browser_url
+        url = browser_url(origin)
+        if not url:
             return
-        url = f"https://github.com/{repo}"
-        if ref:
-            url += f"/tree/{ref}"
-            if subdir:
-                url += f"/{subdir}"
         try:
             webbrowser.open(url)
         except Exception:

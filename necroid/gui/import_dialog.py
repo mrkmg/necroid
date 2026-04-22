@@ -1,8 +1,8 @@
-"""Two-stage modal for importing mods from GitHub.
+"""Two-stage modal for importing mods from GitHub or GitLab.
 
-Stage 1 — user enters `owner/repo` (optionally a `/tree/<ref>`) plus an
-optional branch/tag. `Discover` runs `necroid import --list --json` in a
-worker thread and parses the output.
+Stage 1 — user enters `owner/repo` (optionally a `/tree/<ref>`) for GitHub, or
+a full GitLab URL, plus an optional branch/tag. `Discover` runs
+`necroid import --list --json` in a worker thread and parses the output.
 
 Stage 2 — treeview of discovered mods with one checkable row each. Rows whose
 PZ major doesn't match the workspace major are disabled. Submitting dispatches
@@ -48,7 +48,7 @@ class ImportDialog:
         self._row_major_ok: dict[str, bool] = {}
 
         self.dlg = tk.Toplevel(app.tk)
-        self.dlg.title("Import mods from GitHub")
+        self.dlg.title("Import mods from GitHub or GitLab")
         self.dlg.transient(app.tk)
         self.dlg.configure(bg=PALETTE["char_900"])
         self.dlg.geometry("640x520")
@@ -59,7 +59,7 @@ class ImportDialog:
 
         ttk.Label(self.stage1, text="Repository", style="Brand.TLabel").pack(anchor="w")
         ttk.Label(self.stage1,
-                  text="owner/repo, or any github.com URL "
+                  text="owner/repo, a github.com URL, or a full GitLab URL "
                        "(optionally including /tree/<branch>).",
                   style="Tagline.TLabel", wraplength=600).pack(anchor="w", pady=(0, 6))
 
@@ -128,8 +128,16 @@ class ImportDialog:
             self.btn_primary.configure(state=tk.DISABLED)
             return
         try:
-            from ..remote.github import parse_github_ref
-            parse_github_ref(raw)
+            from ..remote._providers import (
+                PROVIDER_GITHUB, PROVIDER_GITLAB, detect_provider,
+            )
+            provider = detect_provider(raw)
+            if provider == PROVIDER_GITLAB:
+                from ..remote.gitlab import parse_gitlab_ref
+                parse_gitlab_ref(raw)
+            else:
+                from ..remote.github import parse_github_ref
+                parse_github_ref(raw)
             self.repo_hint_var.set("")
             self.btn_primary.configure(state=tk.NORMAL)
         except Exception as e:

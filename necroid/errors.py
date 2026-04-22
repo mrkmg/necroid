@@ -23,7 +23,7 @@ class ToolMissing(PzModderError):
 
 
 class ModNotFound(PzModderError):
-    """Named mod directory doesn't exist under data/mods/."""
+    """Named mod directory doesn't exist under mods/."""
 
 
 class ModAlreadyExists(PzModderError):
