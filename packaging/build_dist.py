@@ -126,6 +126,9 @@ def run_pyinstaller() -> Path:
     icon_skull_png = assets_dir / "necroid-icon-skull-128.png"
     icon_ico = assets_dir / "necroid-icon.ico"
     icon_icns = build_macos_icns(assets_dir)
+    # PZ-version probe source. Must end up alongside `necroid/` in the frozen
+    # bundle so `pzversion._probe_source(package_dir())` resolves it.
+    probe_java = REPO_ROOT / "necroid" / "java" / "NecroidGetPzVersion.java"
 
     # --add-data spec is `src<sep>dest`: ';' on Windows, ':' elsewhere.
     sep = ";" if sys.platform == "win32" else ":"
@@ -135,6 +138,10 @@ def run_pyinstaller() -> Path:
     for png in (mark_png, icon_full_png, icon_skull_png):
         if png.exists():
             add_data.extend(["--add-data", f"{png}{sep}assets"])
+    if probe_java.exists():
+        add_data.extend(["--add-data", f"{probe_java}{sep}necroid/java"])
+    else:
+        raise SystemExit(f"probe source missing: {probe_java}")
 
     icon_args: list[str] = []
     if sys.platform == "win32" and icon_ico.exists():
