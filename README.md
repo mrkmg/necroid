@@ -74,6 +74,15 @@ To roll back everything, uncheck every box and click **Apply Changes** — the g
 
 If something drifted (e.g. Steam ran a "Verify Integrity of Game Files" pass and reverted everything), the checkboxes will still show what Necroid thinks is installed. Click **Apply Changes** once to re-install, or uncheck and re-check a mod to force a reapply.
 
+## Updates
+
+Necroid checks GitHub Releases for a newer version once a day in the background.
+
+- **GUI**: a yellow banner appears below the header when an update is available — click **Install Update** and Necroid downloads the new binary, swaps it in place, and closes. Re-open it to start using the new version. Click **Dismiss** to ignore the banner for the current session.
+- **CLI**: a one-line `update available: vX.Y.Z → vA.B.C (run: necroid update)` notice prints after any command (silenced when stderr is redirected — scripts stay clean). Run `necroid update` to apply, `necroid update --check` to just check, or `necroid update --rollback` to swap back to the previous binary if something went wrong. Set `NECROID_NO_UPDATE_CHECK=1` to disable background checks entirely.
+
+Self-update only works for the packaged binary you downloaded from the [Releases page](https://github.com/mrkmg/necroid/releases). If you installed from source (`pip install -e .`), use `git pull` instead. On Windows, if Necroid lives under `C:\Program Files`, the update needs an elevated shell — run as administrator. Your installed mods, your Project Zomboid install, and `data/.mod-config.json` are never touched by the updater; only the `necroid` binary itself is replaced.
+
 ## Troubleshooting
 
 - **"javac not found"** — install JDK 17+ (see the table above) and restart Necroid.
@@ -137,6 +146,9 @@ necroid status                       # working tree vs pristine + installed stac
 necroid status <mod>                 # per-mod patch applicability
 necroid verify                       # re-hash installed files to detect drift
 necroid resync-pristine              # after a PZ update: refresh the vanilla baseline
+necroid update                       # check + self-update from GitHub Releases (packaged binary only)
+necroid update --check               # check only, don't download
+necroid update --rollback            # swap back to the previous binary
 necroid new <name> -d "..." [--client-only]  # scaffold a new mod
 necroid enter <mod1> [mod2 ...]      # reset working tree, apply a mod stack for editing
 necroid capture <mod>                # diff working tree vs pristine, rewrite patches

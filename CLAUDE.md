@@ -123,6 +123,10 @@ There are **no tests and no linter** for the PZ-decompiled code — it's decompi
 - `list` / `status` never hide mods. The `Client-only?` column (list) or `clientOnly:` line (status per-mod) is the marker.
 - GUI shows all mods. When install-to = server, clientOnly rows gray out and can't be checked; flipping the header toggle back to client re-enables them.
 
+### Self-update
+
+`necroid update` replaces the running binary from the latest GitHub release (`github.com/mrkmg/necroid`). Only active for the frozen PyInstaller binary (`getattr(sys, "frozen", False)`); editable / source installs get a pointer to `git pull` / `pip install -U` and do nothing else. Flags: `--check` (no apply), `--force` (ignore the 24h TTL), `--yes` (no prompt), `--rollback` (swap `necroid.old[.exe]` back). The swap is rename-out + rename-in, so Windows's "can't delete the running .exe" rule is handled; the replaced binary is spawned with a hidden `--post-restart-cleanup` flag that removes the leftover `.old` file. A once-per-24h background check surfaces a one-line stderr notice after non-`update` CLI commands and a dismissable banner in the GUI (it runs in a worker thread so startup isn't blocked). Cache: `data/.update-cache.json` (local-only, gitignored). Escape hatch: `NECROID_NO_UPDATE_CHECK=1`. Test hook: `NECROID_UPDATE_REPO=owner/repo` points the check at a different repo without editing code. Releases must ship a `necroid-v{version}-{platform}-{arch}.zip` asset with the binary at the archive root (matches `packaging/build_dist.py`); any other assets in the release are ignored — the updater replaces only the binary, never the bundled `data/mods/` or `data/tools/` (those are user-owned on disk).
+
 ## Critical build constraints
 
 - **Only pass modified files to `javac`** (the `install` flow does this automatically). Compiling all ~1601 decompiled files produces thousands of errors — decompiled Java doesn't round-trip cleanly (lambdas, generics erasure, obfuscation artifacts). The install overwrites individual `.class` files, so compiling the changed files only is correct.

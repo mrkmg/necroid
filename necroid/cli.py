@@ -39,8 +39,10 @@ from .commands import (
     status as status_cmd,
     test as test_cmd,
     uninstall as uninstall_cmd,
+    update as update_cmd,
     verify as verify_cmd,
 )
+from . import updater
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -158,6 +160,18 @@ def _build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("verify", help="re-hash installed files, report drift")
     s.add_argument("--to", dest="install_to", choices=("client", "server"), default=None)
 
+    s = sub.add_parser("update", help="check GitHub Releases and self-update the binary")
+    s.add_argument("--check", action="store_true",
+                   help="only check for a newer release; do not download or apply")
+    s.add_argument("--force", action="store_true",
+                   help="bypass the 24h check cache")
+    s.add_argument("--yes", "-y", action="store_true",
+                   help="apply without the interactive confirm prompt")
+    s.add_argument("--rollback", action="store_true",
+                   help="restore the previous binary from necroid.old[.exe]")
+    s.add_argument("--post-restart-cleanup", dest="post_restart_cleanup",
+                   action="store_true", help=argparse.SUPPRESS)
+
     s = sub.add_parser("resync-pristine", help="after a PZ update: regenerate pristine, check mods")
     s.add_argument("--from", dest="from_install", choices=("client", "server"), default=None,
                    help="which install to re-seed from (default: config.workspaceSource)")
@@ -187,6 +201,7 @@ _HANDLERS = {
     "verify": verify_cmd.run,
     "resync-pristine": resync_cmd.run,
     "deps": deps_cmd.run,
+    "update": update_cmd.run,
 }
 
 
@@ -196,6 +211,9 @@ def main(argv: list[str] | None = None) -> int:
 
     root = (args.root or find_root()).resolve()
     args.root = root
+
+    # Sweep any leftover `.old` binary from a prior self-update.
+    updater.cleanup_stale_old(root)
 
     if not args.command and not args.gui:
         args.gui = True
@@ -225,8 +243,10 @@ def main(argv: list[str] | None = None) -> int:
     if hasattr(args, "install_as"):
         args.install_as = resolve_install_to(args.install_as, cfg)
 
-    # init doesn't require a fully-loaded Profile (config is being written).
-    if args.command != "init":
+    # init + update don't require a fully-loaded Profile. `init` is writing
+    # the config; `update` only touches the sibling binary + the update cache,
+    # and should work from a fresh install that hasn't been initialized yet.
+    if args.command not in ("init", "update"):
         try:
             args.profile = load_profile(root, cfg=cfg) if cfg is not None else load_profile(root)
         except PzModderError as e:
@@ -237,13 +257,23 @@ def main(argv: list[str] | None = None) -> int:
 
     handler = _HANDLERS[args.command]
     try:
-        return int(handler(args) or 0)
+        code = int(handler(args) or 0)
     except PzModderError as e:
         log.error(str(e))
         return 1
     except KeyboardInterrupt:
         log.error("interrupted")
         return 130
+
+    # Opportunistic "update available" notice. No-op when running `update`
+    # itself, when NECROID_NO_UPDATE_CHECK is set, when stderr is not a TTY,
+    # or when the command failed (no point dumping extra output on error).
+    if code == 0 and args.command != "update":
+        try:
+            updater.emit_opportunistic_notice(root)
+        except Exception:
+            pass
+    return code
 
 
 if __name__ == "__main__":

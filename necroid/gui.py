@@ -38,6 +38,7 @@ from typing import Literal, Optional
 import tkinter as tk
 from tkinter import messagebox, ttk
 
+from . import __version__, updater
 from .assets import HEADER_MARK, WINDOW_ICON_FULL, WINDOW_ICON_SKULL, asset_path
 from .config import read_config
 from . import markdown_render
@@ -86,6 +87,9 @@ STEP_FRIENDLY = {
     "decompile class subtrees": "Decompiling game code (this takes a while)…",
     "scaffold mods": "Finishing setup…",
     "checking mod patches": "Re-checking mod patches…",
+    "downloading": "Downloading update…",
+    "extracting binary": "Extracting update…",
+    "swapping binary": "Installing update…",
 }
 
 CMD_FAILURE_TITLE = {
@@ -94,6 +98,7 @@ CMD_FAILURE_TITLE = {
     "apply": "Apply changes failed",
     "init": "Setup failed",
     "resync-pristine": "Update failed",
+    "update": "Self-update failed",
 }
 
 _STEP_RE = re.compile(r"^==>\s+(?:step\s+(\d+)/(\d+):\s+)?(.+)$")
@@ -183,6 +188,7 @@ class ModderApp:
         self._pz_mismatch_reason: Optional[str] = None
 
         self._build_header()
+        self._build_update_banner()
         self._build_mod_list()
         self._build_footer()
         self._build_status_strip()
@@ -190,6 +196,14 @@ class ModderApp:
 
         self._log_queue: "queue.Queue[str]" = queue.Queue()
         self.tk.after(100, self._drain_log)
+
+        # Update-check state.
+        self._update_release: Optional["updater.ReleaseInfo"] = None
+        self._update_dismissed = False
+        self._update_check_queue: "queue.Queue[Optional[updater.ReleaseInfo]]" = queue.Queue()
+        self.tk.after(120, self._drain_update_check)
+        self._start_update_check()
+
         self.refresh_mods()
         self._update_primary_button()
         self._set_status("idle", "Ready", progress=None)
@@ -233,6 +247,17 @@ class ModderApp:
                     background=PALETTE["char_900"], foreground=PALETTE["bone_dim"],
                     font=("Segoe UI", 9))
         s.configure("Sep.TFrame", background=PALETTE["char_500"])
+        s.configure("UpdateBanner.TFrame", background=PALETTE["warn"])
+        s.configure("UpdateBanner.TLabel",
+                    background=PALETTE["warn"], foreground=PALETTE["char_900"],
+                    font=("Segoe UI", 10, "bold"))
+        s.configure("UpdateBanner.TButton",
+                    background=PALETTE["char_900"], foreground=PALETTE["bone"],
+                    borderwidth=0, focusthickness=0, padding=(10, 4),
+                    font=("Segoe UI", 9, "bold"))
+        s.map("UpdateBanner.TButton",
+              background=[("active", PALETTE["char_700"])],
+              foreground=[("active", PALETTE["bone"])])
         s.configure("TButton",
                     background=PALETTE["char_500"], foreground=PALETTE["bone"],
                     borderwidth=0, focusthickness=0, padding=(12, 6))
@@ -344,6 +369,135 @@ class ModderApp:
     def _on_install_to_changed(self, _e=None) -> None:
         self.install_to = self.install_to_var.get()  # type: ignore[assignment]
         self.refresh_mods()
+
+    def _build_update_banner(self) -> None:
+        """Create (but don't show) the 'update available' banner. Rendered
+        beneath the header; appears only after a background check reports a
+        newer release."""
+        self.update_banner = ttk.Frame(
+            self.tk, style="UpdateBanner.TFrame", padding=(12, 6, 12, 6),
+        )
+        # Intentionally no .pack() here — shown from _show_update_banner().
+
+        self.update_banner_label_var = tk.StringVar(value="")
+        ttk.Label(
+            self.update_banner,
+            textvariable=self.update_banner_label_var,
+            style="UpdateBanner.TLabel",
+        ).pack(side=tk.LEFT)
+
+        self.btn_update_dismiss = ttk.Button(
+            self.update_banner, text="Dismiss",
+            style="UpdateBanner.TButton",
+            command=self._on_dismiss_update,
+        )
+        self.btn_update_dismiss.pack(side=tk.RIGHT, padx=(6, 0))
+
+        self.btn_update_install = ttk.Button(
+            self.update_banner, text="Install Update",
+            style="UpdateBanner.TButton",
+            command=self._on_install_update,
+        )
+        self.btn_update_install.pack(side=tk.RIGHT)
+
+    def _start_update_check(self) -> None:
+        """Spawn a background thread that does the GitHub check without
+        blocking GUI startup. Result is posted to self._update_check_queue
+        and picked up by `_drain_update_check` on the Tk thread."""
+        # Editable / source installs don't expose a working self-update path
+        # from the GUI button (the subprocess `update` command prints a hint
+        # and exits). Skip the banner entirely there — we'd just be nagging
+        # the developer.
+        if not updater.is_frozen():
+            return
+
+        def worker() -> None:
+            try:
+                release = updater.check_for_update(
+                    self.root, quiet=True, timeout=5.0,
+                )
+            except Exception:
+                release = None
+            self._update_check_queue.put(release)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _drain_update_check(self) -> None:
+        try:
+            while True:
+                release = self._update_check_queue.get_nowait()
+                if release is not None and not self._update_dismissed:
+                    self._show_update_banner(release)
+        except queue.Empty:
+            pass
+        # Poll every ~500ms for another 30s after which we stop (the check
+        # completes in one shot, so subsequent polls are harmless no-ops).
+        self.tk.after(500, self._drain_update_check)
+
+    def _show_update_banner(self, release: "updater.ReleaseInfo") -> None:
+        self._update_release = release
+        self.update_banner_label_var.set(
+            f"Update available: v{__version__} → v{release.pretty_version}"
+        )
+        # Insert the banner just after the header (which is `.pack`ed first).
+        if not self.update_banner.winfo_ismapped():
+            self.update_banner.pack(fill=tk.X, after=self._get_header_separator())
+
+    def _get_header_separator(self) -> tk.Widget:
+        """Return the 1px Sep.TFrame produced by `_build_header` so the
+        banner can be inserted just below it via `pack(..., after=...)`."""
+        # The header built two frames: the inner hdr frame and a 1px Sep
+        # separator. The separator is the last packed child before the banner
+        # would appear.
+        children = self.tk.pack_slaves()
+        # Find the most-recent Sep.TFrame.
+        for child in reversed(children):
+            try:
+                style = child.cget("style")
+            except tk.TclError:
+                continue
+            if style == "Sep.TFrame":
+                return child
+        # Fallback: just pack at current insertion point.
+        return children[0]
+
+    def _hide_update_banner(self) -> None:
+        if self.update_banner.winfo_ismapped():
+            self.update_banner.pack_forget()
+
+    def _on_dismiss_update(self) -> None:
+        self._update_dismissed = True
+        self._hide_update_banner()
+
+    def _on_install_update(self) -> None:
+        if self._busy:
+            messagebox.showinfo(
+                "Busy",
+                "Another command is already running. Wait for it to finish "
+                "before installing the update.",
+            )
+            return
+        release = self._update_release
+        if release is None:
+            return
+        pretty = release.pretty_version
+        msg = (
+            f"Download and install Necroid v{pretty}?\n\n"
+            f"Current: v{__version__}\n"
+            f"Latest:  v{pretty}\n\n"
+            f"The current binary will be replaced in place. Necroid will "
+            f"close when the update finishes — re-open it to start using "
+            f"the new version."
+        )
+        if release.html_url:
+            msg += f"\n\nRelease notes:\n{release.html_url}"
+        if not messagebox.askyesno("Install update", msg):
+            return
+        self._hide_update_banner()
+        # Delegate to the CLI — reuses step parsing and progress UI. The
+        # updater calls os._exit(0) after spawning the restart, so this
+        # subprocess ends cleanly with code 0.
+        self._run_cli(["update", "--yes"])
 
     def _build_mod_list(self) -> None:
         frame = ttk.Frame(self.tk, padding=(12, 8, 12, 0))

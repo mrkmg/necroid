@@ -79,3 +79,9 @@ class ModIncompatibility(PzModderError):
 
 class ModDependencyCycle(PzModderError):
     """Dependency graph has a cycle. Message includes the offending path."""
+
+
+class UpdateError(PzModderError):
+    """Self-updater failed: network, asset missing, permission, or a malformed
+    release zip. Raised by `necroid update`. Opportunistic background checks
+    swallow these silently (`quiet=True` paths in `updater`)."""
