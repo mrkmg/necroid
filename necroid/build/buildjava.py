@@ -8,9 +8,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import logging_util as log
-from .errors import BuildError
-from .tools import resolve
+from ..util import logging_util as log
+from ..errors import BuildError
+from ..util.tools import resolve
 
 
 def _classpath_jars(libs: Path, classpath_originals: Path) -> list[Path]:

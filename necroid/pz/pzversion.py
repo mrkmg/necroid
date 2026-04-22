@@ -24,10 +24,10 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import logging_util as log
-from .errors import PzVersionDetectError
-from .hashing import file_sha256
-from .tools import resolve
+from ..util import logging_util as log
+from ..errors import PzVersionDetectError
+from ..util.hashing import file_sha256
+from ..util.tools import resolve
 
 
 _PROBE_JAVA_REL = Path("java") / "NecroidGetPzVersion.java"

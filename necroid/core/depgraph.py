@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .errors import (
+from ..errors import (
     ModDependencyCycle,
     ModDependencyMissing,
     ModIncompatibility,
@@ -24,7 +24,7 @@ from .errors import (
     PzMajorMismatch,
 )
 from .mod import ensure_mod_exists, read_mod_json
-from .commands._resolve import resolve_mod
+from ..commands._resolve import resolve_mod
 
 
 def _canonical(mods_dir: Path, ws_major: int, name: str, *, context: str = "") -> str:

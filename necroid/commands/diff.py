@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import sys
 
-from ..mod import (
+from ..core.mod import (
     INSTALL_DESTINATIONS,
     ensure_mod_exists,
     parse_patch_filename,

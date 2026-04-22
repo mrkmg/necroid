@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .. import buildjava
-from .. import logging_util as log
+from ..build import buildjava
+from ..util import logging_util as log
 from ..errors import BuildError
-from ..hashing import file_sha256
-from ..profile import existing_subtrees
-from ..state import read_enter
+from ..util.hashing import file_sha256
+from ..core.profile import existing_subtrees
+from ..core.state import read_enter
 
 
 def run(args) -> int:

@@ -30,9 +30,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from . import __version__
-from . import logging_util as log
-from .errors import UpdateError
+from .. import __version__
+from ..util import logging_util as log
+from ..errors import UpdateError
 
 
 DEFAULT_REPO = "mrkmg/necroid"

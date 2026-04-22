@@ -5,10 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..errors import PzVersionDetectError
-from ..hashing import file_sha256
-from ..profile import require_pz_install
-from ..pzversion import detect_pz_version
-from ..state import read_state
+from ..paths import package_dir
+from ..util.hashing import file_sha256
+from ..core.profile import require_pz_install
+from ..pz.pzversion import detect_pz_version
+from ..core.state import read_state
 
 
 def run(args) -> int:
@@ -24,7 +25,7 @@ def run(args) -> int:
     content_dir = p.content_dir_for(install_to)
     try:
         detected = str(detect_pz_version(
-            content_dir, Path(__file__).resolve().parent.parent, p.root / "data"))
+            content_dir, package_dir(), p.root / "data"))
     except PzVersionDetectError as e:
         detected = None
         print(f"  (could not detect {install_to} install version: {e})")

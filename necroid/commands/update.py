@@ -6,8 +6,8 @@ binary swap, restart) lives there.
 from __future__ import annotations
 
 from .. import __version__
-from .. import logging_util as log
-from .. import updater
+from ..util import logging_util as log
+from ..remote import updater
 from ..errors import UpdateError
 
 

@@ -19,8 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from .errors import ModImportError
-from .mod import ModJson
+from ..errors import ModImportError
+from ..core.mod import ModJson
 from .updater import _USER_AGENT, _http_download
 
 
@@ -303,7 +303,7 @@ def discover_mods(extracted_root: Path) -> list[DiscoveredMod]:
 
 
 def _load_discovered(root: Path, subdir: str) -> DiscoveredMod:
-    from .mod import parse_mod_dirname
+    from ..core.mod import parse_mod_dirname
 
     src = root if subdir == "" else (root / subdir)
     try:

@@ -19,8 +19,8 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .fsops import empty_dir
-from .mod import PatchItem, ensure_mod_exists, patch_items
+from ..util.fsops import empty_dir
+from ..core.mod import PatchItem, ensure_mod_exists, patch_items
 from .patching import git_apply_file, git_merge_file, patched_theirs_file
 
 

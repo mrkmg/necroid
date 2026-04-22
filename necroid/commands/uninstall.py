@@ -2,12 +2,12 @@
 removes named mods from that destination's stack and rebuilds."""
 from __future__ import annotations
 
-from .. import logging_util as log
-from ..config import read_config
-from ..depgraph import reverse_dependents
+from ..util import logging_util as log
+from ..core.config import read_config
+from ..core.depgraph import reverse_dependents
 from ..errors import ModDependencyMissing, ModNotFound, PzMajorMismatch
-from ..install import install_stack, uninstall_all
-from ..state import read_state
+from ..build.install import install_stack, uninstall_all
+from ..core.state import read_state
 from ._resolve import resolve_mod
 
 

@@ -19,18 +19,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from .. import logging_util as log
-from ..config import read_config
+from ..util import logging_util as log
+from ..core.config import read_config
 from ..errors import ConfigError, ModNotFound, ModUpdateError
-from ..fsops import ensure_dir
-from ..github import (
+from ..util.fsops import ensure_dir
+from ..remote.github import (
     DiscoveredMod,
     discover_mods,
     download_repo_zip,
     extract_archive,
     resolve_commit_sha,
 )
-from ..mod import (
+from ..core.mod import (
     list_mods,
     mod_base_name,
     mod_dirname,
@@ -41,8 +41,8 @@ from ..mod import (
     write_mod_json,
     write_origin,
 )
-from ..state import read_enter, utc_now_iso
-from ..updater import parse_version
+from ..core.state import read_enter, utc_now_iso
+from ..remote.updater import parse_version
 
 
 CACHE_FILENAME = ".update-cache-mods.json"
@@ -315,7 +315,7 @@ def _process_one(*, t: _Target, by_subdir: dict, profile, ws_major: int,
     staging = profile.mods_dir / (t.dirname + ".new")
     if staging.exists():
         shutil.rmtree(staging, ignore_errors=True)
-    from ..github import copy_mod_tree
+    from ..remote.github import copy_mod_tree
     copy_mod_tree(dm.src_path, staging)
 
     # Compose new mod.json — preserve some local fields, take others from upstream.

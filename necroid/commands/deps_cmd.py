@@ -13,16 +13,16 @@ stored bare; resolution happens at enter/install/capture time.
 """
 from __future__ import annotations
 
-from .. import logging_util as log
-from ..config import read_config
-from ..depgraph import resolve_deps
+from ..util import logging_util as log
+from ..core.config import read_config
+from ..core.depgraph import resolve_deps
 from ..errors import (
     ConfigError,
     ModDependencyCycle,
     ModNotFound,
     PzMajorMismatch,
 )
-from ..mod import ensure_mod_exists, mod_base_name, read_mod_json, write_mod_json
+from ..core.mod import ensure_mod_exists, mod_base_name, read_mod_json, write_mod_json
 from ._resolve import resolve_mod
 
 

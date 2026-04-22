@@ -14,16 +14,17 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from . import logging_util as log
-from .config import read_config
-from .errors import BuildError, ClientOnlyViolation, ConflictError, PzMajorMismatch, PzVersionDetectError
-from .fsops import empty_dir, inner_class_files, mirror_tree
-from .hashing import file_sha256
-from .mod import ensure_mod_exists, mod_major, parse_mod_dirname, read_mod_json
-from .profile import Profile, existing_subtrees, require_pz_install
-from .pzversion import PzVersion, detect_pz_version
+from ..paths import package_dir
+from ..util import logging_util as log
+from ..core.config import read_config
+from ..errors import BuildError, ClientOnlyViolation, ConflictError, PzMajorMismatch, PzVersionDetectError
+from ..util.fsops import empty_dir, inner_class_files, mirror_tree
+from ..util.hashing import file_sha256
+from ..core.mod import ensure_mod_exists, mod_major, parse_mod_dirname, read_mod_json
+from ..core.profile import Profile, existing_subtrees, require_pz_install
+from ..pz.pzversion import PzVersion, detect_pz_version
 from .stackapply import apply_stack
-from .state import InstalledEntry, ModState, read_state, reset_state, utc_now_iso, write_state
+from ..core.state import InstalledEntry, ModState, read_state, reset_state, utc_now_iso, write_state
 from . import buildjava
 
 
@@ -175,8 +176,7 @@ def _detect_and_enforce_pz_version(profile: Profile, content_dir: Path, install_
     Returns the detected `PzVersion` (stored in ModState) or raises on a
     hard failure."""
     try:
-        necroid_pkg = Path(__file__).resolve().parent
-        detected = detect_pz_version(content_dir, necroid_pkg, profile.root / "data")
+        detected = detect_pz_version(content_dir, package_dir(), profile.root / "data")
     except PzVersionDetectError as e:
         raise PzVersionDetectError(
             f"cannot install to {install_to}: {e}\n"

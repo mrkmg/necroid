@@ -15,15 +15,15 @@ from __future__ import annotations
 
 import shutil
 
-from .. import logging_util as log
-from ..config import read_config
-from ..depgraph import effective_client_only, resolve_deps, validate_incompat
+from ..util import logging_util as log
+from ..core.config import read_config
+from ..core.depgraph import effective_client_only, resolve_deps, validate_incompat
 from ..errors import ClientOnlyViolation, ConflictError
-from ..fsops import mirror_tree
-from ..mod import ensure_mod_exists, read_mod_json
-from ..profile import existing_subtrees
-from ..stackapply import apply_stack
-from ..state import write_enter
+from ..util.fsops import mirror_tree
+from ..core.mod import ensure_mod_exists, read_mod_json
+from ..core.profile import existing_subtrees
+from ..build.stackapply import apply_stack
+from ..core.state import write_enter
 from ._resolve import resolve_mod
 
 

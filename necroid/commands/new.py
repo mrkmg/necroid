@@ -7,11 +7,11 @@ The mod dir always carries the workspace major as a suffix. Callers may:
 """
 from __future__ import annotations
 
-from .. import logging_util as log
-from ..config import read_config
+from ..util import logging_util as log
+from ..core.config import read_config
 from ..errors import ConfigError, ModAlreadyExists, ModNotFound, PzMajorMismatch
-from ..fsops import ensure_dir
-from ..mod import mod_base_name, mod_dirname, new_mod_json, parse_mod_dirname, write_mod_json
+from ..util.fsops import ensure_dir
+from ..core.mod import mod_base_name, mod_dirname, new_mod_json, parse_mod_dirname, write_mod_json
 from ._resolve import resolve_mod
 
 

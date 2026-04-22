@@ -12,9 +12,9 @@ from __future__ import annotations
 import shutil
 from argparse import Namespace
 
-from .. import logging_util as log
-from ..config import read_config
-from ..depgraph import resolve_deps
+from ..util import logging_util as log
+from ..core.config import read_config
+from ..core.depgraph import resolve_deps
 from ..errors import (
     ConfigError,
     ModDependencyCycle,
@@ -22,14 +22,15 @@ from ..errors import (
     PzMajorMismatch,
     PzVersionDetectError,
 )
-from ..fsops import empty_dir, mirror_tree
-from ..install import uninstall_all
-from ..mod import list_mods, patch_items, pristine_snapshot, read_mod_json, write_mod_json
-from ..patching import patched_theirs_file
-from ..profile import existing_subtrees, require_pz_install
-from ..pzversion import detect_pz_version
-from ..stackapply import apply_stack
-from ..state import read_state
+from ..paths import package_dir
+from ..util.fsops import empty_dir, mirror_tree
+from ..build.install import uninstall_all
+from ..core.mod import list_mods, patch_items, pristine_snapshot, read_mod_json, write_mod_json
+from ..build.patching import patched_theirs_file
+from ..core.profile import existing_subtrees, require_pz_install
+from ..pz.pzversion import detect_pz_version
+from ..build.stackapply import apply_stack
+from ..core.state import read_state
 from . import init as init_cmd
 
 
@@ -78,7 +79,7 @@ def run(args) -> int:
     try:
         detected = detect_pz_version(
             src_content,
-            __import__("pathlib").Path(__file__).resolve().parent.parent,
+            package_dir(),
             args.root / "data",
         )
     except PzVersionDetectError as e:

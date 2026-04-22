@@ -4,8 +4,8 @@ Default: filters to the workspace major (mods whose dir ends `-<workspaceMajor>`
 Pass `--all` to include cross-major and unversioned legacy dirs, annotated."""
 from __future__ import annotations
 
-from ..config import read_config
-from ..mod import list_mods, mod_base_name, mod_major, patch_items, read_mod_json
+from ..core.config import read_config
+from ..core.mod import list_mods, mod_base_name, mod_major, patch_items, read_mod_json
 
 
 def run(args) -> int:

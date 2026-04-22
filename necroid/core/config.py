@@ -35,7 +35,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .errors import ConfigError
+from ..errors import ConfigError
 
 CONFIG_VERSION = 1
 

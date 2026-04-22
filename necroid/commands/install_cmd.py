@@ -6,13 +6,13 @@ merged stack atomically.
 """
 from __future__ import annotations
 
-from .. import logging_util as log
-from ..config import read_config
-from ..depgraph import expand_stack, validate_incompat
+from ..util import logging_util as log
+from ..core.config import read_config
+from ..core.depgraph import expand_stack, validate_incompat
 from ..errors import ClientOnlyViolation
-from ..install import install_stack
-from ..mod import ensure_mod_exists, read_mod_json
-from ..state import read_state
+from ..build.install import install_stack
+from ..core.mod import ensure_mod_exists, read_mod_json
+from ..core.state import read_state
 from ._resolve import resolve_mod
 
 

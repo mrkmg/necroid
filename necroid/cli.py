@@ -20,10 +20,10 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from . import logging_util as log
-from .config import read_config
+from .util import logging_util as log
+from .core.config import read_config
 from .errors import ConfigError, PzModderError
-from .profile import find_root, load_profile, resolve_install_to, resolve_source
+from .core.profile import find_root, load_profile, resolve_install_to, resolve_source
 from .commands import (
     capture as capture_cmd,
     clean as clean_cmd,
@@ -44,7 +44,7 @@ from .commands import (
     update as update_cmd,
     verify as verify_cmd,
 )
-from . import updater
+from .remote import updater
 
 
 def _build_parser() -> argparse.ArgumentParser:

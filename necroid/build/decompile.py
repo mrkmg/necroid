@@ -6,9 +6,9 @@ import subprocess
 import urllib.request
 from pathlib import Path
 
-from . import logging_util as log
-from .fsops import empty_dir, ensure_dir
-from .tools import resolve
+from ..util import logging_util as log
+from ..util.fsops import empty_dir, ensure_dir
+from ..util.tools import resolve
 
 VINEFLOWER_VERSION = "1.11.1"
 VINEFLOWER_URL = (

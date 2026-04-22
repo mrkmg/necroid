@@ -21,21 +21,22 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .. import logging_util as log
-from ..config import ModConfig, config_path, read_config, write_config
-from ..decompile import ensure_vineflower, decompile_all
+from ..util import logging_util as log
+from ..core.config import ModConfig, config_path, read_config, write_config
+from ..build.decompile import ensure_vineflower, decompile_all
 from ..errors import ConfigError, PzVersionDetectError
-from ..fsops import ensure_dir, mirror_tree
-from ..hashing import file_sha256
-from ..profile import PZ_CLASS_SUBTREES, autodetect_server_install, load_profile
-from ..pzversion import detect_pz_version
-from ..steam_discovery import discover_client_install
-from ..tools import check_all, resolve
+from ..util.fsops import ensure_dir, mirror_tree
+from ..util.hashing import file_sha256
+from ..core.profile import PZ_CLASS_SUBTREES, autodetect_server_install, load_profile
+from ..pz.pzversion import detect_pz_version
+from ..pz.steam_discovery import discover_client_install
+from ..paths import package_dir
+from ..util.tools import check_all, resolve
 
 
 def _resolve_pz_install(source: str, existing: Path | None, flag: str | None, root: Path) -> Path:
     if flag:
-        from ..config import expand_config_path
+        from ..core.config import expand_config_path
         p = expand_config_path(flag, root)
         if p is None:
             raise ConfigError(f"could not resolve --pz-install '{flag}'")
@@ -142,7 +143,7 @@ def run(args) -> int:
     for name, path in found.items():
         log.info(f"{name}: {path}")
 
-    log.step(f"step 3/9: vineflower.jar (v{__import__('necroid.decompile', fromlist=['VINEFLOWER_VERSION']).VINEFLOWER_VERSION})")
+    log.step(f"step 3/9: vineflower.jar (v{__import__('necroid.build.decompile', fromlist=['VINEFLOWER_VERSION']).VINEFLOWER_VERSION})")
     ensure_vineflower(root / "data" / "tools", force=args.force)
 
     # Record this install path into the config.
@@ -168,7 +169,7 @@ def run(args) -> int:
 
     log.step(f"step 7/9: detect PZ version; write {config_path(root).relative_to(root)}")
     try:
-        detected = detect_pz_version(content, Path(__file__).resolve().parent.parent, root / "data")
+        detected = detect_pz_version(content, package_dir(), root / "data")
     except PzVersionDetectError as e:
         raise ConfigError(
             f"could not detect PZ version at {content}: {e}\n"

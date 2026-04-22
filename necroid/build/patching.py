@@ -16,7 +16,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .tools import resolve
+from ..util.tools import resolve
 
 
 _GIT_ENV = ("-c", "core.autocrlf=false", "-c", "core.safecrlf=false")

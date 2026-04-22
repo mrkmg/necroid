@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import shutil
 
-from .. import logging_util as log
-from ..config import read_config
+from ..util import logging_util as log
+from ..core.config import read_config
 from ..errors import ModNotFound, PzMajorMismatch
-from ..state import clear_enter, read_enter
+from ..core.state import clear_enter, read_enter
 from ._resolve import resolve_mod
 
 

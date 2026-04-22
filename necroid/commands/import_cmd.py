@@ -25,11 +25,11 @@ import json
 import shutil
 from pathlib import Path
 
-from .. import logging_util as log
-from ..config import read_config
+from ..util import logging_util as log
+from ..core.config import read_config
 from ..errors import ConfigError, ModImportError
-from ..fsops import ensure_dir
-from ..github import (
+from ..util.fsops import ensure_dir
+from ..remote.github import (
     DiscoveredMod,
     copy_mod_tree,
     discover_mods,
@@ -39,14 +39,14 @@ from ..github import (
     resolve_commit_sha,
     resolve_default_branch,
 )
-from ..mod import (
+from ..core.mod import (
     list_mods,
     mod_base_name,
     parse_mod_dirname,
     write_mod_json,
     write_origin,
 )
-from ..state import utc_now_iso
+from ..core.state import utc_now_iso
 
 
 def run(args) -> int:

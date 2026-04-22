@@ -15,7 +15,7 @@ import re
 import sys
 from pathlib import Path
 
-from . import logging_util as log
+from ..util import logging_util as log
 
 
 STEAM_APP_ID_CLIENT = "108600"

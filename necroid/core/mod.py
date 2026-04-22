@@ -57,8 +57,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from .errors import ModJsonError, ModNotFound
-from .hashing import file_sha256, string_sha256
+from ..errors import ModJsonError, ModNotFound
+from ..util.hashing import file_sha256, string_sha256
 from .state import utc_now_iso
 
 
@@ -187,7 +187,7 @@ def read_mod_json(md: Path) -> ModJson:
     dir_parsed = parse_mod_dirname(md.name)
     if dir_parsed and mj.expected_version:
         try:
-            from .pzversion import PzVersion
+            from ..pz.pzversion import PzVersion
             ev = PzVersion.parse(mj.expected_version)
         except Exception:
             # Soft: unparseable expected_version is surfaced as a warning elsewhere,

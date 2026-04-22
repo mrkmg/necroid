@@ -6,7 +6,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from .errors import ToolMissing
+from ..errors import ToolMissing
 
 
 _HINTS_WIN = {

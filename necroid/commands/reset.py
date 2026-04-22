@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import shutil
 
-from .. import logging_util as log
+from ..util import logging_util as log
 from ..errors import ConflictError
-from ..fsops import mirror_tree
-from ..profile import existing_subtrees
-from ..stackapply import apply_stack
-from ..state import read_enter
+from ..util.fsops import mirror_tree
+from ..core.profile import existing_subtrees
+from ..build.stackapply import apply_stack
+from ..core.state import read_enter
 
 
 def run(args) -> int:

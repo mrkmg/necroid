@@ -24,13 +24,13 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from .. import logging_util as log
-from ..config import read_config
-from ..depgraph import resolve_deps
+from ..util import logging_util as log
+from ..core.config import read_config
+from ..core.depgraph import resolve_deps
 from ..errors import ConflictError
-from ..fsops import ensure_dir, empty_dir, mirror_tree
-from ..hashing import file_sha256
-from ..mod import (
+from ..util.fsops import ensure_dir, empty_dir, mirror_tree
+from ..util.hashing import file_sha256
+from ..core.mod import (
     ensure_mod_exists,
     parse_patch_filename,
     patch_items,
@@ -39,10 +39,10 @@ from ..mod import (
     read_mod_json,
     write_mod_json,
 )
-from ..patching import git_diff_no_index
-from ..profile import existing_subtrees
-from ..stackapply import apply_stack
-from ..state import read_enter, utc_now_iso
+from ..build.patching import git_diff_no_index
+from ..core.profile import existing_subtrees
+from ..build.stackapply import apply_stack
+from ..core.state import read_enter, utc_now_iso
 from ._resolve import resolve_mod
 
 

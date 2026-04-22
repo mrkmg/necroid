@@ -4,22 +4,23 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from .. import logging_util as log
-from ..config import read_config
-from ..depgraph import resolve_deps
+from ..util import logging_util as log
+from ..core.config import read_config
+from ..core.depgraph import resolve_deps
 from ..errors import (
     ModDependencyCycle,
     ModDependencyMissing,
     PzVersionDetectError,
 )
-from ..fsops import empty_dir, mirror_tree
-from ..hashing import file_sha256
-from ..mod import ensure_mod_exists, patch_items, read_mod_json
-from ..patching import patched_theirs_file
-from ..profile import existing_subtrees
-from ..pzversion import PzVersion, detect_pz_version
-from ..stackapply import apply_stack
-from ..state import read_enter, read_state
+from ..paths import package_dir
+from ..util.fsops import empty_dir, mirror_tree
+from ..util.hashing import file_sha256
+from ..core.mod import ensure_mod_exists, patch_items, read_mod_json
+from ..build.patching import patched_theirs_file
+from ..core.profile import existing_subtrees
+from ..pz.pzversion import PzVersion, detect_pz_version
+from ..build.stackapply import apply_stack
+from ..core.state import read_enter, read_state
 from ._resolve import resolve_mod
 
 
@@ -33,8 +34,7 @@ def _detect_destination_version(profile, install_to: str) -> str:
         return f"(install missing: {pz})"
     content = profile.content_dir_for(install_to)
     try:
-        from pathlib import Path
-        v = detect_pz_version(content, Path(__file__).resolve().parent.parent, profile.root / "data")
+        v = detect_pz_version(content, package_dir(), profile.root / "data")
         return str(v)
     except PzVersionDetectError as e:
         return f"(detect failed: {e})"

@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..errors import ModNotFound, PzMajorMismatch
-from ..mod import list_mods, mod_dirname, parse_mod_dirname
+from ..core.mod import list_mods, mod_dirname, parse_mod_dirname
 
 
 def resolve_mod(mods_dir: Path, workspace_major: int, user_name: str) -> str:

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Literal
 
 from .config import ModConfig, read_config
-from .errors import ConfigError
+from ..errors import ConfigError
 
 
 InstallTo = Literal["client", "server"]
@@ -184,7 +184,7 @@ def autodetect_server_install(client_install: Path | None, root: Path) -> Path |
          1. Steam-aware discovery (registry + libraryfolders.vdf, per OS).
          2. Sibling of the client install under Steam's `common/`.
          3. `<root>/pzserver`."""
-    from .steam_discovery import discover_server_install
+    from ..pz.steam_discovery import discover_server_install
     guess = discover_server_install()
     if guess:
         return guess

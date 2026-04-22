@@ -28,28 +28,28 @@ from __future__ import annotations
 
 import os
 import queue
-import re
 import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Optional
 
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from . import __version__, updater
-from .assets import HEADER_MARK, WINDOW_ICON_FULL, WINDOW_ICON_SKULL, asset_path
-from .config import read_config
-from . import markdown_render
-from .depgraph import resolve_deps, reverse_dependents
-from .errors import (
+from .. import __version__
+from ..remote import updater
+from ..assets import HEADER_MARK, WINDOW_ICON_FULL, WINDOW_ICON_SKULL, asset_path
+from ..core.config import read_config
+from ..render import markdown_render
+from ..core.depgraph import resolve_deps, reverse_dependents
+from ..errors import (
     ModDependencyCycle,
     ModDependencyMissing,
     ModIncompatibility,
     PzVersionDetectError,
 )
-from .mod import (
+from ..core.mod import (
     has_origin,
     list_mods,
     mod_base_name,
@@ -57,113 +57,17 @@ from .mod import (
     read_mod_json,
     read_origin,
 )
-from .commands.mod_update import read_cache as read_update_cache
-from .profile import load_profile
-from .pzversion import PzVersion, detect_pz_version
-from .state import read_state
-
-
-InstallTo = Literal["client", "server"]
-
-
-# Charcoal + Bone palette — sampled from the brand mark.
-PALETTE = {
-    "char_900":  "#1F1F22",
-    "char_700":  "#2B2B30",
-    "char_500":  "#3D3D44",
-    "char_300":  "#5A5A63",
-    "bone":      "#EDE6D3",
-    "bone_dim":  "#C7BFA8",
-    "accent":    "#8FA68E",
-    "warn":      "#D9A441",
-    "error":     "#C86060",
-}
-
-
-STEP_FRIENDLY = {
-    "stage source": "Preparing files…",
-    "compile": "Compiling Java classes…",
-    "restore prior": "Restoring previous mods…",
-    "copy class files to": "Writing to Project Zomboid…",
-    "resolve PZ install path": "Looking for Project Zomboid…",
-    "tools check": "Checking Java + Git…",
-    "vineflower.jar": "Downloading decompiler…",
-    "copy PZ jars": "Copying game libraries…",
-    "copy PZ class trees": "Copying game classes…",
-    "rejar class trees": "Repackaging classes…",
-    "write data/.mod-config": "Saving settings…",
-    "decompile class subtrees": "Decompiling game code (this takes a while)…",
-    "scaffold mods": "Finishing setup…",
-    "checking mod patches": "Re-checking mod patches…",
-    "downloading": "Downloading update…",
-    "extracting binary": "Extracting update…",
-    "swapping binary": "Installing update…",
-}
-
-CMD_FAILURE_TITLE = {
-    "install": "Apply changes failed",
-    "uninstall": "Apply changes failed",
-    "apply": "Apply changes failed",
-    "init": "Setup failed",
-    "resync-pristine": "Update failed",
-    "update": "Self-update failed",
-}
-
-_STEP_RE = re.compile(r"^==>\s+(?:step\s+(\d+)/(\d+):\s+)?(.+)$")
-
-
-class _Tooltip:
-    def __init__(self, widget: tk.Widget, text: str, delay_ms: int = 600):
-        self.widget = widget
-        self.text = text
-        self.delay = delay_ms
-        self._after_id: Optional[str] = None
-        self._tip: Optional[tk.Toplevel] = None
-        widget.bind("<Enter>", self._schedule, add="+")
-        widget.bind("<Leave>", self._hide, add="+")
-        widget.bind("<ButtonPress>", self._hide, add="+")
-
-    def set_text(self, text: str) -> None:
-        self.text = text
-
-    def _schedule(self, _e=None) -> None:
-        self._cancel()
-        self._after_id = self.widget.after(self.delay, self._show)
-
-    def _cancel(self) -> None:
-        if self._after_id:
-            try:
-                self.widget.after_cancel(self._after_id)
-            except Exception:
-                pass
-            self._after_id = None
-
-    def _show(self) -> None:
-        if self._tip is not None:
-            return
-        x = self.widget.winfo_rootx() + 12
-        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
-        tip = tk.Toplevel(self.widget)
-        tip.wm_overrideredirect(True)
-        tip.wm_geometry(f"+{x}+{y}")
-        tip.configure(bg=PALETTE["char_500"])
-        lbl = tk.Label(
-            tip, text=self.text,
-            bg=PALETTE["char_500"], fg=PALETTE["bone"],
-            font=("Segoe UI", 9), padx=8, pady=4,
-            justify="left",
-        )
-        lbl.pack()
-        self._tip = tip
-
-    def _hide(self, _e=None) -> None:
-        self._cancel()
-        if self._tip is not None:
-            try:
-                self._tip.destroy()
-            except Exception:
-                pass
-            self._tip = None
+from ..commands.mod_update import read_cache as read_update_cache
+from ..core.profile import load_profile
+from ..pz.pzversion import PzVersion, detect_pz_version
+from ..core.state import read_state
+from .cli_runner import CliRunner, classify_log_line, cmd_busy_headline
+from .constants import CMD_FAILURE_TITLE, InstallTo, PALETTE, STEP_FRIENDLY
+from .import_dialog import ImportDialog
+from .progress import STEP_RE as _STEP_RE, parse_step_line
+from .theme import apply_theme
+from .tooltip import Tooltip
+from .update_banner import UpdateBanner
 
 
 class ModderApp:
@@ -188,10 +92,8 @@ class ModderApp:
 
         self._apply_theme()
 
-        self._busy = False
         self._last_error: Optional[str] = None
         self._warnings: list[str] = []
-        self._current_cmd: Optional[str] = None
         self._log_expanded = False
         self._pz_mismatch_reason: Optional[str] = None
 
@@ -202,8 +104,11 @@ class ModderApp:
         self._build_status_strip()
         self._build_log()
 
-        self._log_queue: "queue.Queue[str]" = queue.Queue()
-        self.tk.after(100, self._drain_log)
+        self._runner = CliRunner(
+            self.tk, self.root,
+            on_line=self._on_cli_line,
+            on_done=self._on_done,
+        )
 
         # Update-check state.
         self._update_release: Optional["updater.ReleaseInfo"] = None
@@ -219,8 +124,6 @@ class ModderApp:
     # --- theme ---
 
     def _apply_theme(self) -> None:
-        self.tk.configure(bg=PALETTE["char_900"])
-
         try:
             self._mark_full = tk.PhotoImage(file=str(asset_path(HEADER_MARK)))
             self._mark = self._mark_full.subsample(4, 4)
@@ -230,105 +133,7 @@ class ModderApp:
         except tk.TclError:
             self._mark = None
 
-        s = ttk.Style(self.tk)
-        s.theme_use("clam")
-        s.configure(".", background=PALETTE["char_900"], foreground=PALETTE["bone"],
-                    font=("Segoe UI", 10))
-        s.configure("TFrame", background=PALETTE["char_900"])
-        s.configure("TLabel", background=PALETTE["char_900"], foreground=PALETTE["bone"])
-        s.configure("Brand.TLabel",
-                    background=PALETTE["char_900"], foreground=PALETTE["bone"],
-                    font=("Segoe UI", 18, "bold"))
-        s.configure("Pill.TLabel",
-                    background=PALETTE["char_700"], foreground=PALETTE["accent"],
-                    font=("Segoe UI", 9, "bold"), padding=(6, 2))
-        s.configure("Tagline.TLabel",
-                    background=PALETTE["char_900"], foreground=PALETTE["bone_dim"],
-                    font=("Segoe UI", 9, "italic"))
-        s.configure("StatusHeadline.TLabel",
-                    background=PALETTE["char_900"], foreground=PALETTE["bone"],
-                    font=("Segoe UI", 10))
-        s.configure("StatusDot.TLabel",
-                    background=PALETTE["char_900"], foreground=PALETTE["bone_dim"],
-                    font=("Segoe UI", 14))
-        s.configure("Disclosure.TLabel",
-                    background=PALETTE["char_900"], foreground=PALETTE["bone_dim"],
-                    font=("Segoe UI", 9))
-        s.configure("Sep.TFrame", background=PALETTE["char_500"])
-        s.configure("UpdateBanner.TFrame", background=PALETTE["warn"])
-        s.configure("UpdateBanner.TLabel",
-                    background=PALETTE["warn"], foreground=PALETTE["char_900"],
-                    font=("Segoe UI", 10, "bold"))
-        s.configure("UpdateBanner.TButton",
-                    background=PALETTE["char_900"], foreground=PALETTE["bone"],
-                    borderwidth=0, focusthickness=0, padding=(10, 4),
-                    font=("Segoe UI", 9, "bold"))
-        s.map("UpdateBanner.TButton",
-              background=[("active", PALETTE["char_700"])],
-              foreground=[("active", PALETTE["bone"])])
-        s.configure("TButton",
-                    background=PALETTE["char_500"], foreground=PALETTE["bone"],
-                    borderwidth=0, focusthickness=0, padding=(12, 6))
-        s.map("TButton",
-              background=[("active", PALETTE["char_300"]),
-                          ("disabled", PALETTE["char_700"])],
-              foreground=[("disabled", PALETTE["bone_dim"])])
-        s.configure("Primary.TButton",
-                    background=PALETTE["accent"], foreground=PALETTE["char_900"],
-                    borderwidth=0, focusthickness=0, padding=(14, 6),
-                    font=("Segoe UI", 10, "bold"))
-        s.map("Primary.TButton",
-              background=[("active", PALETTE["bone_dim"]),
-                          ("disabled", PALETTE["char_700"])],
-              foreground=[("disabled", PALETTE["bone_dim"])])
-        s.configure("Link.TButton",
-                    background=PALETTE["char_900"], foreground=PALETTE["bone_dim"],
-                    borderwidth=0, focusthickness=0, padding=(4, 2),
-                    font=("Segoe UI", 9))
-        s.map("Link.TButton",
-              background=[("active", PALETTE["char_900"])],
-              foreground=[("active", PALETTE["bone"])])
-        s.configure("Treeview",
-                    background=PALETTE["char_700"], fieldbackground=PALETTE["char_700"],
-                    foreground=PALETTE["bone"], rowheight=24, borderwidth=0)
-        s.configure("Treeview.Heading",
-                    background=PALETTE["char_500"], foreground=PALETTE["bone"],
-                    font=("Segoe UI", 10, "bold"), borderwidth=0)
-        s.map("Treeview",
-              background=[("selected", PALETTE["accent"])],
-              foreground=[("selected", PALETTE["char_900"])])
-        s.configure("Vertical.TScrollbar",
-                    background=PALETTE["char_500"], troughcolor=PALETTE["char_700"],
-                    borderwidth=0, arrowcolor=PALETTE["bone"])
-        s.configure("Horizontal.TProgressbar",
-                    background=PALETTE["accent"], troughcolor=PALETTE["char_700"],
-                    borderwidth=0, lightcolor=PALETTE["accent"],
-                    darkcolor=PALETTE["accent"])
-        s.configure("TCombobox",
-                    fieldbackground=PALETTE["char_700"], background=PALETTE["char_500"],
-                    foreground=PALETTE["bone"], arrowcolor=PALETTE["bone"],
-                    selectbackground=PALETTE["char_700"],
-                    selectforeground=PALETTE["bone"],
-                    insertcolor=PALETTE["bone"])
-        s.map("TCombobox",
-              fieldbackground=[("readonly", PALETTE["char_700"]),
-                               ("disabled", PALETTE["char_700"])],
-              foreground=[("readonly", PALETTE["bone"]),
-                          ("disabled", PALETTE["bone_dim"])],
-              selectbackground=[("readonly", PALETTE["char_700"])],
-              selectforeground=[("readonly", PALETTE["bone"])],
-              arrowcolor=[("disabled", PALETTE["bone_dim"])])
-
-        # The dropdown listbox is a plain tk.Listbox owned by the Combobox
-        # popdown toplevel — ttk.Style doesn't reach it. Configure via the
-        # option database instead.
-        self.tk.option_add("*TCombobox*Listbox.background", PALETTE["char_700"])
-        self.tk.option_add("*TCombobox*Listbox.foreground", PALETTE["bone"])
-        self.tk.option_add("*TCombobox*Listbox.selectBackground", PALETTE["accent"])
-        self.tk.option_add("*TCombobox*Listbox.selectForeground", PALETTE["char_900"])
-        self.tk.option_add("*TCombobox*Listbox.font", ("Segoe UI", 10))
-        self.tk.option_add("*TCombobox*Listbox.borderWidth", 0)
-        self.tk.option_add("*TCombobox*Listbox.relief", "flat")
+        apply_theme(self.tk)
 
     # --- layout ---
 
@@ -368,21 +173,21 @@ class ModderApp:
         self.btn_init = ttk.Button(right, text="Set Up", style="Primary.TButton",
                                    command=self.on_init)
         self.btn_init.pack(side=tk.LEFT)
-        _Tooltip(self.btn_init,
+        Tooltip(self.btn_init,
                  "First-time setup copies game files into this folder so mods\n"
                  "can be built. After setup, this re-syncs when the game updates.")
 
         self.btn_check_updates = ttk.Button(right, text="Check Updates",
                                             command=self.on_check_updates)
         self.btn_check_updates.pack(side=tk.LEFT, padx=(8, 0))
-        _Tooltip(self.btn_check_updates,
+        Tooltip(self.btn_check_updates,
                  "Query GitHub for newer versions of every imported mod.\n"
                  "Results decorate the Version column with ⬆ badges.")
 
         self.btn_import = ttk.Button(right, text="Import…",
                                      command=self.on_import_clicked)
         self.btn_import.pack(side=tk.LEFT, padx=(8, 0))
-        _Tooltip(self.btn_import,
+        Tooltip(self.btn_import,
                  "Pull mods from a GitHub repository.\n"
                  "Single-mod and multi-mod repos both supported.")
 
@@ -396,31 +201,11 @@ class ModderApp:
         """Create (but don't show) the 'update available' banner. Rendered
         beneath the header; appears only after a background check reports a
         newer release."""
-        self.update_banner = ttk.Frame(
-            self.tk, style="UpdateBanner.TFrame", padding=(12, 6, 12, 6),
+        self.update_banner = UpdateBanner(
+            self.tk,
+            on_install=self._on_install_update,
+            on_dismiss=self._on_dismiss_update,
         )
-        # Intentionally no .pack() here — shown from _show_update_banner().
-
-        self.update_banner_label_var = tk.StringVar(value="")
-        ttk.Label(
-            self.update_banner,
-            textvariable=self.update_banner_label_var,
-            style="UpdateBanner.TLabel",
-        ).pack(side=tk.LEFT)
-
-        self.btn_update_dismiss = ttk.Button(
-            self.update_banner, text="Dismiss",
-            style="UpdateBanner.TButton",
-            command=self._on_dismiss_update,
-        )
-        self.btn_update_dismiss.pack(side=tk.RIGHT, padx=(6, 0))
-
-        self.btn_update_install = ttk.Button(
-            self.update_banner, text="Install Update",
-            style="UpdateBanner.TButton",
-            command=self._on_install_update,
-        )
-        self.btn_update_install.pack(side=tk.RIGHT)
 
     def _start_update_check(self) -> None:
         """Spawn a background thread that does the GitHub check without
@@ -458,12 +243,10 @@ class ModderApp:
 
     def _show_update_banner(self, release: "updater.ReleaseInfo") -> None:
         self._update_release = release
-        self.update_banner_label_var.set(
-            f"Update available: v{__version__} → v{release.pretty_version}"
+        self.update_banner.show(
+            f"Update available: v{__version__} → v{release.pretty_version}",
+            after=self._get_header_separator(),
         )
-        # Insert the banner just after the header (which is `.pack`ed first).
-        if not self.update_banner.winfo_ismapped():
-            self.update_banner.pack(fill=tk.X, after=self._get_header_separator())
 
     def _get_header_separator(self) -> tk.Widget:
         """Return the 1px Sep.TFrame produced by `_build_header` so the
@@ -483,16 +266,12 @@ class ModderApp:
         # Fallback: just pack at current insertion point.
         return children[0]
 
-    def _hide_update_banner(self) -> None:
-        if self.update_banner.winfo_ismapped():
-            self.update_banner.pack_forget()
-
     def _on_dismiss_update(self) -> None:
         self._update_dismissed = True
-        self._hide_update_banner()
+        self.update_banner.hide()
 
     def _on_install_update(self) -> None:
-        if self._busy:
+        if self._runner.busy:
             messagebox.showinfo(
                 "Busy",
                 "Another command is already running. Wait for it to finish "
@@ -515,7 +294,7 @@ class ModderApp:
             msg += f"\n\nRelease notes:\n{release.html_url}"
         if not messagebox.askyesno("Install update", msg):
             return
-        self._hide_update_banner()
+        self.update_banner.hide()
         # Delegate to the CLI — reuses step parsing and progress UI. The
         # updater calls os._exit(0) after spawning the restart, so this
         # subprocess ends cleanly with code 0.
@@ -563,14 +342,14 @@ class ModderApp:
         ft.pack(fill=tk.X)
         btn_refresh = ttk.Button(ft, text="Refresh", command=self.refresh_mods)
         btn_refresh.pack(side=tk.LEFT)
-        _Tooltip(btn_refresh, "Reload the mod list from disk and reset the\n"
+        Tooltip(btn_refresh, "Reload the mod list from disk and reset the\n"
                               "selection to what's actually installed.")
 
         self.btn_apply = ttk.Button(ft, text="Apply Changes",
                                     style="Primary.TButton",
                                     command=self.on_apply_changes)
         self.btn_apply.pack(side=tk.RIGHT)
-        _Tooltip(self.btn_apply,
+        Tooltip(self.btn_apply,
                  "Reconcile the installed stack on the chosen destination to\n"
                  "match what's checked here: installs added mods, uninstalls\n"
                  "removed ones. Atomic — nothing changes in the game install\n"
@@ -578,7 +357,7 @@ class ModderApp:
 
         self.btn_revert = ttk.Button(ft, text="Revert", command=self.on_revert)
         self.btn_revert.pack(side=tk.RIGHT, padx=(0, 6))
-        _Tooltip(self.btn_revert,
+        Tooltip(self.btn_revert,
                  "Discard pending check/uncheck edits and re-seed the\n"
                  "selection from the currently installed stack.")
 
@@ -636,7 +415,7 @@ class ModderApp:
         self.btn_copy = ttk.Button(bar, text="Copy log", style="Link.TButton",
                                    command=self._copy_log)
         self.btn_copy.pack(side=tk.RIGHT)
-        _Tooltip(self.btn_copy, "Copy the full log to the clipboard.")
+        Tooltip(self.btn_copy, "Copy the full log to the clipboard.")
 
         self.log_body = ttk.Frame(self.tk, padding=(12, 4, 12, 10))
 
@@ -956,7 +735,7 @@ class ModderApp:
     def _update_apply_button_state(self) -> None:
         if not hasattr(self, "btn_apply"):
             return
-        if self._busy:
+        if self._runner.busy:
             return  # _set_buttons owns state while busy.
         # PZ major mismatch (workspace vs destination install) hard-disables Apply.
         if self._pz_mismatch_reason:
@@ -1131,64 +910,23 @@ class ModderApp:
     # --- actions ---
 
     def _run_cli(self, args: list[str]) -> None:
-        if self._busy:
+        if self._runner.busy:
             messagebox.showinfo("Busy", "Another command is already running.")
             return
-        self._busy = True
         self._last_error = None
         self._warnings = []
-        self._current_cmd = args[0] if args else None
         self._set_buttons(False)
         self._reset_log()
         self._log(f"$ necroid {' '.join(args)}", tag="info")
-        self._set_status("busy", self._cmd_busy_headline(), progress="indeterminate")
+        self._runner.start(args)
+        self._set_status("busy", cmd_busy_headline(self._runner.current_cmd),
+                         progress="indeterminate")
 
-        def worker():
-            base_args = ["--root", str(self.root), *args]
-            env = os.environ.copy()
-            if getattr(sys, "frozen", False):
-                cmd = [sys.executable, *base_args]
-            else:
-                cmd = [sys.executable, "-m", "necroid", *base_args]
-                pkg_parent = str(Path(__file__).resolve().parent.parent)
-                env["PYTHONPATH"] = pkg_parent + os.pathsep + env.get("PYTHONPATH", "")
-            popen_kwargs: dict = {}
-            if sys.platform == "win32":
-                popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-            try:
-                proc = subprocess.Popen(
-                    cmd, cwd=str(self.root),
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, bufsize=1,
-                    env=env,
-                    **popen_kwargs,
-                )
-                assert proc.stdout is not None
-                for line in proc.stdout:
-                    self._log_queue.put(line.rstrip("\n"))
-                code = proc.wait()
-            except Exception as e:
-                self._log_queue.put(f"ERROR: {e}")
-                code = 99
-            self._log_queue.put(f"[exit {code}]")
-            self.tk.after(0, self._on_done, code)
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _cmd_busy_headline(self) -> str:
-        cmd = self._current_cmd or ""
-        if cmd == "install":
-            return "Installing…"
-        if cmd == "uninstall":
-            return "Uninstalling…"
-        if cmd == "init":
-            return "Setting up (this can take several minutes)…"
-        if cmd == "resync-pristine":
-            return "Updating from the game (this can take several minutes)…"
-        return f"Running {cmd}…" if cmd else "Working…"
+    def _on_cli_line(self, line: str) -> None:
+        self._parse_status_line(line)
+        self._log(line)
 
     def _on_done(self, code: int) -> None:
-        self._busy = False
         # On failure, keep the user's pending edits so they can correct and
         # retry. Install is atomic, so state on disk is unchanged — but still
         # re-read it to surface any CLI-side changes.
@@ -1207,10 +945,9 @@ class ModderApp:
             if not self._log_expanded:
                 self._toggle_log()
             self._show_failure_dialog(code)
-        self._current_cmd = None
 
     def _show_failure_dialog(self, code: int) -> None:
-        title = CMD_FAILURE_TITLE.get(self._current_cmd or "", "Command failed")
+        title = CMD_FAILURE_TITLE.get(self._runner.current_cmd or "", "Command failed")
         body = self._last_error or f"The command exited with code {code}."
         dlg = tk.Toplevel(self.tk)
         dlg.title(title)
@@ -1351,20 +1088,20 @@ class ModderApp:
     # --- import / mod-update integration ---
 
     def on_import_clicked(self) -> None:
-        if self._busy:
+        if self._runner.busy:
             return
-        _ImportDialog(self)
+        ImportDialog(self)
 
     def on_check_updates(self) -> None:
         """Run `mod-update --check` in the background to refresh the cache,
         then redraw rows. Uses the same _run_cli pipeline so log output streams
         into the existing log pane and failure surfaces via the failure dialog."""
-        if self._busy:
+        if self._runner.busy:
             return
         self._run_cli(["mod-update", "--check"])
 
     def on_update_all(self) -> None:
-        if self._busy:
+        if self._runner.busy:
             return
         n = int(getattr(self, "_outdated_count", 0) or 0)
         if n <= 0:
@@ -1382,7 +1119,7 @@ class ModderApp:
         row = self.tv.identify_row(event.y)
         if not row:
             return
-        if self._busy:
+        if self._runner.busy:
             return
         mj = (getattr(self, "_mj_by_name", {}) or {}).get(row)
         if mj is None:
@@ -1395,8 +1132,8 @@ class ModderApp:
         is_imported = bool(origin)
         # Currently-entered guard.
         try:
-            from .state import read_enter
-            from .profile import load_profile as _load
+            from ..core.state import read_enter
+            from ..core.profile import load_profile as _load
             cfg = read_config(self.root, required=False)
             prof = _load(self.root, cfg=cfg) if cfg else _load(self.root)
             entered = read_enter(prof.enter_file)
@@ -1606,7 +1343,7 @@ class ModderApp:
         self.log_text.configure(state=tk.DISABLED)
 
     def _log(self, msg: str, tag: Optional[str] = None) -> None:
-        display, resolved_tag = self._classify_log_line(msg) if tag is None else (msg, tag)
+        display, resolved_tag = classify_log_line(msg) if tag is None else (msg, tag)
         self.log_text.configure(state=tk.NORMAL)
         if resolved_tag:
             self.log_text.insert(tk.END, display + "\n", resolved_tag)
@@ -1615,33 +1352,6 @@ class ModderApp:
         self.log_text.see(tk.END)
         self.log_text.configure(state=tk.DISABLED)
 
-    def _classify_log_line(self, raw: str) -> tuple[str, Optional[str]]:
-        if raw.startswith("==> "):
-            return (raw[len("==> "):], "step")
-        if raw.startswith("ERROR:"):
-            return (raw, "error")
-        stripped = raw.lstrip()
-        if stripped.startswith("WARN:"):
-            return (stripped, "warn")
-        if raw.startswith("[exit "):
-            return (raw, "info" if raw == "[exit 0]" else "error")
-        if raw.startswith("$ "):
-            return (raw, "info")
-        low = raw.lower()
-        if "complete" in low or low.startswith("done."):
-            return (raw, "success")
-        return (raw, None)
-
-    def _drain_log(self) -> None:
-        try:
-            while True:
-                line = self._log_queue.get_nowait()
-                self._parse_status_line(line)
-                self._log(line)
-        except queue.Empty:
-            pass
-        self.tk.after(80, self._drain_log)
-
     def run(self) -> int:
         self.tk.mainloop()
         return 0
@@ -1649,356 +1359,3 @@ class ModderApp:
 
 def launch(root: Path, initial_install_to: InstallTo) -> int:
     return ModderApp(root=root, initial_install_to=initial_install_to).run()
-
-
-# ---------------------------------------------------------------------------
-# Import dialog — two-stage (Discover → Select)
-# ---------------------------------------------------------------------------
-
-class _ImportDialog:
-    """Modal that walks the user through:
-        1. enter repo URL / ref → run `import --list --json` to discover
-        2. select which mods to pull (multi-select treeview)
-        3. submit → dispatches `import` via the parent's _run_cli pipeline.
-
-    Long-running ops (discovery + import) run in worker threads. UI updates
-    happen on the Tk thread via `after()`.
-    """
-
-    def __init__(self, app: "ModderApp") -> None:
-        self.app = app
-        self.discovered: list[dict] = []
-        self.workspace_major: int = int(getattr(app, "_ws_major", 0) or 0)
-        # Stage 2 state.
-        self._row_check_vars: dict[str, tk.BooleanVar] = {}
-        self._row_major_ok: dict[str, bool] = {}
-
-        self.dlg = tk.Toplevel(app.tk)
-        self.dlg.title("Import mods from GitHub")
-        self.dlg.transient(app.tk)
-        self.dlg.configure(bg=PALETTE["char_900"])
-        self.dlg.geometry("640x520")
-
-        # --- Stage 1 (always present) ---
-        self.stage1 = ttk.Frame(self.dlg, padding=(16, 14, 16, 8))
-        self.stage1.pack(fill=tk.X)
-
-        ttk.Label(self.stage1, text="Repository", style="Brand.TLabel").pack(anchor="w")
-        ttk.Label(self.stage1,
-                  text="owner/repo, or any github.com URL "
-                       "(optionally including /tree/<branch>).",
-                  style="Tagline.TLabel", wraplength=600).pack(anchor="w", pady=(0, 6))
-
-        self.repo_var = tk.StringVar()
-        self.repo_var.trace_add("write", lambda *a: self._validate_repo())
-        self.repo_entry = ttk.Entry(self.stage1, textvariable=self.repo_var, width=60)
-        self.repo_entry.pack(anchor="w", fill=tk.X, pady=(0, 4))
-
-        self.repo_hint_var = tk.StringVar(value="")
-        self.repo_hint = ttk.Label(self.stage1, textvariable=self.repo_hint_var,
-                                   style="Tagline.TLabel", foreground=PALETTE["error"])
-        self.repo_hint.pack(anchor="w")
-
-        ref_row = ttk.Frame(self.stage1)
-        ref_row.pack(anchor="w", fill=tk.X, pady=(8, 0))
-        ttk.Label(ref_row, text="Branch / tag (optional):",
-                  style="Tagline.TLabel").pack(side=tk.LEFT)
-        self.ref_var = tk.StringVar()
-        ttk.Entry(ref_row, textvariable=self.ref_var, width=30).pack(
-            side=tk.LEFT, padx=(8, 0))
-
-        # --- Stage 2 container (hidden until Discover succeeds) ---
-        self.stage2_wrap = ttk.Frame(self.dlg, padding=(16, 8, 16, 8))
-        # Not packed yet.
-
-        # --- Footer (buttons + spinner) ---
-        self.footer = ttk.Frame(self.dlg, padding=(16, 8, 16, 14))
-        self.footer.pack(side=tk.BOTTOM, fill=tk.X)
-
-        self.spinner = ttk.Progressbar(self.footer, mode="indeterminate", length=120)
-        # not packed initially
-
-        self.btn_cancel = ttk.Button(self.footer, text="Cancel",
-                                     command=self.dlg.destroy)
-        self.btn_cancel.pack(side=tk.LEFT)
-
-        self.btn_back = ttk.Button(self.footer, text="Back",
-                                   command=self._back_to_stage1)
-        # not packed initially
-
-        self.btn_primary = ttk.Button(self.footer, text="Discover",
-                                      style="Primary.TButton",
-                                      command=self._on_discover)
-        self.btn_primary.pack(side=tk.RIGHT)
-        self.btn_primary.configure(state=tk.DISABLED)
-
-        # Inline error banner (shown if discovery / import fails).
-        self.error_var = tk.StringVar(value="")
-        self.error_label = ttk.Label(self.dlg, textvariable=self.error_var,
-                                     style="Tagline.TLabel",
-                                     foreground=PALETTE["error"],
-                                     wraplength=600, padding=(16, 0, 16, 0))
-        # Not packed unless an error occurs.
-
-        self._discover_queue: queue.Queue = queue.Queue()
-        self._import_queue: queue.Queue = queue.Queue()
-
-        self.repo_entry.focus_set()
-
-    # ---- Stage 1: validate + discover ----
-
-    def _validate_repo(self) -> None:
-        raw = self.repo_var.get().strip()
-        if not raw:
-            self.repo_hint_var.set("")
-            self.btn_primary.configure(state=tk.DISABLED)
-            return
-        try:
-            from .github import parse_github_ref
-            parse_github_ref(raw)
-            self.repo_hint_var.set("")
-            self.btn_primary.configure(state=tk.NORMAL)
-        except Exception as e:
-            self.repo_hint_var.set(str(e))
-            self.btn_primary.configure(state=tk.DISABLED)
-
-    def _on_discover(self) -> None:
-        self._clear_error()
-        self.btn_primary.configure(state=tk.DISABLED, text="Discovering…")
-        self.spinner.pack(side=tk.RIGHT, padx=(0, 8))
-        self.spinner.start(80)
-
-        repo = self.repo_var.get().strip()
-        ref = self.ref_var.get().strip()
-        args = ["import", repo, "--list", "--json"]
-        if ref:
-            args.extend(["--ref", ref])
-
-        def worker():
-            base_args = ["--root", str(self.app.root), *args]
-            env = os.environ.copy()
-            if getattr(sys, "frozen", False):
-                cmd = [sys.executable, *base_args]
-            else:
-                cmd = [sys.executable, "-m", "necroid", *base_args]
-                pkg_parent = str(Path(__file__).resolve().parent.parent)
-                env["PYTHONPATH"] = pkg_parent + os.pathsep + env.get("PYTHONPATH", "")
-            popen_kwargs: dict = {}
-            if sys.platform == "win32":
-                popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-            try:
-                proc = subprocess.run(
-                    cmd, cwd=str(self.app.root),
-                    capture_output=True, text=True, env=env, **popen_kwargs,
-                )
-            except Exception as e:
-                self._discover_queue.put({"ok": False, "error": str(e)})
-                return
-            if proc.returncode != 0:
-                self._discover_queue.put({
-                    "ok": False,
-                    "error": (proc.stderr or proc.stdout or "command failed").strip(),
-                })
-                return
-            try:
-                payload = __import__("json").loads(proc.stdout)
-            except Exception as e:
-                self._discover_queue.put({
-                    "ok": False,
-                    "error": f"could not parse discovery output: {e}",
-                })
-                return
-            self._discover_queue.put({"ok": True, "payload": payload})
-
-        threading.Thread(target=worker, daemon=True).start()
-        self.dlg.after(120, self._poll_discover)
-
-    def _poll_discover(self) -> None:
-        try:
-            r = self._discover_queue.get_nowait()
-        except queue.Empty:
-            self.dlg.after(120, self._poll_discover)
-            return
-        self.spinner.stop()
-        self.spinner.pack_forget()
-        self.btn_primary.configure(text="Discover", state=tk.NORMAL)
-        if not r.get("ok"):
-            self._show_error(r.get("error") or "discovery failed")
-            return
-        payload = r["payload"]
-        self.discovered = list(payload.get("mods") or [])
-        self.workspace_major = int(payload.get("workspaceMajor") or self.workspace_major)
-        if not self.discovered:
-            self._show_error("repo contains no importable mods")
-            return
-        self._build_stage2()
-
-    # ---- Stage 2: select + import ----
-
-    def _build_stage2(self) -> None:
-        self.stage1.pack_forget()
-        for child in self.stage2_wrap.winfo_children():
-            child.destroy()
-        self.stage2_wrap.pack(fill=tk.BOTH, expand=True, after=None)
-
-        repo = self.repo_var.get().strip()
-        ref = self.ref_var.get().strip() or "(default branch)"
-        ttk.Label(self.stage2_wrap,
-                  text=f"{repo} @ {ref} — {len(self.discovered)} mod(s)",
-                  style="Brand.TLabel").pack(anchor="w")
-        ttk.Label(self.stage2_wrap,
-                  text=f"Workspace major: {self.workspace_major}. "
-                       "Mods that don't match the workspace major are disabled.",
-                  style="Tagline.TLabel", wraplength=600).pack(anchor="w", pady=(0, 8))
-
-        # Treeview with checkboxes (simulated via the first column).
-        cols = ("check", "subdir", "name", "version", "kind", "expected")
-        tv = ttk.Treeview(self.stage2_wrap, columns=cols,
-                          show="headings", selectmode="none", height=10)
-        tv.heading("check", text="")
-        tv.heading("subdir", text="Subdir")
-        tv.heading("name", text="Mod (dir)")
-        tv.heading("version", text="Version")
-        tv.heading("kind", text="Type")
-        tv.heading("expected", text="PZ Major")
-        tv.column("check", width=30, anchor=tk.CENTER, stretch=False)
-        tv.column("subdir", width=160, anchor=tk.W)
-        tv.column("name", width=160, anchor=tk.W)
-        tv.column("version", width=70, anchor=tk.W, stretch=False)
-        tv.column("kind", width=80, anchor=tk.W, stretch=False)
-        tv.column("expected", width=80, anchor=tk.W, stretch=False)
-        tv.pack(fill=tk.BOTH, expand=True)
-        tv.tag_configure("incompat", foreground=PALETTE["error"])
-
-        self._row_check_vars.clear()
-        self._row_major_ok.clear()
-
-        for dm in self.discovered:
-            mod_major = dm.get("modMajor")
-            major_ok = bool(dm.get("majorOk", True))
-            checked = major_ok  # default: select compatible rows
-            self._row_check_vars[dm["subdir"]] = tk.BooleanVar(value=checked)
-            self._row_major_ok[dm["subdir"]] = major_ok
-            check_glyph = "☑" if checked else ("☒" if not major_ok else "☐")
-            kind = "client-only" if dm.get("clientOnly") else "any"
-            major_cell = (str(mod_major) if mod_major is not None
-                          else "(no suffix)")
-            tags = ("incompat",) if not major_ok else ()
-            dirname_cell = dm.get("dirname") or dm.get("name") or ""
-            tv.insert("", tk.END, iid=dm["subdir"],
-                      values=(check_glyph, dm["subdir"] or "<root>",
-                              dirname_cell, dm["version"], kind, major_cell),
-                      tags=tags)
-
-        def on_click(event):
-            row = tv.identify_row(event.y)
-            if not row:
-                return
-            if not self._row_major_ok.get(row, True):
-                return  # disabled
-            v = self._row_check_vars[row]
-            v.set(not v.get())
-            vals = list(tv.item(row, "values"))
-            vals[0] = "☑" if v.get() else "☐"
-            tv.item(row, values=vals)
-            self._update_primary_label()
-            self._update_name_field()
-
-        tv.bind("<Button-1>", on_click)
-        self._stage2_tv = tv
-
-        # --name override row.
-        name_row = ttk.Frame(self.stage2_wrap, padding=(0, 8, 0, 0))
-        name_row.pack(fill=tk.X)
-        ttk.Label(name_row, text="Override mod base name:",
-                  style="Tagline.TLabel").pack(side=tk.LEFT)
-        self.name_var = tk.StringVar()
-        self.name_entry = ttk.Entry(name_row, textvariable=self.name_var, width=24)
-        self.name_entry.pack(side=tk.LEFT, padx=(8, 8))
-        self.name_hint_var = tk.StringVar(value="(only when one mod selected)")
-        ttk.Label(name_row, textvariable=self.name_hint_var,
-                  style="Tagline.TLabel").pack(side=tk.LEFT)
-        self._update_name_field()
-
-        # Force checkbox.
-        self.force_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(self.stage2_wrap, text="Overwrite existing mods (--force)",
-                        variable=self.force_var).pack(anchor="w", pady=(8, 0))
-
-        # Footer rebuild — now includes Back, Import N.
-        self.btn_cancel.pack_forget()
-        self.btn_primary.pack_forget()
-        self.btn_back.pack(side=tk.LEFT)
-        self.btn_cancel.pack(side=tk.LEFT, padx=(8, 0))
-        self.btn_primary.configure(text="Import 0", command=self._on_import)
-        self.btn_primary.pack(side=tk.RIGHT)
-        self._update_primary_label()
-
-    def _update_name_field(self) -> None:
-        n = sum(1 for v in self._row_check_vars.values() if v.get())
-        if n == 1:
-            self.name_entry.configure(state=tk.NORMAL)
-            self.name_hint_var.set("(blank = use upstream name)")
-        else:
-            self.name_var.set("")
-            self.name_entry.configure(state=tk.DISABLED)
-            self.name_hint_var.set("(only when one mod selected)")
-
-    def _update_primary_label(self) -> None:
-        n = sum(1 for v in self._row_check_vars.values() if v.get())
-        self.btn_primary.configure(
-            text=f"Import {n}",
-            state=tk.NORMAL if n > 0 else tk.DISABLED,
-        )
-
-    def _back_to_stage1(self) -> None:
-        self.stage2_wrap.pack_forget()
-        self.stage1.pack(fill=tk.X, before=self.footer)
-        self.btn_back.pack_forget()
-        self.btn_cancel.pack_forget()
-        self.btn_primary.pack_forget()
-        self.btn_cancel.pack(side=tk.LEFT)
-        self.btn_primary.configure(text="Discover", command=self._on_discover)
-        self.btn_primary.pack(side=tk.RIGHT)
-        self._validate_repo()
-
-    def _on_import(self) -> None:
-        self._clear_error()
-        selected_subdirs = [s for s, v in self._row_check_vars.items() if v.get()]
-        if not selected_subdirs:
-            return
-        repo = self.repo_var.get().strip()
-        ref = self.ref_var.get().strip()
-        all_selected = (len(selected_subdirs) == len(self.discovered))
-
-        args = ["import", repo]
-        if ref:
-            args.extend(["--ref", ref])
-        if all_selected and len(selected_subdirs) > 1:
-            args.append("--all")
-        else:
-            for s in selected_subdirs:
-                args.extend(["--mod", s])
-        if len(selected_subdirs) == 1 and self.name_var.get().strip():
-            args.extend(["--name", self.name_var.get().strip()])
-        if self.force_var.get():
-            args.append("--force")
-
-        self.dlg.destroy()
-        self.app._run_cli(args)
-
-    # ---- Error display ----
-
-    def _show_error(self, msg: str) -> None:
-        self.error_var.set(msg)
-        try:
-            self.error_label.pack(side=tk.TOP, fill=tk.X, before=self.footer)
-        except Exception:
-            self.error_label.pack(side=tk.TOP, fill=tk.X)
-
-    def _clear_error(self) -> None:
-        self.error_var.set("")
-        try:
-            self.error_label.pack_forget()
-        except Exception:
-            pass
