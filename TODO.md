@@ -1,7 +1,9 @@
 # TODO
 
 1. Add groups for mods - e.g. "Utility", "Fun", "Admin", etc.
-2. New Mod: Multi Login - Currently, when you enable the login queue only one person at a time can process in the queue. This mod will allow you to configure and have multiple process through. 
+2. Add ability to import mods from github repos (e.g. by parsing a `mod.info` file in the repo).
+3. Add ability to self-update mods from their source repos (e.g. by checking the version of the mod.info in the repo and comparing to local)
+4. Add self-updater for the mod manager itself.
 
 ## Ideas - Possible Enhancements
 

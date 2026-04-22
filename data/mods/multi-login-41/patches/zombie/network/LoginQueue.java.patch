@@ -1,0 +1,249 @@
+diff --git a/zombie/network/LoginQueue.java b/zombie/network/LoginQueue.java
+index a60fbe5..7e3435b 100644
+--- a/zombie/network/LoginQueue.java
++++ b/zombie/network/LoginQueue.java
+@@ -2,6 +2,8 @@ package zombie.network;
+ 
+ import java.nio.ByteBuffer;
+ import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.Iterator;
+ import zombie.Lua.LuaEventManager;
+ import zombie.commands.PlayerType;
+ import zombie.core.Core;
+@@ -15,9 +17,34 @@ import zombie.gameStates.LoadingQueueState;
+ public class LoginQueue {
+    private static ArrayList<UdpConnection> LoginQueue = new ArrayList<>();
+    private static ArrayList<UdpConnection> PreferredLoginQueue = new ArrayList<>();
+-   private static UdpConnection currentLoginQueue;
++   private static final ArrayList<UdpConnection> currentLogins = new ArrayList<>();
++   private static final HashMap<UdpConnection, Long> loginDeadlineMs = new HashMap<>();
+    private static UpdateLimit UpdateLimit = new UpdateLimit(3050L);
+-   private static UpdateLimit LoginQueueTimeout = new UpdateLimit(15000L);
++
++   private static int maxSlots() {
++      int v = ServerOptions.getInstance().MaxConcurrentLogins.getValue();
++      return v < 1 ? 1 : v;
++   }
++
++   private static long slotTimeoutMs() {
++      return ServerOptions.getInstance().LoginQueueConnectTimeout.getValue() * 1000L;
++   }
++
++   private static void admit(UdpConnection c) {
++      if (currentLogins.contains(c)) {
++         loginDeadlineMs.putIfAbsent(c, System.currentTimeMillis() + slotTimeoutMs());
++         return;
++      }
++      currentLogins.add(c);
++      c.wasInLoadingQueue = true;
++      loginDeadlineMs.put(c, System.currentTimeMillis() + slotTimeoutMs());
++   }
++
++   private static void releaseSlot(UdpConnection c) {
++      while (currentLogins.remove(c)) {
++      }
++      loginDeadlineMs.remove(c);
++   }
+ 
+    public static void receiveClientLoginQueueRequest(ByteBuffer var0, short var1) {
+       byte var2 = var0.get();
+@@ -36,10 +63,7 @@ public class LoginQueue {
+       long var3 = var0.getLong();
+       LoggerManager.getLogger("user").write("player " + var1.username + " loading time was: " + var3 + " ms");
+       synchronized (LoginQueue) {
+-         if (currentLoginQueue == var1) {
+-            currentLoginQueue = null;
+-         }
+-
++         releaseSlot(var1);
+          loadNextPlayer();
+       }
+ 
+@@ -53,16 +77,18 @@ public class LoginQueue {
+       LoggerManager.getLogger("user")
+          .write(var1.idStr + " \"" + var1.username + "\" attempting to join used " + (isPreferred ? "preferred " : "") + "queue");
+       synchronized (LoginQueue) {
+-         if (!ServerOptions.getInstance().LoginQueueEnabled.getValue()
+-            || !isPreferred && currentLoginQueue == null && PreferredLoginQueue.isEmpty() && LoginQueue.isEmpty()
+-            || isPreferred && currentLoginQueue == null && PreferredLoginQueue.isEmpty()) {
++         boolean queueDisabled = !ServerOptions.getInstance().LoginQueueEnabled.getValue();
++         boolean alreadyAdmitted = currentLogins.contains(var1);
++         boolean slotFree = currentLogins.size() < maxSlots();
++         boolean regularClear = slotFree && !isPreferred && PreferredLoginQueue.isEmpty() && LoginQueue.isEmpty();
++         boolean preferredClear = slotFree && isPreferred && PreferredLoginQueue.isEmpty();
++
++         if (queueDisabled || alreadyAdmitted || regularClear || preferredClear) {
+             if (Core.bDebug) {
+                DebugLog.log("receiveServerLoginQueueRequest: ConnectionImmediate (ip:" + var1.ip + ")");
+             }
+ 
+-            currentLoginQueue = var1;
+-            currentLoginQueue.wasInLoadingQueue = true;
+-            LoginQueueTimeout.Reset(ServerOptions.getInstance().LoginQueueConnectTimeout.getValue() * 1000);
++            admit(var1);
+             ByteBufferWriter var4 = var1.startPacket();
+             PacketTypes.PacketType.LoginQueueRequest2.doPacket(var4);
+             var4.putByte((byte)LoginQueueMessageType.ConnectionImmediate.ordinal());
+@@ -149,8 +175,8 @@ public class LoginQueue {
+             DebugLog.log("receiveLogin: (ip:" + var0.ip + ")");
+          }
+ 
+-         if (var0 != currentLoginQueue) {
+-            sendAccessDenied(currentLoginQueue, "QueueNotFound");
++         if (!currentLogins.contains(var0)) {
++            sendAccessDenied(var0, "QueueNotFound");
+             if (Core.bDebug) {
+                DebugLog.log("receiveLogin: error");
+             }
+@@ -172,19 +198,16 @@ public class LoginQueue {
+       }
+ 
+       synchronized (LoginQueue) {
+-         if (var0 == currentLoginQueue) {
+-            currentLoginQueue = null;
++         if (currentLogins.contains(var0)) {
++            releaseSlot(var0);
+          } else {
+-            if (LoginQueue.contains(var0)) {
+-               LoginQueue.remove(var0);
+-            }
+-
+-            if (PreferredLoginQueue.contains(var0)) {
+-               PreferredLoginQueue.remove(var0);
+-            }
++            LoginQueue.remove(var0);
++            PreferredLoginQueue.remove(var0);
+          }
+ 
+-         sendPlaceInTheQueue();
++         if (!loadNextPlayer()) {
++            sendPlaceInTheQueue();
++         }
+       }
+    }
+ 
+@@ -193,7 +216,7 @@ public class LoginQueue {
+          return false;
+       } else {
+          synchronized (LoginQueue) {
+-            return var0 == currentLoginQueue || LoginQueue.contains(var0) || PreferredLoginQueue.contains(var0);
++            return currentLogins.contains(var0) || LoginQueue.contains(var0) || PreferredLoginQueue.contains(var0);
+          }
+       }
+    }
+@@ -201,19 +224,27 @@ public class LoginQueue {
+    public static void update() {
+       if (ServerOptions.getInstance().LoginQueueEnabled.getValue() && UpdateLimit.Check()) {
+          synchronized (LoginQueue) {
+-            if (currentLoginQueue != null) {
+-               if (currentLoginQueue.isFullyConnected()) {
++            long now = System.currentTimeMillis();
++            Iterator<UdpConnection> it = currentLogins.iterator();
++            while (it.hasNext()) {
++               UdpConnection c = it.next();
++               if (c.isFullyConnected()) {
+                   if (Core.bDebug) {
+-                     DebugLog.log("update: isFullyConnected (ip:" + currentLoginQueue.ip + ")");
++                     DebugLog.log("update: isFullyConnected (ip:" + c.ip + ")");
+                   }
+ 
+-                  currentLoginQueue = null;
+-               } else if (LoginQueueTimeout.Check()) {
+-                  if (Core.bDebug) {
+-                     DebugLog.log("update: timeout (ip:" + currentLoginQueue.ip + ")");
+-                  }
++                  it.remove();
++                  loginDeadlineMs.remove(c);
++               } else {
++                  Long deadline = loginDeadlineMs.get(c);
++                  if (deadline != null && now >= deadline) {
++                     if (Core.bDebug) {
++                        DebugLog.log("update: timeout (ip:" + c.ip + ")");
++                     }
+ 
+-                  currentLoginQueue = null;
++                     it.remove();
++                     loginDeadlineMs.remove(c);
++                  }
+                }
+             }
+ 
+@@ -222,40 +253,55 @@ public class LoginQueue {
+       }
+    }
+ 
+-   private static void loadNextPlayer() {
+-      if (!PreferredLoginQueue.isEmpty() && currentLoginQueue == null) {
+-         currentLoginQueue = PreferredLoginQueue.remove(0);
+-         currentLoginQueue.wasInLoadingQueue = true;
++   private static boolean loadNextPlayer() {
++      int max = maxSlots();
++      boolean sent = false;
++
++      while (currentLogins.size() < max && !PreferredLoginQueue.isEmpty()) {
++         UdpConnection c = PreferredLoginQueue.remove(0);
++         admit(c);
+          if (Core.bDebug) {
+-            DebugLog.log("update: Next player from the preferred queue to connect (ip:" + currentLoginQueue.ip + ")");
++            DebugLog.log("update: Next player from the preferred queue to connect (ip:" + c.ip + ")");
+          }
+-
+-         LoginQueueTimeout.Reset(ServerOptions.getInstance().LoginQueueConnectTimeout.getValue() * 1000);
+-         sendConnectRequest(currentLoginQueue);
+-         sendPlaceInTheQueue();
++         sendConnectRequest(c);
++         sent = true;
+       }
+ 
+-      if (!LoginQueue.isEmpty() && currentLoginQueue == null) {
+-         currentLoginQueue = LoginQueue.remove(0);
+-         currentLoginQueue.wasInLoadingQueue = true;
++      while (currentLogins.size() < max && !LoginQueue.isEmpty()) {
++         UdpConnection c = LoginQueue.remove(0);
++         admit(c);
+          if (Core.bDebug) {
+-            DebugLog.log("update: Next player to connect (ip:" + currentLoginQueue.ip + ")");
++            DebugLog.log("update: Next player to connect (ip:" + c.ip + ")");
+          }
++         sendConnectRequest(c);
++         sent = true;
++      }
+ 
+-         LoginQueueTimeout.Reset(ServerOptions.getInstance().LoginQueueConnectTimeout.getValue() * 1000);
+-         sendConnectRequest(currentLoginQueue);
++      if (sent) {
+          sendPlaceInTheQueue();
+       }
++      return sent;
+    }
+ 
+    public static String getDescription() {
+-      return "queue=["
+-         + LoginQueue.size()
+-         + "/"
+-         + PreferredLoginQueue.size()
+-         + "/\""
+-         + (currentLoginQueue == null ? "" : currentLoginQueue.getConnectedGUID())
+-         + "\"]";
++      synchronized (LoginQueue) {
++         StringBuilder guids = new StringBuilder();
++         for (int i = 0; i < currentLogins.size(); i++) {
++            if (i > 0) guids.append(',');
++            guids.append(currentLogins.get(i).getConnectedGUID());
++         }
++         return "queue=["
++            + LoginQueue.size()
++            + "/"
++            + PreferredLoginQueue.size()
++            + "/"
++            + currentLogins.size()
++            + "/"
++            + maxSlots()
++            + "/\""
++            + guids
++            + "\"]";
++      }
+    }
+ 
+    public static enum LoginQueueMessageType {

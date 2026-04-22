@@ -32,6 +32,7 @@ Each mod ships with its own README — click through for behaviour notes, in-gam
 | [gravymod](data/mods/gravymod-41/README.md) | no | Adds various lua utils and commands. |
 | [lua-profiler](data/mods/lua-profiler-41/README.md) | no | Per-mod Lua profiler with event/builtin/sample modes. Flame-graph output + mod/file filter. |
 | [more-zoom](data/mods/more-zoom-41/README.md) | yes | Adds one extra zoom-out (300%) and one extra zoom-in (25%) level. |
+| [multi-login](data/mods/multi-login-41/README.md) | no | Server-side: login queue admits N players concurrently instead of one at a time. Adds `MaxConcurrentLogins` (1–32, default 3). Depends on staff-priority. |
 | [no-radio-fzzt](data/mods/no-radio-fzzt-41/README.md) | no | Disable all radio obfuscation (weather interference + distance falloff + scramble pipeline). Install to client or server. |
 | [staff-priority](data/mods/staff-priority-41/README.md) | no | Staff (admin / moderator / overseer / gm / observer) skip ahead of VIPs and regular players in the login queue when the server is full. |
 | [transparent-all](data/mods/transparent-all-41/README.md) | yes | Extends admin-xray's Shift+F9 to fade **every** static world object on screen — doors, windows, walls, mannequins, fences, fridges — not just trees. Depends on admin-xray. |

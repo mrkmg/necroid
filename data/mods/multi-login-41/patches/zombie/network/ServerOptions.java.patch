@@ -1,0 +1,12 @@
+diff --git a/zombie/network/ServerOptions.java b/zombie/network/ServerOptions.java
+index 274e567..51e9689 100644
+--- a/zombie/network/ServerOptions.java
++++ b/zombie/network/ServerOptions.java
+@@ -116,6 +116,7 @@ public class ServerOptions {
+    public ServerOptions.DoubleServerOption SpeedLimit = new ServerOptions.DoubleServerOption(this, "SpeedLimit", 10.0, 150.0, 70.0);
+    public ServerOptions.BooleanServerOption LoginQueueEnabled = new ServerOptions.BooleanServerOption(this, "LoginQueueEnabled", false);
+    public ServerOptions.IntegerServerOption LoginQueueConnectTimeout = new ServerOptions.IntegerServerOption(this, "LoginQueueConnectTimeout", 20, 1200, 60);
++   public ServerOptions.IntegerServerOption MaxConcurrentLogins = new ServerOptions.IntegerServerOption(this, "MaxConcurrentLogins", 1, 32, 3);
+    public ServerOptions.StringServerOption server_browser_announced_ip = new ServerOptions.StringServerOption(this, "server_browser_announced_ip", "", -1);
+    public ServerOptions.BooleanServerOption PlayerRespawnWithSelf = new ServerOptions.BooleanServerOption(this, "PlayerRespawnWithSelf", false);
+    public ServerOptions.BooleanServerOption PlayerRespawnWithOther = new ServerOptions.BooleanServerOption(this, "PlayerRespawnWithOther", false);
