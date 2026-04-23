@@ -12,10 +12,10 @@ resolution against CWD.
 """
 from __future__ import annotations
 
-import subprocess
 import tempfile
 from pathlib import Path
 
+from ..util import procs
 from ..util.tools import resolve
 
 
@@ -31,7 +31,7 @@ def git_diff_no_index(pristine: Path, working: Path, rel_path: str) -> bytes | N
        `a/<rel_path>` / `b/<rel_path>` headers. Returns None if files are identical.
 
        Exit codes: 0 = same, 1 = differ (expected), >=2 = error."""
-    proc = subprocess.run(
+    proc = procs.run(
         [
             _git(), *_GIT_ENV, "diff", "--no-index", "--no-color",
             "--no-renames", "-U3", "--", str(pristine), str(working),
@@ -75,7 +75,7 @@ def git_apply_file(patch_file: Path, work_dir: Path, rel_path: str) -> bool:
         tmp.write(stripped)
         tmp_path = Path(tmp.name)
     try:
-        proc = subprocess.run(
+        proc = procs.run(
             [_git(), "-c", "core.autocrlf=false", "apply", "--whitespace=nowarn", "--", str(tmp_path)],
             cwd=str(work_dir),
             capture_output=True,
@@ -98,7 +98,7 @@ def _looks_like_index_line(line: bytes) -> bool:
 
 def git_merge_file(current: Path, base: Path, incoming: Path) -> bool:
     """In-place 3-way merge. Exit 0 = clean, >0 = conflicts written in-place."""
-    proc = subprocess.run(
+    proc = procs.run(
         [_git(), "merge-file", "-L", "current", "-L", "base", "-L", "incoming",
          str(current), str(base), str(incoming)],
         capture_output=True,

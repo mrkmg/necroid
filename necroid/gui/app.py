@@ -59,6 +59,7 @@ from ..core.mod import (
 )
 from ..commands.mod_update import read_cache as read_update_cache
 from ..core.profile import load_profile
+from ..paths import package_dir
 from ..pz.pzversion import PzVersion, detect_pz_version
 from ..core.state import read_state
 from .cli_runner import CliRunner, classify_log_line, cmd_busy_headline
@@ -485,7 +486,7 @@ class ModderApp:
                 content = profile.content_dir_for(self.install_to)
                 try:
                     detected_dest = detect_pz_version(
-                        content, Path(__file__).resolve().parent, self.root / "data")
+                        content, package_dir(), self.root / "data")
                     if detected_dest.major != ws_major:
                         mismatch_reason = (
                             f"Workspace is PZ major {ws_major}; {self.install_to} install is "
@@ -836,7 +837,7 @@ class ModderApp:
         if self._ws_major:
             try:
                 dependents = reverse_dependents(
-                    self.root / "data" / "mods", self._ws_major, row,
+                    self.root / "mods", self._ws_major, row,
                     within=list(self.checked),
                 )
             except Exception:
@@ -858,7 +859,7 @@ class ModderApp:
             self._update_row(d)
 
     def _open_readme(self, mod_name: str) -> None:
-        path = self.root / "data" / "mods" / mod_name / "README.md"
+        path = self.root / "mods" / mod_name / "README.md"
         if not path.exists():
             messagebox.showinfo(
                 "No README",
@@ -1003,7 +1004,7 @@ class ModderApp:
                 return
             self._run_cli(["resync-pristine", "--to", self.install_to])
         else:
-            self._run_cli(["init", "--from", self.install_to])
+            self._run_cli(["init", "--from", self.install_to, "--yes"])
 
     def on_revert(self) -> None:
         if not self._has_pending_changes():
@@ -1124,7 +1125,7 @@ class ModderApp:
         mj = (getattr(self, "_mj_by_name", {}) or {}).get(row)
         if mj is None:
             try:
-                mj = read_mod_json(self.root / "data" / "mods" / row)
+                mj = read_mod_json(self.root / "mods" / row)
             except Exception:
                 return
 
@@ -1192,7 +1193,7 @@ class ModderApp:
             command=lambda o=origin: self._open_origin_in_browser(o),
             state=tk.NORMAL if is_imported else tk.DISABLED,
         )
-        if (self.root / "data" / "mods" / row / "README.md").exists():
+        if (self.root / "mods" / row / "README.md").exists():
             m.add_separator()
             m.add_command(label="Show README",
                           command=lambda r=row: self._open_readme(r))

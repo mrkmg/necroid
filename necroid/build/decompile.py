@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import shutil
-import subprocess
 import urllib.request
 from pathlib import Path
 
 from ..util import logging_util as log
+from ..util import procs
 from ..util.fsops import empty_dir, ensure_dir
 from ..util.tools import resolve
 
@@ -78,7 +78,7 @@ def decompile_subtree(
     args.append(str(tmp_out))
 
     log.info(f"decompiling {subtree}/ (Vineflower)...")
-    proc = subprocess.run(args)
+    proc = procs.run(args)
     if proc.returncode != 0:
         raise RuntimeError(f"Vineflower failed on {subtree}/ (exit {proc.returncode})")
 

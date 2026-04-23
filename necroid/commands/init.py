@@ -17,11 +17,11 @@ Steps:
 from __future__ import annotations
 
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
 from ..util import logging_util as log
+from ..util import procs
 from ..core.config import ModConfig, config_path, read_config, write_config
 from ..build.decompile import ensure_vineflower, decompile_all
 from ..errors import ConfigError, PzVersionDetectError
@@ -120,7 +120,7 @@ def _rejar_originals(originals: Path, out_jar_dir: Path, force: bool) -> None:
         # Pre-delete: modern `jar` refuses to overwrite on rename-into-place.
         if jar_path.exists():
             jar_path.unlink()
-        proc = subprocess.run([jar_exe, "cf", str(jar_path), sub], cwd=str(originals))
+        proc = procs.run([jar_exe, "cf", str(jar_path), sub], cwd=str(originals))
         if proc.returncode != 0:
             raise RuntimeError(f"jar failed for {sub} (exit {proc.returncode})")
 

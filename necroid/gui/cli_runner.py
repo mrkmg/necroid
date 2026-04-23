@@ -83,6 +83,7 @@ class CliRunner:
         try:
             proc = subprocess.Popen(
                 cmd, cwd=str(self.root),
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, bufsize=1,
                 env=env,

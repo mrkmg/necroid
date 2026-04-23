@@ -20,11 +20,11 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..util import logging_util as log
+from ..util import procs
 from ..errors import PzVersionDetectError
 from ..util.hashing import file_sha256
 from ..util.tools import resolve
@@ -99,7 +99,7 @@ def ensure_probe_compiled(necroid_pkg_dir: Path, data_dir: Path) -> Path:
     javac = str(resolve("javac"))
     log.info(f"compiling PZ-version probe -> {cache_dir}")
     cmd = [javac, "--release", "17", "-encoding", "UTF-8", "-d", str(cache_dir), str(src)]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = procs.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         raise PzVersionDetectError(
             f"probe compile failed (exit {proc.returncode}):\n{proc.stderr.strip()}"
@@ -131,7 +131,7 @@ def detect_pz_version(content_dir: Path, necroid_pkg_dir: Path, data_dir: Path) 
     java = str(resolve("java"))
     cp = os.pathsep.join([str(cache_dir), str(content_dir)])
     cmd = [java, "-cp", cp, _PROBE_CLASS_NAME]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = procs.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         raise PzVersionDetectError(
             f"probe invocation failed (exit {proc.returncode}) against {content_dir}:\n"

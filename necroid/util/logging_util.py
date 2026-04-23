@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 import sys
 
-_COLOR = sys.stderr.isatty() and os.environ.get("NO_COLOR") is None
+_COLOR = bool(sys.stderr and getattr(sys.stderr, "isatty", lambda: False)()
+               and os.environ.get("NO_COLOR") is None)
 
 
 def _c(code: str, text: str) -> str:

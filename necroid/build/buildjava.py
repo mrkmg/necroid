@@ -4,11 +4,11 @@ classpath jars."""
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 from pathlib import Path
 
 from ..util import logging_util as log
+from ..util import procs
 from ..errors import BuildError
 from ..util.tools import resolve
 
@@ -54,6 +54,6 @@ def javac_compile(
     log.info(f"compiling {len(abs_files)} file(s) -> {out_dir} (Java {java_release})")
     cmd = [javac, "--release", str(java_release), "-encoding", "UTF-8",
            "-cp", cp, "-d", str(out_dir), *abs_files]
-    proc = subprocess.run(cmd)
+    proc = procs.run(cmd)
     if proc.returncode != 0:
         raise BuildError(f"javac failed (exit {proc.returncode})")
