@@ -68,19 +68,19 @@ Each mod ships with its own README — click through for behaviour notes, in-gam
 
 | Mod | Client-only? | What it does |
 |---|---|---|
-| [admin-xray](mods/admin-xray-41/README.md) | yes | Staff render overrides — **F9** for LOS / wall-cutaway, **Shift+F9** for transparent trees. |
+| [admin-xray](mods/admin-xray-41/README.md) | yes | Staff render overrides — **F9** for LOS / wall-cutaway, **Shift+F9** fades every static world object. |
 | [gravymod](mods/gravymod-41/README.md) | no | Adds various lua utils and commands. |
 | [lua-profiler](mods/lua-profiler-41/README.md) | no | Per-mod Lua profiler with event/builtin/sample modes. Flame-graph output + mod/file filter. |
 | [more-zoom](mods/more-zoom-41/README.md) | yes | Adds one extra zoom-out (300%) and one extra zoom-in (25%) level. |
 | [multi-login](mods/multi-login-41/README.md) | no | Server-side: login queue admits N players concurrently instead of one at a time. Adds `MaxConcurrentLogins` (1–32, default 3). Depends on staff-priority. |
 | [no-radio-fzzt](mods/no-radio-fzzt-41/README.md) | no | Disable all radio obfuscation (weather interference + distance falloff + scramble pipeline). Install to client or server. |
+| [notifications](mods/notifications-41/README.md) | yes | Utility / API mod. Shared toast-notification surface other mods call into. |
 | [staff-priority](mods/staff-priority-41/README.md) | no | Staff (admin / moderator / overseer / gm / observer) skip ahead of VIPs and regular players in the login queue when the server is full. |
-| [transparent-all](mods/transparent-all-41/README.md) | yes | Extends admin-xray's Shift+F9 to fade **every** static world object on screen — doors, windows, walls, mannequins, fences, fridges — not just trees. Depends on admin-xray. |
 | [weather-flash-fix](mods/weather-flash-fix-41/README.md) | yes | Stops the 10-minute weather-resync flash when a Lua mod (e.g. Wasteland) is overriding client climate values. |
 
 "Client-only" mods require a Project Zomboid **client** install and can only be installed to the client. Non-client-only mods can install to either the client or the Dedicated Server.
 
-Some mods declare **dependencies** on other mods (e.g. `transparent-all` depends on `admin-xray`). Necroid pulls the full dependency closure into the install stack automatically — you don't need to tick the dep yourself, and the GUI will offer to tick / untick dependents when you toggle a dep.
+Some mods declare **dependencies** on other mods (e.g. `multi-login` depends on `staff-priority`). Necroid pulls the full dependency closure into the install stack automatically — you don't need to tick the dep yourself, and the GUI will offer to tick / untick dependents when you toggle a dep.
 
 In the Necroid GUI, click the **ⓘ** next to any mod to read its README without leaving the app.
 

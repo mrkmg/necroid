@@ -1,5 +1,5 @@
 diff --git a/zombie/iso/IsoObject.java b/zombie/iso/IsoObject.java
-index d1782fc..f3fee03 100644
+index d1782fc..4c08b9d 100644
 --- a/zombie/iso/IsoObject.java
 +++ b/zombie/iso/IsoObject.java
 @@ -1018,7 +1018,7 @@ public class IsoObject implements Serializable, Thumpable {
@@ -29,11 +29,11 @@ index d1782fc..f3fee03 100644
 +      int xrayPi = -1;
 +      float xrayOldA = 0.0F;
 +      float xrayOldT = 0.0F;
-+      if (zombie.transparent_all.TransparentAll.shouldFade(this)) {
++      if (zombie.admin_xray.AdminXray.shouldFade(this)) {
 +         xrayPi = IsoCamera.frameState.playerIndex;
 +         xrayOldA = this.getAlpha(xrayPi);
 +         xrayOldT = this.getTargetAlpha(xrayPi);
-+         this.setAlphaAndTarget(xrayPi, zombie.transparent_all.TransparentAll.XRAY_ALPHA);
++         this.setAlphaAndTarget(xrayPi, zombie.admin_xray.AdminXray.XRAY_ALPHA);
 +      }
        if (!this.isSpriteInvisible()) {
           this.prepareToRender(var4);

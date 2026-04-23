@@ -1,5 +1,5 @@
 diff --git a/zombie/input/GameKeyboard.java b/zombie/input/GameKeyboard.java
-index 8d51c85..c9fede0 100644
+index 8d51c85..54d965f 100644
 --- a/zombie/input/GameKeyboard.java
 +++ b/zombie/input/GameKeyboard.java
 @@ -31,6 +31,32 @@ public final class GameKeyboard {
@@ -13,11 +13,11 @@ index 8d51c85..c9fede0 100644
 +                  boolean shift = bDown[org.lwjglx.input.Keyboard.KEY_LSHIFT]
 +                               || bDown[org.lwjglx.input.Keyboard.KEY_RSHIFT];
 +                  if (shift) {
-+                     zombie.admin_xray.AdminXray.treeOverride = !zombie.admin_xray.AdminXray.treeOverride;
-+                     System.out.println("[admin-xray] treeOverride=" + zombie.admin_xray.AdminXray.treeOverride);
-+                     boolean on = zombie.admin_xray.AdminXray.treeOverride;
++                     zombie.admin_xray.AdminXray.fadeOverride = !zombie.admin_xray.AdminXray.fadeOverride;
++                     System.out.println("[admin-xray] fadeOverride=" + zombie.admin_xray.AdminXray.fadeOverride);
++                     boolean on = zombie.admin_xray.AdminXray.fadeOverride;
 +                     zombie.notifications.NotificationAPI.show(
-+                        zombie.notifications.NotificationSpec.of("Admin X-ray trees: " + (on ? "ON" : "OFF"))
++                        zombie.notifications.NotificationSpec.of("Admin X-ray transparent objects: " + (on ? "ON" : "OFF"))
 +                           .borderColor(on ? 0.35F : 0.85F, on ? 0.90F : 0.35F, 0.35F, 1.0F));
 +                  } else {
 +                     zombie.admin_xray.AdminXray.losOverride = !zombie.admin_xray.AdminXray.losOverride;

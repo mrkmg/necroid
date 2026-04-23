@@ -3,10 +3,13 @@ package zombie.admin_xray;
 import zombie.characters.IsoPlayer;
 import zombie.core.Core;
 import zombie.core.textures.ColorInfo;
+import zombie.iso.IsoMovingObject;
+import zombie.iso.IsoObject;
 
 public final class AdminXray {
     public static boolean losOverride = false;
-    public static boolean treeOverride = false;
+    public static boolean fadeOverride = false;
+    public static final float XRAY_ALPHA = 0.25F;
     public static final ColorInfo WHITE = new ColorInfo(1.0F, 1.0F, 1.0F, 1.0F);
     public static final int FULL_VERT_LIGHT = 0xFFFFFFFF;
 
@@ -16,5 +19,9 @@ public final class AdminXray {
     public static boolean canToggle() {
         IsoPlayer p = IsoPlayer.getInstance();
         return p != null && (!p.isAccessLevel("None") || Core.bDebug);
+    }
+
+    public static boolean shouldFade(IsoObject obj) {
+        return fadeOverride && !(obj instanceof IsoMovingObject);
     }
 }
