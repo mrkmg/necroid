@@ -1,0 +1,19 @@
+diff --git a/zombie/popman/NetworkZombiePacker.java b/zombie/popman/NetworkZombiePacker.java
+index f4186a8..17eb4e4 100644
+--- a/zombie/popman/NetworkZombiePacker.java
++++ b/zombie/popman/NetworkZombiePacker.java
+@@ -208,12 +208,12 @@ public class NetworkZombiePacker {
+       this.bb.position(var8);
+       NetworkZombieManager.getInstance().getZombieAuth(var1, this.bb);
+       int var9 = this.getZombieData(var1, this.bb);
+-      if (var9 > 0 || var1.timerSendZombie.check() || this.extraUpdate.contains(var1)) {
++      if (var9 > 0 || var3 > 0 || var1.timerSendZombie.check() || this.extraUpdate.contains(var1)) {
+          this.extraUpdate.remove(var1);
+          var1.timerSendZombie.reset(3800L);
+          ByteBufferWriter var6 = var1.startPacket();
+          PacketTypes.PacketType var7;
+-         if (this.ZombieSimulationReliableLimit.Check()) {
++         if (var3 > 0 || this.ZombieSimulationReliableLimit.Check()) {
+             var7 = PacketTypes.PacketType.ZombieSimulationReliable;
+          } else {
+             var7 = PacketTypes.PacketType.ZombieSimulation;

@@ -1,0 +1,20 @@
+diff --git a/zombie/popman/NetworkZombiePacker.java b/zombie/popman/NetworkZombiePacker.java
+index f4186a8..34b2f85 100644
+--- a/zombie/popman/NetworkZombiePacker.java
++++ b/zombie/popman/NetworkZombiePacker.java
+@@ -53,14 +53,7 @@ public class NetworkZombiePacker {
+       short var3 = var1.getShort();
+ 
+       for (int var4 = 0; var4 < var3; var4++) {
+-         short var5 = var1.getShort();
+-         IsoZombie var6 = ServerMap.instance.ZombieMap.get(var5);
+-         if (var6 != null && (var2.accessLevel == 32 || var6.authOwner == var2)) {
+-            this.deleteZombie(var6);
+-            DebugLog.Multiplayer.noise("Zombie was deleted id=%d (%f, %f)", var6.OnlineID, var6.x, var6.y);
+-            zombie.VirtualZombieManager.instance.removeZombieFromWorld(var6);
+-            MPStatistics.serverZombieCulled();
+-         }
++         var1.getShort(); // no-zombie-cull: drain ID, skip deletion
+       }
+ 
+       short var8 = var1.getShort();

@@ -69,6 +69,7 @@ Each mod ships with its own README — click through for behaviour notes, in-gam
 | Mod | Client-only? | What it does |
 |---|---|---|
 | [admin-xray](mods/admin-xray-41/README.md) | yes | Staff render overrides — **F9** for LOS / wall-cutaway, **Shift+F9** fades every static world object. |
+| [ghost-zombie-fix](mods/ghost-zombie-fix-41/README.md) | no | Server-side: sends zombie-delete broadcasts reliably so UDP packet loss stops producing stuck-dying "ghost zombies" on lossy links. |
 | [gravymod](mods/gravymod-41/README.md) | no | Adds various lua utils and commands. |
 | [lua-profiler](mods/lua-profiler-41/README.md) | no | Per-mod Lua profiler with event/builtin/sample modes. Flame-graph output + mod/file filter. |
 | [more-zoom](mods/more-zoom-41/README.md) | yes | Adds one extra zoom-out (300%) and one extra zoom-in (25%) level. |
