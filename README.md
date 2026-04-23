@@ -75,6 +75,7 @@ Each mod ships with its own README — click through for behaviour notes, in-gam
 | [multi-login](mods/multi-login-41/README.md) | no | Server-side: login queue admits N players concurrently instead of one at a time. Adds `MaxConcurrentLogins` (1–32, default 3). Depends on staff-priority. |
 | [no-radio-fzzt](mods/no-radio-fzzt-41/README.md) | no | Disable all radio obfuscation (weather interference + distance falloff + scramble pipeline). Install to client or server. |
 | [notifications](mods/notifications-41/README.md) | yes | Utility / API mod. Shared toast-notification surface other mods call into. |
+| [slow-chunk-fix](mods/slow-chunk-fix-41/README.md) | yes | Raise the connecting-client chunk-download stall timeout from 60s to 10min so slow links finish loading instead of giving up. |
 | [staff-priority](mods/staff-priority-41/README.md) | no | Staff (admin / moderator / overseer / gm / observer) skip ahead of VIPs and regular players in the login queue when the server is full. |
 | [weather-flash-fix](mods/weather-flash-fix-41/README.md) | yes | Stops the 10-minute weather-resync flash when a Lua mod (e.g. Wasteland) is overriding client climate values. |
 

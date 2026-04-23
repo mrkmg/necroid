@@ -1,0 +1,13 @@
+diff --git a/zombie/iso/WorldStreamer.java b/zombie/iso/WorldStreamer.java
+index fd14aa0..4f27b97 100644
+--- a/zombie/iso/WorldStreamer.java
++++ b/zombie/iso/WorldStreamer.java
+@@ -639,7 +639,7 @@ public final class WorldStreamer {
+ 
+       while (this.isBusy()) {
+          long var16 = System.currentTimeMillis();
+-         if (var16 - var24 > 60000L) {
++         if (var16 - var24 > 600000L) {
+             GameLoadingState.mapDownloadFailed = true;
+             throw new IOException("map download from server timed out");
+          }

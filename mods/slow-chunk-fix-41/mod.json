@@ -1,0 +1,12 @@
+{
+  "name": "slow-chunk-fix-41",
+  "clientOnly": true,
+  "description": "Raise the connecting-client chunk-download stall timeout from 60s to 10min so slow links finish loading instead of giving up.",
+  "version": "0.1.0",
+  "expectedVersion": "41.78.19",
+  "createdAt": "2026-04-23T05:20:48.172528Z",
+  "updatedAt": "2026-04-23T05:21:31.856801Z",
+  "pristineSnapshot": "11e9856b3b51410d3ee4b57878946ad933860f8d30cbd5649034b4979dd87035",
+  "dependencies": [],
+  "incompatibleWith": []
+}
