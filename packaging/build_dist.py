@@ -192,35 +192,7 @@ def copy_layout(binary: Path) -> None:
         shutil.copytree(src_mods, dst_mods)
         stamp_bundled_origins(dst_mods)
 
-    # Empty tools placeholder
-    (DIST / "data" / "tools").mkdir(parents=True, exist_ok=True)
-    (DIST / "data" / "tools" / ".gitkeep").write_text("", encoding="utf-8")
-
-    readme = DIST / "README.txt"
-    readme.write_text(
-        "Necroid — Beyond Workshop\n"
-        "=========================\n"
-        "\n"
-        "Java mod manager for Project Zomboid (client + dedicated server).\n"
-        "\n"
-        "Prereqs on the target machine: Git, JDK 17+ (javac, jar), Java runtime.\n"
-        "\n"
-        "First-run client setup:\n"
-        "    ./necroid init\n"
-        "\n"
-        "First-run server setup:\n"
-        "    ./necroid --target server init\n"
-        "\n"
-        "GUI (client):   ./necroid --gui\n"
-        "GUI (server):   ./necroid --gui -server\n"
-        "\n"
-        "Bundled mods in mods/. Edit data/.mod-config.json to point at\n"
-        "your PZ install paths (or run `init` and it'll autodetect).\n"
-        "\n"
-        "Updates + source: https://github.com/mrkmg/necroid\n",
-        encoding="utf-8",
-    )
-    print(f"\nDist written to {DIST}")
+    shutil.copy2(REPO_ROOT / "README.md", DIST / "README.txt")
 
 
 BUNDLED_REPO = "mrkmg/necroid"

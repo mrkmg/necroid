@@ -14,7 +14,6 @@
 # Downloaded tooling. The tools/ dir itself is tracked via .gitkeep; contents are not.
 # -----------------------------------------------------------------------------
 /data/tools/*
-!/data/tools/.gitkeep
 
 # -----------------------------------------------------------------------------
 # Local runtime state — user-specific, not shared

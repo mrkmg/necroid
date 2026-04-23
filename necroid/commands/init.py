@@ -128,6 +128,11 @@ def _rejar_originals(originals: Path, out_jar_dir: Path, force: bool) -> None:
 def run(args) -> int:
     root: Path = args.root
     source: str = args.source  # populated in cli.py from --from (or default)
+    
+    # create data dirs
+    ensure_dir(root / "data")
+    ensure_dir(root / "data" / "tools")
+    ensure_dir(root / "data" / "workspace")
 
     log.step(f"init [from={source}] — step 1/9: resolve PZ install path")
     cfg = read_config(root, required=False)
