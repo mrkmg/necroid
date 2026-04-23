@@ -78,7 +78,7 @@ def run(args) -> int:
     else:
         gh = parse_github_ref(args.repo)
         provider_host = None  # github.com implied; not stored in origin
-        repo_full = f"{repo_full}"
+        repo_full = f"{gh.owner}/{gh.repo}"
         ref_from_url = gh.ref_from_url
         ref = args.ref or ref_from_url or _gh_mod.resolve_default_branch(
             gh.owner, gh.repo)
