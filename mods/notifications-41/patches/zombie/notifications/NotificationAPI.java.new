@@ -1,0 +1,85 @@
+package zombie.notifications;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
+import zombie.core.Core;
+
+public final class NotificationAPI {
+    private static final int MAX_LIVE = 8;
+    private static final int FORCED_FADE_MS = 250;
+
+    private static final List<Toast> LIVE = new ArrayList<>();
+    private static final AtomicLong ID_GEN = new AtomicLong(1L);
+
+    private NotificationAPI() {
+    }
+
+    public static long show(NotificationSpec spec) {
+        if (spec == null) return 0L;
+        NotificationSpec s = spec.copy();
+        s.normalize();
+        long id = ID_GEN.getAndIncrement();
+        Toast t = new Toast(id, s);
+        synchronized (LIVE) {
+            while (LIVE.size() >= MAX_LIVE) {
+                LIVE.get(0).forceExpireSoon(FORCED_FADE_MS);
+                break;
+            }
+            LIVE.add(t);
+        }
+        t.attach();
+        return id;
+    }
+
+    public static long show(String text) {
+        return show(NotificationSpec.of(text));
+    }
+
+    public static void dismiss(long id) {
+        synchronized (LIVE) {
+            for (Toast t : LIVE) {
+                if (t.getId() == id) {
+                    t.forceExpireSoon(FORCED_FADE_MS);
+                    return;
+                }
+            }
+        }
+    }
+
+    public static void dismissAll() {
+        synchronized (LIVE) {
+            for (Toast t : LIVE) {
+                t.forceExpireSoon(FORCED_FADE_MS);
+            }
+        }
+    }
+
+    static double computeTargetY(Toast self) {
+        int screenH = Core.getInstance().getScreenHeight();
+        synchronized (LIVE) {
+            int idx = LIVE.indexOf(self);
+            if (idx < 0) return screenH;
+            double y = screenH - self.spec().marginBottom - self.getBoxHeight();
+            for (int i = LIVE.size() - 1; i > idx; i--) {
+                Toast above = LIVE.get(i);
+                if (above.isExpired()) continue;
+                y -= above.getBoxHeight() + above.getStackGap();
+            }
+            return y;
+        }
+    }
+
+    static void onToastExpired(Toast self) {
+        synchronized (LIVE) {
+            Iterator<Toast> it = LIVE.iterator();
+            while (it.hasNext()) {
+                if (it.next() == self) {
+                    it.remove();
+                    break;
+                }
+            }
+        }
+    }
+}

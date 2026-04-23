@@ -2,11 +2,13 @@
   "name": "admin-xray",
   "clientOnly": true,
   "description": "Staff toggles: LOS (F9), transparent trees (Shift+F9).",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "expectedVersion": "41.78.19",
   "createdAt": "2026-04-18T22:33:55.1992536Z",
-  "updatedAt": "2026-04-20T12:22:56.419495Z",
+  "updatedAt": "2026-04-23T03:53:25.704447Z",
   "pristineSnapshot": "ce7b2d227b267793c3a95950ed41d52948b3e950c7e9a431ef0d13b8936254e8",
-  "dependencies": [],
+  "dependencies": [
+    "notifications"
+  ],
   "incompatibleWith": []
 }

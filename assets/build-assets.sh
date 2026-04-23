@@ -7,11 +7,6 @@ cd "$(dirname "$0")"
 
 SRC=necroid.png
 
-# Source layout (measured by row-scan of bone pixels on 1024x1024 master):
-#   skull region:    y = 160..480
-#   wordmark region: y = 540..640
-#   tagline:         y > 640
-
 # Skull only: key out charcoal bg via -fuzz -transparent (range-match on the
 # mid-gradient bg color), then -trim auto-finds the exact skull bbox, then
 # extent square with padding on TRANSPARENT. Transparent bg lets the GUI's
@@ -21,10 +16,10 @@ SRC=necroid.png
 # Pre-crop away the wordmark region (y>=540) and far edges so -trim locks
 # onto the skull+chip-pins only, not the faint rounded-rect border.
 magick "$SRC" \
-    -crop 800x430+112+100 +repage \
+    -crop 340x230+350+227 +repage \
     -fuzz 40% -transparent "#2b2b2e" \
     -trim +repage \
-    -background none -gravity center -extent 720x720 \
+    -background none -gravity center -extent 350x350 \
     -resize 256x256 \
     necroid-mark-256.png
 
@@ -41,13 +36,8 @@ magick necroid-mark-256.png -resize 128x128 necroid-icon-skull-128.png
 
 # Render each .ico frame from its best source, per-size for crisp downscales
 # (instead of one lossy auto-resize from 256).
-# Small sizes (16/32/48): skull-only transparent -- wordmark illegible there.
-# Large sizes (64/128/256): full brand mark on its rounded-rect tile.
-for s in 16 32 48; do
+for s in 16 32 48 64 128 256; do
     magick necroid-mark-256.png -resize ${s}x${s} /tmp/ico-${s}.png
-done
-for s in 64 128 256; do
-    magick necroid-icon-256.png -resize ${s}x${s} /tmp/ico-${s}.png
 done
 
 # Assemble multi-resolution .ico: skull-only for 16/32/48, full mark for 64+.

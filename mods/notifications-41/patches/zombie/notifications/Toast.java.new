@@ -1,0 +1,192 @@
+package zombie.notifications;
+
+import zombie.core.Core;
+import zombie.ui.TextManager;
+import zombie.ui.UIElement;
+import zombie.ui.UIManager;
+
+final class Toast extends UIElement {
+    private final long id;
+    private final NotificationSpec spec;
+    private final String displayText;
+    private final int textPxWidth;
+    private final int textPxHeight;
+    private final int boxWidth;
+    private final int boxHeight;
+
+    private final long createdAtMs;
+    private long forcedEndAtMs = -1L;
+    private double currentY = -1.0;
+    private boolean registered = false;
+    private boolean expired = false;
+
+    Toast(long id, NotificationSpec spec) {
+        super();
+        this.id = id;
+        this.spec = spec;
+        this.textPxHeight = TextManager.instance.getFontHeight(spec.font);
+
+        String fitted = fitText(spec.font, spec.text == null ? "" : spec.text,
+                                Math.max(1, spec.maxWidth - spec.paddingX * 2 - spec.borderPx * 2));
+        this.displayText = fitted;
+        this.textPxWidth = TextManager.instance.MeasureStringX(spec.font, fitted);
+
+        int contentW = this.textPxWidth + spec.paddingX * 2 + spec.borderPx * 2;
+        int w = Math.max(spec.minWidth, contentW);
+        if (w > spec.maxWidth) w = spec.maxWidth;
+        this.boxWidth = w;
+        this.boxHeight = this.textPxHeight + spec.paddingY * 2 + spec.borderPx * 2;
+
+        this.createdAtMs = System.nanoTime() / 1_000_000L;
+        setWidth(this.boxWidth);
+        setHeight(this.boxHeight);
+        setVisible(true);
+    }
+
+    long getId() {
+        return this.id;
+    }
+
+    int getBoxHeight() {
+        return this.boxHeight;
+    }
+
+    int getStackGap() {
+        return this.spec.stackGap;
+    }
+
+    NotificationSpec spec() {
+        return this.spec;
+    }
+
+    boolean isExpired() {
+        return this.expired;
+    }
+
+    void attach() {
+        if (!this.registered) {
+            UIManager.AddUI(this);
+            this.registered = true;
+        }
+    }
+
+    void forceExpireSoon(int fadeMs) {
+        long now = System.nanoTime() / 1_000_000L;
+        long end = now + Math.max(0, fadeMs);
+        if (this.forcedEndAtMs < 0 || end < this.forcedEndAtMs) {
+            this.forcedEndAtMs = end;
+        }
+    }
+
+    void markExpiredNow() {
+        this.expired = true;
+    }
+
+    @Override
+    public void update() {
+        if (this.expired) return;
+
+        long now = System.nanoTime() / 1_000_000L;
+        long elapsed = now - this.createdAtMs;
+        long total = naturalLifetimeMs();
+
+        if (elapsed >= total) {
+            this.expired = true;
+            NotificationAPI.onToastExpired(this);
+            if (this.registered) {
+                UIManager.RemoveElement(this);
+                this.registered = false;
+            }
+            return;
+        }
+
+        double targetY = NotificationAPI.computeTargetY(this);
+        if (this.currentY < 0.0) {
+            this.currentY = targetY + Math.max(8, this.boxHeight);
+        }
+
+        double dt = UIManager.getMillisSinceLastUpdate();
+        double ease;
+        if (this.spec.slideInMs > 0) {
+            ease = Math.min(1.0, dt / (double) this.spec.slideInMs);
+        } else {
+            ease = 1.0;
+        }
+        this.currentY += (targetY - this.currentY) * ease;
+
+        int screenW = Core.getInstance().getScreenWidth();
+        setX((double) (screenW - this.spec.marginRight - this.boxWidth));
+        setY(this.currentY);
+    }
+
+    @Override
+    public void render() {
+        if (this.expired || !isVisible()) return;
+
+        long now = System.nanoTime() / 1_000_000L;
+        long elapsed = now - this.createdAtMs;
+        long total = naturalLifetimeMs();
+        if (elapsed >= total) return;
+
+        float phaseAlpha;
+        if (elapsed < this.spec.slideInMs) {
+            double p = this.spec.slideInMs <= 0 ? 1.0 : (double) elapsed / (double) this.spec.slideInMs;
+            double eased = 1.0 - (1.0 - p) * (1.0 - p);
+            phaseAlpha = (float) Math.max(0.0, Math.min(1.0, eased));
+        } else {
+            long fadeStart = total - this.spec.fadeOutMs;
+            if (elapsed < fadeStart) {
+                phaseAlpha = 1.0F;
+            } else if (this.spec.fadeOutMs <= 0) {
+                phaseAlpha = 0.0F;
+            } else {
+                double p = (double) (elapsed - fadeStart) / (double) this.spec.fadeOutMs;
+                phaseAlpha = (float) Math.max(0.0, Math.min(1.0, 1.0 - p));
+            }
+        }
+
+        int w = this.boxWidth;
+        int h = this.boxHeight;
+        int bp = this.spec.borderPx;
+
+        DrawTextureScaledCol(null, 0.0, 0.0, w, h,
+            this.spec.borderR, this.spec.borderG, this.spec.borderB, this.spec.borderA * phaseAlpha);
+
+        int innerX = bp;
+        int innerY = bp;
+        int innerW = Math.max(0, w - bp * 2);
+        int innerH = Math.max(0, h - bp * 2);
+        DrawTextureScaledCol(null, (double) innerX, (double) innerY, innerW, innerH,
+            this.spec.bgR, this.spec.bgG, this.spec.bgB, this.spec.bgA * phaseAlpha);
+
+        double cx = getAbsoluteX() + (double) w / 2.0;
+        double ty = getAbsoluteY() + (double) (bp + this.spec.paddingY);
+        TextManager.instance.DrawStringCentre(this.spec.font, cx, ty, this.displayText,
+            this.spec.textR, this.spec.textG, this.spec.textB, this.spec.textA * phaseAlpha);
+    }
+
+    private long naturalLifetimeMs() {
+        long natural = this.spec.durationMs;
+        if (this.forcedEndAtMs > 0) {
+            long forced = this.forcedEndAtMs - this.createdAtMs;
+            if (forced < natural) natural = Math.max(0, forced);
+        }
+        return natural;
+    }
+
+    private static String fitText(zombie.ui.UIFont font, String text, int pxBudget) {
+        if (text.isEmpty()) return text;
+        int width = TextManager.instance.MeasureStringX(font, text);
+        if (width <= pxBudget) return text;
+        String ellipsis = "\u2026";
+        String candidate = text;
+        while (!candidate.isEmpty()) {
+            String withDots = candidate + ellipsis;
+            if (TextManager.instance.MeasureStringX(font, withDots) <= pxBudget) {
+                return withDots;
+            }
+            candidate = candidate.substring(0, candidate.length() - 1);
+        }
+        return ellipsis;
+    }
+}

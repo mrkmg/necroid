@@ -1,8 +1,8 @@
 diff --git a/zombie/input/GameKeyboard.java b/zombie/input/GameKeyboard.java
-index 8d51c85..28153cd 100644
+index 8d51c85..c9fede0 100644
 --- a/zombie/input/GameKeyboard.java
 +++ b/zombie/input/GameKeyboard.java
-@@ -31,6 +31,24 @@ public final class GameKeyboard {
+@@ -31,6 +31,32 @@ public final class GameKeyboard {
           for (int var2 = 1; var2 < var0; var2++) {
              bLastDown[var2] = bDown[var2];
              bDown[var2] = s_keyboardStateCache.getState().isKeyDown(var2);
@@ -15,9 +15,17 @@ index 8d51c85..28153cd 100644
 +                  if (shift) {
 +                     zombie.admin_xray.AdminXray.treeOverride = !zombie.admin_xray.AdminXray.treeOverride;
 +                     System.out.println("[admin-xray] treeOverride=" + zombie.admin_xray.AdminXray.treeOverride);
++                     boolean on = zombie.admin_xray.AdminXray.treeOverride;
++                     zombie.notifications.NotificationAPI.show(
++                        zombie.notifications.NotificationSpec.of("Admin X-ray trees: " + (on ? "ON" : "OFF"))
++                           .borderColor(on ? 0.35F : 0.85F, on ? 0.90F : 0.35F, 0.35F, 1.0F));
 +                  } else {
 +                     zombie.admin_xray.AdminXray.losOverride = !zombie.admin_xray.AdminXray.losOverride;
 +                     System.out.println("[admin-xray] losOverride=" + zombie.admin_xray.AdminXray.losOverride);
++                     boolean on = zombie.admin_xray.AdminXray.losOverride;
++                     zombie.notifications.NotificationAPI.show(
++                        zombie.notifications.NotificationSpec.of("Admin X-ray LOS: " + (on ? "ON" : "OFF"))
++                           .borderColor(on ? 0.35F : 0.85F, on ? 0.90F : 0.35F, 0.35F, 1.0F));
 +                  }
 +                  bEatKey[var2] = true;
 +                  continue;
