@@ -36,11 +36,25 @@ def existing_subtrees(root: Path) -> list[str]:
 
 
 def find_root(start: Path | None = None) -> Path:
-    """Walk up from `start` (default cwd) looking for `data/` or `necroid/`.
-    Falls back to `start` if nothing matches."""
+    """Walk up from `start` (default cwd) looking for workspace markers.
+    Falls back to `start` if nothing matches.
+
+    Frozen (PyInstaller) binaries anchor to the directory containing the
+    executable so a user running `./necroid init` from `/opt/necroid/` does
+    not walk up into `/opt/` and try to create `/opt/data`."""
+    import sys
+    if start is None and getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
     p = (start or Path.cwd()).resolve()
     for candidate in (p, *p.parents):
-        if (candidate / "data").is_dir() or (candidate / "necroid").is_dir():
+        if (candidate / "data").is_dir() or (candidate / "mods").is_dir():
+            return candidate
+        # Source checkout: `necroid/` package dir with __init__.py — not just
+        # any dir named `necroid` (the dist binary is a FILE named `necroid`
+        # whose parent dir is also named `necroid`, which used to cause a
+        # false match one level up).
+        nec = candidate / "necroid"
+        if nec.is_dir() and (nec / "__init__.py").is_file():
             return candidate
     return p
 
