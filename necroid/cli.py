@@ -29,6 +29,7 @@ from .commands import (
     clean as clean_cmd,
     deps_cmd,
     diff as diff_cmd,
+    doctor as doctor_cmd,
     enter as enter_cmd,
     import_cmd,
     init as init_cmd,
@@ -127,6 +128,10 @@ def _build_parser() -> argparse.ArgumentParser:
     s.add_argument("--replace", action="store_true",
                    help="replace the destination's stack with the given mods exactly "
                         "(default: additive — merges into the existing stack)")
+    s.add_argument("--adopt-install", dest="adopt_install", action="store_true",
+                   help="adopt a PZ install whose manifest was written by a different "
+                        "Necroid workspace (fingerprint mismatch). Use when you've cloned "
+                        "or moved the workspace dir; rare.")
 
     s = sub.add_parser("uninstall", help="restore everything, or remove named mods and rebuild")
     s.add_argument("mods", nargs="*")
@@ -160,6 +165,9 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("test", help="compile changed + new .java files in the entered mod's src-<mod>/ (no install)")
 
     s = sub.add_parser("verify", help="re-hash installed files, report drift")
+    s.add_argument("--to", dest="install_to", choices=("client", "server"), default=None)
+
+    s = sub.add_parser("doctor", help="read-only audit of install state + remediation hints")
     s.add_argument("--to", dest="install_to", choices=("client", "server"), default=None)
 
     s = sub.add_parser("update", help="check GitHub Releases and self-update the binary")
@@ -218,6 +226,18 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="install destination to use for mod applicability checks")
     s.add_argument("--force-major-change", action="store_true",
                    help="allow the workspace major to change (invalidates existing mods' patches)")
+    s.add_argument("--force-version-drift", action="store_true",
+                   help="proceed even when Steam has rewritten some installed files with a "
+                        "different PZ version's vanilla. Drifted files are NOT restored from "
+                        "`classes-original/`; Steam's current bytes become the new pristine "
+                        "(every mod will be flagged for re-capture).")
+    s.add_argument("--force-orphans", action="store_true",
+                   help="proceed even when the install contains class files that are in "
+                        "neither the install-side manifest nor `classes-original/`. They "
+                        "will be adopted into the new pristine.")
+    s.add_argument("--adopt-install", dest="adopt_install", action="store_true",
+                   help="accept an install-side manifest written by a different workspace "
+                        "fingerprint (cloned / moved workspace).")
     s.add_argument("--yes", "-y", action="store_true",
                    help="skip confirmation prompts")
 
@@ -238,6 +258,7 @@ _HANDLERS = {
     "uninstall": uninstall_cmd.run,
     "test": test_cmd.run,
     "verify": verify_cmd.run,
+    "doctor": doctor_cmd.run,
     "resync-pristine": resync_cmd.run,
     "deps": deps_cmd.run,
     "update": update_cmd.run,

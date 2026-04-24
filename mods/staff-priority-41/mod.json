@@ -3,8 +3,10 @@
   "clientOnly": false,
   "description": "Staff (admin/moderator/overseer/gm/observer) enter the preferred login queue and load ahead of VIPs and regular players when the server is full.",
   "version": "0.1.0",
+  "expectedVersion": "41.78.19",
   "createdAt": "2026-04-21T13:57:16.678393Z",
   "updatedAt": "2026-04-21T14:00:02.443002Z",
   "pristineSnapshot": "57acdef6c7e3da252754d8d6eb6775a8cd4abd4c29162ab58ec49da02da09bc8",
-  "expectedVersion": "41.78.19"
+  "dependencies": [],
+  "incompatibleWith": []
 }

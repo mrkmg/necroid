@@ -3,8 +3,10 @@
   "clientOnly": false,
   "description": "Per-mod Lua profiler with event/builtin/sample modes. Flame-graph output + mod/file filter.",
   "version": "0.5.0",
+  "expectedVersion": "41.78.19",
   "createdAt": "2026-04-18T18:19:06.3316469Z",
   "updatedAt": "2026-04-21T05:24:46.366639Z",
   "pristineSnapshot": "30db175d58f21a0336463c6bec3e513da838d5eed347e152ef587c906a877ef1",
-  "expectedVersion": "41.78.19"
+  "dependencies": [],
+  "incompatibleWith": []
 }

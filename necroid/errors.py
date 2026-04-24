@@ -95,3 +95,44 @@ class ModImportError(PzModderError):
 class ModUpdateError(PzModderError):
     """`necroid mod-update` failed: missing origin, mod is currently entered,
     upstream subdir vanished, or network/parse failure."""
+
+
+class InstallManifestMissing(PzModderError):
+    """Local cache says the install has a stack, but the install-side manifest
+    (`<pz>/.necroid-install.json`) is absent. Indicates the PZ install was
+    wiped or reinstalled by Steam out from under us. Resync/verify treat this
+    as a "stack cleared" signal; install refuses to proceed without confirmation."""
+
+
+class InstallFingerprintMismatch(PzModderError):
+    """The install-side manifest exists but was written by a different Necroid
+    workspace (fingerprint does not match this workspace). Another checkout or
+    clone of Necroid is managing this PZ install. Pass `--adopt-install` to
+    take ownership (and implicitly invalidate the other workspace's state)."""
+
+
+class InstallManifestTampered(PzModderError):
+    """The install-side manifest is unreadable, malformed, or its schema is not
+    supported by this Necroid version."""
+
+
+class PristineDrift(PzModderError):
+    """A file under `classes-original/` no longer hashes to the value recorded
+    when a mod was installed — something has silently modified pristine. Uninstall
+    refuses to restore from an unverified source. Requires `resync-pristine`
+    (with appropriate force flag) to recover."""
+
+
+class InstallVersionDrift(PzModderError):
+    """The live PZ install contains files that are neither the version we wrote
+    nor the vanilla we recorded at install — Steam has rewritten them with a
+    different version's vanilla (integrity verify or a patch landed). Resync
+    refuses to adopt this as the new pristine; `--force-version-drift` switches
+    to the "trust-Steam" strategy and marks every mod as needing recapture."""
+
+
+class OrphanInstalledFile(PzModderError):
+    """A class file exists under a mod-touched subtree in the PZ install that
+    is not in either `classes-original/` or the install-side manifest. Most
+    likely cause: a prior Necroid run crashed between deploy and manifest-write,
+    or the user hand-patched the install outside Necroid."""

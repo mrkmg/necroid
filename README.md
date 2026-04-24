@@ -60,7 +60,7 @@ The Status column previews the diff before you apply: `installed`, `pending add`
 
 To roll back everything, uncheck every box and click **Apply Changes** — the game goes back to exactly how Steam shipped it.
 
-If something drifted (e.g. Steam ran a "Verify Integrity of Game Files" pass and reverted everything), the checkboxes will still show what Necroid thinks is installed. Click **Apply Changes** once to re-install, or uncheck and re-check a mod to force a reapply.
+If something drifted (e.g. Steam ran a "Verify Integrity of Game Files" pass and reverted everything), the checkboxes will still show what Necroid thinks is installed. Click **Apply Changes** once to re-install, or uncheck and re-check a mod to force a reapply. For a detailed per-file diagnosis of what Steam (or something else) changed since the last install, run `necroid doctor --to client` (or `--to server`) from a terminal — it's read-only and tells you exactly which files drifted plus what to do about it.
 
 ## Bundled mods
 
@@ -239,8 +239,11 @@ If a user has imported several of your mods and you remove one upstream, their n
 
 - **"javac not found"** — install JDK 17+ (see the table above) and restart Necroid.
 - **Permission errors on Windows** — close Necroid, right-click **necroid.exe** → **Run as administrator**.
-- **Mods disappeared after a Steam update** — expected. Steam's "Verify Integrity of Game Files" silently reverts everything. Click **Apply Changes** in Necroid to push your stack back into the install (uncheck + re-check one mod first if the button is disabled — Necroid's state file still matches what Steam overwrote).
+- **Mods disappeared after a Steam update** — expected. Steam's "Verify Integrity of Game Files" silently reverts everything. Click **Apply Changes** in Necroid to push your stack back into the install (uncheck + re-check one mod first if the button is disabled — Necroid's state file still matches what Steam overwrote). Want to know exactly what Steam changed? Run `necroid doctor --to client` from a terminal.
 - **Mod marked STALE after a Project Zomboid update** — the game changed underneath the mod. Click **Update from Game**, then Apply Changes to reinstall your stack. If the mod still won't apply, wait for an updated release.
+- **`resync-pristine` aborts with "files drifted to a different PZ version"** — Steam has rewritten some of your modded files with a newer (or different) PZ version's vanilla. Necroid refuses to silently adopt those bytes as new pristine because that would poison every mod's diff. Two fixes: (a) run Steam "Verify Integrity of Game Files" to get back to a clean known version, then retry; or (b) if you're intentionally moving to the new version, pass `--force-version-drift` to accept Steam's current bytes as new pristine. Every mod will then be flagged STALE and will need re-capture.
+- **`resync-pristine` aborts with "orphan files"** — class files exist under a mod-touched subtree that aren't in Necroid's manifest and aren't vanilla. Usually a prior crash or a manual edit. Run `necroid doctor` to see the list. Fix by running Steam "Verify Integrity of Game Files" (restores vanilla) or deleting the listed files by hand; pass `--force-orphans` to adopt them into pristine (rare).
+- **"install manifest was written by a different Necroid workspace"** — you have two Necroid checkouts pointing at the same PZ install. Pick one to use going forward and pass `--adopt-install` on the first `install` / `resync-pristine` from that one to take ownership.
 - **Wrong Project Zomboid install path detected** — edit `data/.mod-config.json` in the Necroid folder and set `clientPzInstall` to your actual install path.
 
 ## Config file
@@ -249,17 +252,22 @@ If a user has imported several of your mods and you remove one upstream, their n
 
 ```json
 {
-  "version": 3,
+  "version": 1,
   "clientPzInstall": "C:/Program Files (x86)/Steam/steamapps/common/ProjectZomboid",
   "serverPzInstall": "C:/Program Files (x86)/Steam/steamapps/common/Project Zomboid Dedicated Server",
   "defaultInstallTo": "client",
-  "workspaceSource": "client"
+  "workspaceSource": "client",
+  "workspaceMajor": 41,
+  "workspaceVersion": "41.78.19",
+  "workspaceFingerprint": "<64-hex — don't hand-edit>"
 }
 ```
 
 - `clientPzInstall` / `serverPzInstall` — absolute paths to each PZ install. Leave either empty (`""`) if you don't have it. Forward slashes on all OSes. `~`, `$VAR`, `%VAR%`, and `${VAR}` are expanded.
-- `defaultInstallTo` — `client` or `server`. Used when you omit `--to` on `install` / `uninstall` / `verify` / `list` / `status`.
+- `defaultInstallTo` — `client` or `server`. Used when you omit `--to` on `install` / `uninstall` / `verify` / `doctor` / `list` / `status`.
 - `workspaceSource` — `client` or `server`. Which install seeded `data/workspace/`. `resync-pristine` re-hydrates from this unless you pass `--from`.
+- `workspaceMajor` / `workspaceVersion` — PZ major (e.g. `41`) and full version string (`"41.78.19"`) the workspace is bound to. Set by `init`; don't hand-edit unless you really know what you're doing.
+- `workspaceFingerprint` — opaque per-workspace id stamped into `<pz>/.necroid-install.json` so Necroid can tell your workspace apart from any other Necroid checkout pointing at the same PZ install. Minted once at `init`; never regenerate it by hand.
 - `originalsDir` *(optional)* — override for the verbatim class-copy directory. Leave unset unless you know why you need it.
 
 ---
@@ -296,8 +304,12 @@ necroid uninstall                    # restore everything for the chosen destina
 necroid uninstall <mod>              # remove one from the stack, rebuild the rest
 necroid status                       # working tree vs pristine + installed stacks (client + server)
 necroid status <mod>                 # per-mod patch applicability
-necroid verify                       # re-hash installed files to detect drift
+necroid verify                       # manifest reconcile + per-file audit + orphan scan
+necroid doctor                       # read-only diagnosis with remediation hints
 necroid resync-pristine              # after a PZ update: refresh the vanilla baseline
+necroid resync-pristine --force-version-drift   # accept Steam-rewritten files as new pristine (flags every mod STALE)
+necroid resync-pristine --force-orphans         # accept untracked install files as new pristine
+necroid install --adopt-install      # take ownership of an install managed by another workspace
 necroid update                       # check + self-update from GitHub Releases (packaged binary only)
 necroid update --check               # check only, don't download
 necroid update --rollback            # swap back to the previous binary
@@ -319,7 +331,9 @@ necroid reset                        # mirror pristine -> working tree, clear en
 Per-command flags:
 
 - `init` / `resync-pristine` take `--from {client,server}` (which PZ install seeds the shared workspace).
-- `install` / `uninstall` / `verify` / `list` / `status` take `--to {client,server}` (install destination).
+- `install` / `uninstall` / `verify` / `doctor` / `list` / `status` take `--to {client,server}` (install destination).
+- `resync-pristine` additionally takes `--force-major-change`, `--force-version-drift`, `--force-orphans`, `--adopt-install` (see Troubleshooting above for what each handles).
+- `install` takes `--adopt-install` (rare: cloned / moved workspace).
 - `enter` takes `--as {client,server}` (postfix variant to apply when the mod ships per-destination variants — rare).
 
 Defaults come from `data/.mod-config.json` (`defaultInstallTo`, `workspaceSource`), falling back to `client`.
@@ -341,8 +355,10 @@ necroid/                              # this repo
 ├── data/                             # local-only (all generated content)
 │   ├── .mod-config.json              # written by `init`
 │   ├── .mod-enter.json               # currently entered mod + install_as
-│   ├── .mod-state-client.json        # last install to client destination
-│   ├── .mod-state-server.json        # last install to server destination
+│   ├── .mod-state-client.json        # local cache of the install-side manifest (client)
+│   ├── .mod-state-server.json        # local cache of the install-side manifest (server)
+│   │                                 # — authoritative copy lives in the PZ install at
+│   │                                 #   <pz_install>/.necroid-install.json (hidden on Windows)
 │   ├── tools/vineflower.jar          # downloaded by `init`
 │   └── workspace/                    # one shared PZ-sourced workspace
 │       ├── src-pristine/             # frozen pristine decompile

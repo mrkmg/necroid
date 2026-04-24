@@ -90,5 +90,6 @@ def run(args) -> int:
     # conflict between a newly-added mod and one already installed.
     validate_incompat(p.mods_dir, cfg.workspace_major, merged)
 
-    install_stack(p, merged, install_to=install_to)
+    install_stack(p, merged, install_to=install_to,
+                  adopt_install=bool(getattr(args, "adopt_install", False)))
     return 0

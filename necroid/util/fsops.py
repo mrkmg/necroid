@@ -24,10 +24,18 @@ def empty_dir(path: Path) -> Path:
     return path
 
 
-def mirror_tree(src: Path, dst: Path) -> tuple[int, int, int]:
+def mirror_tree(src: Path, dst: Path, *, verify: bool = False) -> tuple[int, int, int]:
     """Mirror src onto dst. Returns (copied, skipped, deleted).
 
-    Skip heuristic: same size AND mtime differs by <= 2s (FAT mtime resolution).
+    Default skip heuristic: same size AND mtime differs by <= 2s (FAT mtime
+    resolution).
+
+    When `verify=True`, skip decisions fall back to SHA-256 equality whenever
+    the cheap heuristic says "looks equal" — used by `resync-pristine` so a
+    Steam-reverted file that coincidentally landed with a close mtime is NOT
+    silently skipped. ~3000 files × one hash each is cheap compared to the
+    correctness win; resync is not a hot path.
+
     Any file in dst not present in src is deleted. Empty orphan dirs are pruned.
     """
     if not src.exists():
@@ -51,9 +59,19 @@ def mirror_tree(src: Path, dst: Path) -> tuple[int, int, int]:
                 try:
                     s_stat = s.stat()
                     d_stat = d.stat()
-                    if s_stat.st_size == d_stat.st_size and abs(s_stat.st_mtime - d_stat.st_mtime) <= 2:
-                        skipped += 1
-                        continue
+                    size_mtime_match = (
+                        s_stat.st_size == d_stat.st_size
+                        and abs(s_stat.st_mtime - d_stat.st_mtime) <= 2
+                    )
+                    if size_mtime_match:
+                        if not verify:
+                            skipped += 1
+                            continue
+                        # verify mode: confirm with a hash before skipping.
+                        from .hashing import file_sha256
+                        if file_sha256(s) == file_sha256(d):
+                            skipped += 1
+                            continue
                 except OSError:
                     pass
             shutil.copy2(s, d)

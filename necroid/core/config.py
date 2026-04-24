@@ -65,6 +65,7 @@ class ModConfig:
     workspace_source: str = "client"
     workspace_major: int = 0
     workspace_version: str = ""
+    workspace_fingerprint: str = ""  # opaque id; stamped into install-side manifest
     originals_dir_override: str = ""
     _raw: dict = field(default_factory=dict, repr=False)
     _path: Path | None = field(default=None, repr=False)
@@ -123,6 +124,7 @@ def read_config(root: Path, required: bool = True) -> ModConfig:
         workspace_source=raw.get("workspaceSource", "client"),
         workspace_major=workspace_major,
         workspace_version=str(raw.get("workspaceVersion", "") or ""),
+        workspace_fingerprint=str(raw.get("workspaceFingerprint", "") or ""),
         originals_dir_override=str(originals_raw or ""),
         _raw=raw,
         _path=path,
@@ -141,6 +143,7 @@ def write_config(root: Path, cfg: ModConfig) -> Path:
         "workspaceSource": cfg.workspace_source,
         "workspaceMajor": int(cfg.workspace_major),
         "workspaceVersion": cfg.workspace_version,
+        "workspaceFingerprint": cfg.workspace_fingerprint,
     }
     if cfg.originals_dir_override:
         obj["originalsDir"] = cfg.originals_dir_override

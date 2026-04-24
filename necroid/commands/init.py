@@ -99,7 +99,10 @@ def _copy_pz_classes(pz: Path, originals: Path, force: bool) -> None:
             log.info(f"[skip] classes-original/{sub} (use --force to refresh)")
             continue
         log.info(f"classes-original/{sub} <- {src}")
-        mirror_tree(src, dst)
+        # verify=True: resync-pristine sends us a possibly-modded install; we
+        # must re-hash to detect files that look unchanged by mtime/size but
+        # differ in content (e.g. Steam-reverted files with a close mtime).
+        mirror_tree(src, dst, verify=True)
 
 
 def _rejar_originals(originals: Path, out_jar_dir: Path, force: bool) -> None:
@@ -190,6 +193,9 @@ def run(args) -> int:
         )
     cfg.workspace_major = int(chosen_major)
     cfg.workspace_version = str(detected)
+    if not cfg.workspace_fingerprint:
+        cfg.workspace_fingerprint = _generate_fingerprint(root)
+        log.info(f"workspace fingerprint: {cfg.workspace_fingerprint[:16]}…")
     write_config(root, cfg)
     log.info(f"wrote {config_path(root)}  (workspaceMajor={cfg.workspace_major})")
 
@@ -257,6 +263,18 @@ def _ensure_default_gitignore(root: Path) -> None:
         return
     gi.write_text(DEFAULT_GITIGNORE, encoding="utf-8")
     log.info(f"wrote {gi}")
+
+
+def _generate_fingerprint(root: Path) -> str:
+    """Per-workspace opaque id. Persistent across CLI invocations (written to
+    config), unique per-init. Stamped into the install-side manifest so a
+    second Necroid checkout can't silently reuse the same install.
+    """
+    import secrets
+    from datetime import datetime, timezone
+    from ..util.hashing import string_sha256
+    seed = f"{root.resolve()}|{datetime.now(timezone.utc).isoformat()}|{secrets.token_hex(16)}"
+    return string_sha256(seed).upper()
 
 
 def _choose_workspace_major(detected_major: int, args) -> int:
