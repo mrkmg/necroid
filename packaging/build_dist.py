@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import os
 import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -55,6 +57,21 @@ def platform_tag() -> tuple[str, str]:
     else:
         arch = machine or "unknown"
     return plat, arch
+
+
+def build_variant() -> str:
+    """Optional build-variant tag appended to asset names (e.g. 'compat').
+
+    Set via `NECROID_BUILD_VARIANT` env var at build time. The frozen binary
+    reads the same tag at runtime (from the bundled `_build_variant.txt`) so
+    the self-updater can request the matching asset instead of swapping a
+    compat build for a modern build or vice versa.
+    """
+    v = (os.environ.get("NECROID_BUILD_VARIANT") or "").strip().lower()
+    # Conservative allowlist — avoid path shenanigans in archive names.
+    if not all(c.isalnum() or c == "-" for c in v):
+        raise SystemExit(f"invalid NECROID_BUILD_VARIANT: {v!r}")
+    return v
 
 
 def build_macos_icns(assets_dir: Path) -> Path | None:
@@ -142,6 +159,14 @@ def run_pyinstaller() -> Path:
         add_data.extend(["--add-data", f"{probe_java}{sep}necroid/java"])
     else:
         raise SystemExit(f"probe source missing: {probe_java}")
+
+    # Bake the build-variant tag into the binary so the self-updater can
+    # request the matching release asset. Written to a tempfile (not the
+    # source tree) so dev builds / source installs stay clean.
+    variant = build_variant()
+    variant_tmp = Path(tempfile.mkdtemp(prefix="necroid-variant-")) / "_build_variant.txt"
+    variant_tmp.write_text(variant, encoding="utf-8")
+    add_data.extend(["--add-data", f"{variant_tmp}{sep}necroid"])
 
     icon_args: list[str] = []
     if sys.platform == "win32" and icon_ico.exists():
@@ -251,8 +276,10 @@ def write_archive() -> Path:
     Archive contents live at the root of the zip — unzip and run `./necroid`.
     """
     plat, arch = platform_tag()
+    variant = build_variant()
+    suffix = f"-{variant}" if variant else ""
     ARCHIVES.mkdir(parents=True, exist_ok=True)
-    archive_name = f"necroid-v{NECROID_VERSION}-{plat}-{arch}.zip"
+    archive_name = f"necroid-v{NECROID_VERSION}-{plat}-{arch}{suffix}.zip"
     archive_path = ARCHIVES / archive_name
     if archive_path.exists():
         archive_path.unlink()

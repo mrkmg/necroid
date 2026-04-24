@@ -66,10 +66,35 @@ def _platform_tag() -> tuple[str, str]:
     return plat, arch
 
 
+def _build_variant() -> str:
+    """Read the baked-in build-variant tag (e.g. 'compat') from the frozen
+    bundle. Empty for dev / source installs and for the default modern build.
+
+    The file is written by packaging/build_dist.py from the
+    `NECROID_BUILD_VARIANT` env var and bundled via PyInstaller --add-data.
+    Keeps compat and modern Linux binaries on separate update tracks — a
+    compat build won't swap itself for a modern asset that would then refuse
+    to run on the user's older glibc.
+    """
+    try:
+        if getattr(sys, "frozen", False):
+            base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+            p = base / "necroid" / "_build_variant.txt"
+        else:
+            p = Path(__file__).resolve().parent.parent / "_build_variant.txt"
+        if p.exists():
+            return p.read_text(encoding="utf-8").strip().lower()
+    except OSError:
+        pass
+    return ""
+
+
 def _asset_name(version: str) -> str:
     plat, arch = _platform_tag()
     v = version.lstrip("v")
-    return f"necroid-v{v}-{plat}-{arch}.zip"
+    variant = _build_variant()
+    suffix = f"-{variant}" if variant else ""
+    return f"necroid-v{v}-{plat}-{arch}{suffix}.zip"
 
 
 # --------------------------------------------------------------------------- #
