@@ -75,6 +75,7 @@ class ModJson:
     name: str
     client_only: bool = False
     description: str = ""
+    category: str = ""
     version: str = "0.1.0"
     expected_version: str = ""   # PZ version string at last capture, e.g. "41.78.19"
     created_at: str = ""
@@ -89,6 +90,7 @@ class ModJson:
             "name": self.name,
             "clientOnly": self.client_only,
             "description": self.description,
+            "category": self.category,
             "version": self.version,
             "expectedVersion": self.expected_version,
             "createdAt": self.created_at,
@@ -102,7 +104,8 @@ class ModJson:
 
     @staticmethod
     def from_json(o: dict) -> "ModJson":
-        known = {"name", "clientOnly", "description", "version", "expectedVersion",
+        known = {"name", "clientOnly", "description", "category",
+                 "version", "expectedVersion",
                  "createdAt", "updatedAt", "pristineSnapshot",
                  "dependencies", "incompatibleWith"}
         extra = {k: v for k, v in o.items() if k not in known}
@@ -112,6 +115,7 @@ class ModJson:
             name=o["name"],
             client_only=bool(o.get("clientOnly", False)),
             description=o.get("description", "") or "",
+            category=(o.get("category", "") or "").strip().lower(),
             version=o.get("version", "0.1.0"),
             expected_version=str(o.get("expectedVersion", "") or ""),
             created_at=o.get("createdAt", ""),
@@ -208,11 +212,14 @@ def write_mod_json(md: Path, mj: ModJson) -> None:
 
 def new_mod_json(name: str, description: str = "", client_only: bool = False,
                  expected_version: str = "",
+                 category: str = "",
                  dependencies: list[str] | None = None,
                  incompatible_with: list[str] | None = None) -> ModJson:
     now = utc_now_iso()
     return ModJson(
-        name=name, client_only=client_only, description=description, version="0.1.0",
+        name=name, client_only=client_only, description=description,
+        category=(category or "").strip().lower(),
+        version="0.1.0",
         expected_version=expected_version,
         created_at=now, updated_at=now, pristine_snapshot="",
         dependencies=list(dependencies or []),

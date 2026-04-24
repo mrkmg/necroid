@@ -64,21 +64,49 @@ If something drifted (e.g. Steam ran a "Verify Integrity of Game Files" pass and
 
 ## Bundled mods
 
-Each mod ships with its own README — click through for behaviour notes, in-game commands, and compatibility caveats.
+Each mod ships with its own README — click through for behaviour notes, in-game commands, and compatibility caveats. Mods are grouped by **category** — the same grouping you see in `necroid list` and the GUI's collapsible mod tree. Every mod carries a free-form `category` field in its `mod.json`; third-party authors can use their own, but the suggested set is `admin`, `bugfix`, `dev-tools`, `mechanics`, `ui`, `utility`.
+
+### Admin
 
 | Mod | Client-only? | What it does |
 |---|---|---|
 | [admin-xray](mods/admin-xray-41/README.md) | yes | Staff render overrides — **F9** for LOS / wall-cutaway, **Shift+F9** fades every static world object. |
-| [ghost-zombie-fix](mods/ghost-zombie-fix-41/README.md) | no | Server-side: sends zombie-delete broadcasts reliably so UDP packet loss stops producing stuck-dying "ghost zombies" on lossy links. |
-| [gravymod](mods/gravymod-41/README.md) | no | Adds various lua utils and commands. |
-| [lua-profiler](mods/lua-profiler-41/README.md) | no | Per-mod Lua profiler with event/builtin/sample modes. Flame-graph output + mod/file filter. |
-| [more-zoom](mods/more-zoom-41/README.md) | yes | Adds one extra zoom-out (300%) and one extra zoom-in (25%) level. |
-| [multi-login](mods/multi-login-41/README.md) | no | Server-side: login queue admits N players concurrently instead of one at a time. Adds `MaxConcurrentLogins` (1–32, default 3). Depends on staff-priority. |
-| [no-radio-fzzt](mods/no-radio-fzzt-41/README.md) | no | Disable all radio obfuscation (weather interference + distance falloff + scramble pipeline). Install to client or server. |
-| [notifications](mods/notifications-41/README.md) | yes | Utility / API mod. Shared toast-notification surface other mods call into. |
-| [slow-chunk-fix](mods/slow-chunk-fix-41/README.md) | yes | Raise the connecting-client chunk-download stall timeout from 60s to 10min so slow links finish loading instead of giving up. |
 | [staff-priority](mods/staff-priority-41/README.md) | no | Staff (admin / moderator / overseer / gm / observer) skip ahead of VIPs and regular players in the login queue when the server is full. |
+
+### Bugfix
+
+| Mod | Client-only? | What it does |
+|---|---|---|
+| [ghost-zombie-fix](mods/ghost-zombie-fix-41/README.md) | no | Server-side: sends zombie-delete broadcasts reliably so UDP packet loss stops producing stuck-dying "ghost zombies" on lossy links. |
+| [no-radio-fzzt](mods/no-radio-fzzt-41/README.md) | no | Disable all radio obfuscation (weather interference + distance falloff + scramble pipeline). Install to client or server. |
+| [slow-chunk-fix](mods/slow-chunk-fix-41/README.md) | yes | Raise the connecting-client chunk-download stall timeout from 60s to 10min so slow links finish loading instead of giving up. |
 | [weather-flash-fix](mods/weather-flash-fix-41/README.md) | yes | Stops the 10-minute weather-resync flash when a Lua mod (e.g. Wasteland) is overriding client climate values. |
+
+### Dev-tools
+
+| Mod | Client-only? | What it does |
+|---|---|---|
+| [lua-profiler](mods/lua-profiler-41/README.md) | no | Per-mod Lua profiler with event/builtin/sample modes. Flame-graph output + mod/file filter. |
+
+### Mechanics
+
+| Mod | Client-only? | What it does |
+|---|---|---|
+| [no-zombie-cull](mods/no-zombie-cull-41/README.md) | no | Disables the 500-zombie client cull so zombies in loaded chunks stay alive instead of silently despawning. |
+
+### UI
+
+| Mod | Client-only? | What it does |
+|---|---|---|
+| [more-zoom](mods/more-zoom-41/README.md) | yes | Adds one extra zoom-out (300%) and one extra zoom-in (25%) level. |
+| [notifications](mods/notifications-41/README.md) | yes | Utility / API mod. Shared toast-notification surface other mods call into. |
+
+### Utility
+
+| Mod | Client-only? | What it does |
+|---|---|---|
+| [gravymod](mods/gravymod-41/README.md) | no | Adds various lua utils and commands. |
+| [multi-login](mods/multi-login-41/README.md) | no | Server-side: login queue admits N players concurrently instead of one at a time. Adds `MaxConcurrentLogins` (1–32, default 3). Depends on staff-priority. |
 
 "Client-only" mods require a Project Zomboid **client** install and can only be installed to the client. Non-client-only mods can install to either the client or the Dedicated Server.
 

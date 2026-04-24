@@ -2,6 +2,7 @@
   "name": "gravymod",
   "clientOnly": false,
   "description": "Adds various lua utils and commands.",
+  "category": "utility",
   "version": "0.1.0",
   "expectedVersion": "41.78.19",
   "createdAt": "2026-04-19T17:07:27.647238Z",

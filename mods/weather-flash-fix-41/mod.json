@@ -2,6 +2,7 @@
   "name": "weather-flash-fix",
   "clientOnly": true,
   "description": "Preserve client-modded climate values across the 10-minute server weather sync \u2014 no flash.",
+  "category": "bugfix",
   "version": "0.1.0",
   "expectedVersion": "41.78.19",
   "createdAt": "2026-04-20T02:18:50.405064Z",

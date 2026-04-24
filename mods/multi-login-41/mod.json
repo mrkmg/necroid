@@ -2,6 +2,7 @@
   "name": "multi-login-41",
   "clientOnly": false,
   "description": "Server-side: allow the login queue to admit N players concurrently instead of exactly one. Adds MaxConcurrentLogins (1-32, default 3). Tune in server .ini. Stacks on top of staff-priority.",
+  "category": "utility",
   "version": "0.1.0",
   "expectedVersion": "41.78.19",
   "createdAt": "2026-04-22T15:00:56.679572Z",

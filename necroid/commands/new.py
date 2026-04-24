@@ -70,16 +70,20 @@ def run(args) -> int:
         raise ModAlreadyExists(f"mod '{dirname}' already exists at {d}")
     ensure_dir(d)
     ensure_dir(d / "patches")
+    category = (getattr(args, "category", "") or "").strip().lower()
     mj = new_mod_json(
         name=dirname,
         description=args.description or "",
         client_only=client_only,
         expected_version=cfg.workspace_version or "",
+        category=category,
         dependencies=dependencies,
         incompatible_with=incompatible_with,
     )
     write_mod_json(d, mj)
     extras = []
+    if category:
+        extras.append(f"category={category}")
     if dependencies:
         extras.append(f"deps={dependencies}")
     if incompatible_with:

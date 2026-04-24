@@ -12,6 +12,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Mods carry a `clientOnly` flag.** In `mod.json`, `clientOnly: true` means the mod requires a configured client PZ install and cannot be installed to the server (it relies on client-only rendering / input code). `clientOnly: false` (default) means the mod works against either destination. There is no per-mod "target" any more.
 
+**Mods carry a free-form `category` string** in `mod.json` (empty = uncategorized). Suggested vocab: `admin`, `bugfix`, `dev-tools`, `mechanics`, `ui`, `utility` — not enforced, 3rd-party authors can use anything. `necroid list` prints mods grouped under category section headers (`necroid list --category bugfix` filters to one group); the GUI renders each category as a collapsible parent row in the mod tree. Set at scaffold time via `necroid new <name> --category <cat>` or edit `mod.json` directly. The loader lowercases the value on read/write; absent field behaves identically to `""`.
+
 **Workspace is bound to one PZ major version.** Every PZ major (41, 42, ...) decompiles to an incompatible source tree — a 41-authored patch set cannot apply to 42 pristine and vice versa. Necroid handles this by binding a workspace to exactly one major at `init` time (detected via a tiny Java probe that reads `zombie.core.Core.gameVersion` + `Core.buildVersion` via reflection — see `necroid/pzversion.py`). The bound major is stored in `config.workspaceMajor`; the full version string (e.g. `"41.78.19"`) is stored in `config.workspaceVersion`.
 
 **Mod dirs encode their PZ major in the name.** `mods/<base>-<major>/` — e.g. `admin-xray-41`. The `-<major>` suffix is authoritative: `list`, `status`, `install`, `enter`, and the GUI filter mods against `workspaceMajor` and refuse to touch incompatible variants. `necroid install admin-xray` resolves bare bases against the workspace major (so `admin-xray` → `admin-xray-41` if that's what the workspace is bound to). `mod.json` additionally stamps `expectedVersion` (the full PZ version at the time of last `capture`) for soft minor/patch-drift warnings — the dir suffix is the hard gate, `expectedVersion` is the recapture hint.
@@ -158,7 +160,7 @@ There are **no tests and no linter** for the PZ-decompiled code — it's decompi
 
 ### Creating a new mod
 
-1. `necroid new my-mod --description "..."` — scaffolds `mods/my-mod-<major>/mod.json` + empty `patches/`. Add `--client-only` if the mod touches client-only code.
+1. `necroid new my-mod --description "..."` — scaffolds `mods/my-mod-<major>/mod.json` + empty `patches/`. Add `--client-only` if the mod touches client-only code. Add `--category <cat>` (e.g. `--category utility`) to group it in `list` and the GUI.
 2. `necroid enter my-mod` — if `src-my-mod/` (at the repo root) doesn't exist yet, seeds it from pristine and applies my-mod's patches (none yet for a fresh mod); if it already exists, preserves its contents. Working tree is now "entered" on my-mod (recorded in `data/.mod-enter.json`, including `installAs`). Each mod gets its own `src-<name>/` tree at the repo root, so switching between mods is non-destructive.
 3. Edit files under `src-my-mod/zombie/`. Only touch files you intend to ship — every diff vs pristine becomes a patch.
 4. `necroid capture my-mod` — diffs `src-my-mod/` against `data/workspace/src-pristine/` and writes `.java.patch` / `.java.new` / `.java.delete` under `mods/my-mod-<major>/patches/`. Safe to run repeatedly.

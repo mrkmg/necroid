@@ -87,12 +87,19 @@ def _build_parser() -> argparse.ArgumentParser:
     s.add_argument("--incompatible-with", dest="incompat", action="append", default=[],
                    metavar="MOD",
                    help="declare an incompatibility with another mod (repeatable; bare mod name)")
+    s.add_argument("--category", "-c", dest="category", default="",
+                   metavar="CAT",
+                   help="group the mod under a category (free-form; suggested: "
+                        "admin, bugfix, dev-tools, mechanics, ui, utility)")
 
     s = sub.add_parser("list", help="tabular view of all mods")
     s.add_argument("--to", dest="install_to", choices=("client", "server"), default=None,
                    help="destination to count patches for (default: config.defaultInstallTo)")
     s.add_argument("--all", dest="show_all", action="store_true",
                    help="show mods for every PZ major (default: filter to workspaceMajor)")
+    s.add_argument("--category", "-c", dest="category_filter", default=None,
+                   metavar="CAT",
+                   help="only show mods in this category")
 
     s = sub.add_parser("status", help="working-tree divergence or per-mod patch applicability")
     s.add_argument("name", nargs="?", default=None)

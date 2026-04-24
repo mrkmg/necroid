@@ -2,6 +2,7 @@
   "name": "more-zoom",
   "clientOnly": true,
   "description": "Adds more zoom levels.",
+  "category": "ui",
   "version": "0.1.1",
   "expectedVersion": "41.78.19",
   "createdAt": "2026-04-19T03:30:47.6167521Z",

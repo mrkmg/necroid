@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Optional
 
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import font as tkfont, messagebox, ttk
 
 from .. import __version__
 from ..remote import updater
@@ -79,6 +79,8 @@ class ModderApp:
         self.installed_stack: list[str] = []
         self.mod_order: list[str] = []
         self._ws_major: int = 0
+        # Category groups that the user has collapsed — preserved across refreshes.
+        self._collapsed_cats: set[str] = set()
         # Relation maps (keyed by canonical mod dir name, e.g. admin-xray-41).
         # Populated in refresh_mods; used by row-click and apply preflight.
         self._dep_closure: dict[str, list[str]] = {}
@@ -306,17 +308,22 @@ class ModderApp:
         frame.pack(fill=tk.BOTH, expand=True)
 
         columns = ("check", "name", "info", "origin", "kind", "version", "status", "desc")
-        tv = ttk.Treeview(frame, columns=columns, show="headings", selectmode="none")
+        tv = ttk.Treeview(frame, columns=columns, show=("tree", "headings"),
+                          selectmode="none")
+        tv.heading("#0", text="")
         tv.heading("check", text="")
-        tv.heading("name", text="Mod")
+        tv.heading("name", text="Mod", anchor=tk.W)
         tv.heading("info", text="")
         tv.heading("origin", text="")
-        tv.heading("kind", text="Type")
-        tv.heading("version", text="Version")
-        tv.heading("status", text="Status")
-        tv.heading("desc", text="Description")
+        tv.heading("kind", text="Type", anchor=tk.W)
+        tv.heading("version", text="Version", anchor=tk.W)
+        tv.heading("status", text="Status", anchor=tk.W)
+        tv.heading("desc", text="Description", anchor=tk.W)
+        # #0 is the tree column (chevron only — category labels live in `name`
+        # on parent rows so mod rows line up flush with category headers).
+        tv.column("#0", width=24, minwidth=24, anchor=tk.W, stretch=False)
         tv.column("check", width=30, anchor=tk.CENTER, stretch=False)
-        tv.column("name", width=170, anchor=tk.W)
+        tv.column("name", width=200, anchor=tk.W)
         tv.column("info", width=30, anchor=tk.CENTER, stretch=False)
         tv.column("origin", width=30, anchor=tk.CENTER, stretch=False)
         tv.column("kind", width=78, anchor=tk.W, stretch=False)
@@ -331,6 +338,14 @@ class ModderApp:
 
         tv.tag_configure("blocked", foreground=PALETTE["bone_dim"])
         tv.tag_configure("outdated", foreground=PALETTE["warn"])
+        # Category header rows: bone (main text color) + bold weight so they
+        # anchor the group visually without a garish accent tint.
+        cat_font = tkfont.nametofont("TkDefaultFont").copy()
+        cat_font.configure(weight="bold", size=cat_font.cget("size") + 1)
+        tv.tag_configure("category",
+                         foreground=PALETTE["bone"],
+                         background=PALETTE["char_700"],
+                         font=cat_font)
 
         tv.bind("<Button-1>", self._on_row_click)
         # Right-click context menu — Button-3 on Win/Linux, Button-2 on macOS.
@@ -439,7 +454,27 @@ class ModderApp:
 
     # --- data ---
 
+    _CAT_IID_PREFIX = "__cat__"
+    _UNCATEGORIZED_LABEL = "(uncategorized)"
+
+    def _capture_collapsed_cats(self) -> None:
+        """Remember which category rows are currently collapsed so the next
+        refresh can restore them."""
+        for iid in self.tv.get_children(""):
+            if not iid.startswith(self._CAT_IID_PREFIX):
+                continue
+            cat = iid[len(self._CAT_IID_PREFIX):]
+            try:
+                is_open = bool(self.tv.item(iid, "open"))
+            except tk.TclError:
+                continue
+            if is_open:
+                self._collapsed_cats.discard(cat)
+            else:
+                self._collapsed_cats.add(cat)
+
     def refresh_mods(self, reseed_checked: bool = True) -> None:
+        self._capture_collapsed_cats()
         self.tv.delete(*self.tv.get_children())
         try:
             cfg = read_config(self.root, required=False)
@@ -518,6 +553,8 @@ class ModderApp:
 
         has_blocked = False
         order: list[str] = []
+        # Bucket rows by category so we can emit parent→child Treeview nodes.
+        grouped: dict[str, list[tuple[str, tuple, tuple[str, ...]]]] = {}
         for name in candidates:
             try:
                 mj = read_mod_json(mods_dir / name)
@@ -579,12 +616,31 @@ class ModderApp:
                 tags.append("outdated")
             tag_args = tuple(tags)
             desc = self._decorate_desc(name, mj)
-            self.tv.insert("", tk.END, iid=name,
-                           values=(check, display_name, info, origin_glyph,
-                                   kind, version_cell, status, desc),
-                           tags=tag_args)
+            values = (check, display_name, info, origin_glyph,
+                      kind, version_cell, status, desc)
+            cat = mj.category or self._UNCATEGORIZED_LABEL
+            grouped.setdefault(cat, []).append((name, values, tag_args))
             if blocked:
                 has_blocked = True
+
+        # Emit category parents (uncategorized last) + child mod rows.
+        def _cat_key(c: str) -> tuple[int, str]:
+            return (1, "") if c == self._UNCATEGORIZED_LABEL else (0, c)
+
+        for cat in sorted(grouped.keys(), key=_cat_key):
+            rows = grouped[cat]
+            parent_iid = f"{self._CAT_IID_PREFIX}{cat}"
+            parent_label = f"{cat.upper()}  ·  {len(rows)}"
+            is_open = cat not in self._collapsed_cats
+            # Parent row: empty #0 tree column (just the chevron), category
+            # label rendered in the `name` data column so mod-row names align
+            # flush with the category header text.
+            self.tv.insert("", tk.END, iid=parent_iid, text="",
+                           values=("", parent_label, "", "", "", "", "", ""),
+                           open=is_open, tags=("category",))
+            for name, values, tag_args in rows:
+                self.tv.insert(parent_iid, tk.END, iid=name,
+                               values=values, tags=tag_args)
         self.mod_order = order
         self._has_blocked = has_blocked
         self._outdated_count = outdated_count
@@ -758,6 +814,9 @@ class ModderApp:
     def _on_row_click(self, event) -> None:
         row = self.tv.identify_row(event.y)
         if not row:
+            return
+        # Category parent rows — let Tk handle the chevron toggle natively.
+        if row.startswith(self._CAT_IID_PREFIX):
             return
         # Clicking the info column opens the README.
         col = self.tv.identify_column(event.x)
@@ -1119,6 +1178,8 @@ class ModderApp:
     def _on_row_context(self, event) -> None:
         row = self.tv.identify_row(event.y)
         if not row:
+            return
+        if row.startswith(self._CAT_IID_PREFIX):
             return
         if self._runner.busy:
             return
