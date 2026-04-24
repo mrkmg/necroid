@@ -29,10 +29,11 @@ jobs:
           - os: ubuntu-latest
             suffix: linux-x64-compat
             variant: compat
-            # manylinux_2_28 = glibc 2.28 baseline: Rocky 8, Debian 11,
-            # Ubuntu 20.04+, RHEL 8. Older glibc (CentOS 7 / manylinux2014)
-            # would break actions/checkout's bundled node.
-            compat_image: quay.io/pypa/manylinux_2_28_x86_64
+            # Rocky 8 = glibc 2.28 baseline: Rocky 8, Debian 11,
+            # Ubuntu 20.04+, RHEL 8. manylinux images ship static Python
+            # which PyInstaller refuses, so we use a distro image with a
+            # shared-lib python from AppStream instead.
+            compat_image: rockylinux:8
           - os: ubuntu-24.04-arm
             suffix: linux-arm64
           - os: macos-15-intel
@@ -82,7 +83,12 @@ jobs:
             "${{ matrix.compat_image }}" \
             bash -c '
               set -euo pipefail
-              PY=/opt/python/cp312-cp312/bin/python
+              # Rocky 8 ships python 3.12 via AppStream (8.8+).
+              # python3.12-tkinter pulls the Tk libs PyInstaller needs to
+              # bundle for the GUI. binutils gives ldd/strip that
+              # PyInstaller shells out to.
+              dnf install -y python3.12 python3.12-pip python3.12-tkinter binutils
+              PY=/usr/bin/python3.12
               "$PY" -m pip install --upgrade pip pyinstaller
               tag="${GITHUB_REF_NAME}"
               tag_version="${tag#v}"
