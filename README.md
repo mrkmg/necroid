@@ -19,7 +19,7 @@ You know how Steam Workshop is great, until you want change how radios work, hav
 Necroid ships a bundle of Java-level mods for Project Zomboid plus a small app to install and uninstall them cleanly. Everything is reversible — you can always put the game back exactly how Steam shipped it.
 
 <p align="center">
-  <img src="assets/necroid-screenshot-v0.4.0.png" alt="Necroid GUI"/>
+  <img src="assets/necroid-screenshot-v0.5.0.png" alt="Necroid GUI"/>
 </p>
 
 ---
