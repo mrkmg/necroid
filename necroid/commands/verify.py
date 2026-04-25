@@ -58,6 +58,16 @@ def run(args) -> int:
         print("  nothing installed; nothing to verify.")
         return 0 if not any_issue else 1
 
+    # --- fat-jar drift (jar layout only) ---
+    if manifest is not None:
+        jar_audit = manifest_mod.audit_pz_jar(content_dir, manifest)
+        if jar_audit is manifest_mod.JarAuditResult.JAR_MISSING:
+            print("  JAR MISSING: projectzomboid.jar is gone from the install.")
+            any_issue = True
+        elif jar_audit is manifest_mod.JarAuditResult.JAR_DRIFT:
+            print("  JAR DRIFT: projectzomboid.jar hash changed since install (Steam patch update).")
+            any_issue = True
+
     # --- PZ version drift ---
     try:
         detected = str(detect_pz_version(content_dir, package_dir(), p.root / "data"))

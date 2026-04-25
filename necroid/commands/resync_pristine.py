@@ -111,6 +111,29 @@ def _audit_destination(profile, dest: str, *, force_version_drift: bool,
         assert rec.manifest is not None
         audit = manifest_mod.audit_manifest_files(content_dir, rec.manifest)
 
+    # Fat-jar drift: jar-layout installs record `pz_jar_sha256`. A live jar
+    # whose hash diverged from the recorded one is the jar-layout equivalent
+    # of NEW_VERSION_DRIFT — Steam shipped a patch update that swapped the
+    # fat jar's bytes. Without --force-version-drift, abort: the workspace's
+    # pristine + classes-original/ are still pinned to the old jar, and a
+    # re-init now would copy the new jar but every mod's diffs are still
+    # against the old contents.
+    if rec.status is not manifest_mod.ReconcileStatus.LEGACY_UNMIGRATED:
+        jar_audit = manifest_mod.audit_pz_jar(content_dir, rec.manifest)
+        if jar_audit is manifest_mod.JarAuditResult.JAR_DRIFT and not force_version_drift:
+            raise InstallVersionDrift(
+                f"{dest}: projectzomboid.jar hash differs from the install-time "
+                f"record. Steam patched PZ to a new build (the jar contents have "
+                f"changed). Pass `--force-version-drift` to adopt the new jar as "
+                f"the new pristine — every installed mod will be flagged for "
+                f"re-capture against the new bytes."
+            )
+        elif jar_audit is manifest_mod.JarAuditResult.JAR_DRIFT:
+            log.warn(
+                f"{dest}: projectzomboid.jar drifted (Steam patch update). "
+                f"--force-version-drift set: adopting new jar as pristine."
+            )
+
     drifted = [a for a in audit if a.result is manifest_mod.FileAuditResult.NEW_VERSION_DRIFT]
     tampered_added = [a for a in audit if a.result is manifest_mod.FileAuditResult.ADDED_TAMPERED]
     if drifted or tampered_added:

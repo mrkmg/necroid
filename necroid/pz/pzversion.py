@@ -27,7 +27,7 @@ from ..util import logging_util as log
 from ..util import procs
 from ..errors import PzVersionDetectError
 from ..util.hashing import file_sha256
-from ..util.tools import resolve
+from ..util.tools import require_java_release, resolve
 
 
 _PROBE_JAVA_REL = Path("java") / "NecroidGetPzVersion.java"
@@ -111,6 +111,41 @@ def ensure_probe_compiled(necroid_pkg_dir: Path, data_dir: Path) -> Path:
     return cache_dir
 
 
+def _classfile_required_jdk(class_bytes: bytes) -> int:
+    """Inspect the first 8 bytes of a `.class` file and return the minimum
+    JDK major needed to load it.
+
+    Class file format: bytes 0..3 = magic 0xCAFEBABE, bytes 4..5 = minor,
+    bytes 6..7 = major (big-endian). Major = JDK + 44 (so 61 = JDK 17,
+    65 = JDK 21, 69 = JDK 25). 0 on parse failure — caller falls back to
+    the PATH java / lowest available.
+    """
+    if len(class_bytes) < 8 or class_bytes[:4] != b"\xCA\xFE\xBA\xBE":
+        return 0
+    classfile_major = (class_bytes[6] << 8) | class_bytes[7]
+    if classfile_major < 45:
+        return 0
+    return classfile_major - 44
+
+
+def _read_core_classfile_head(loose_core: Path | None, fat_jar: Path | None) -> bytes:
+    """Read the first 8 bytes of `zombie/core/Core.class` from whichever
+    source exists. Returns empty bytes on any failure (caller treats as
+    "version unknown")."""
+    try:
+        if loose_core and loose_core.is_file():
+            with open(loose_core, "rb") as fp:
+                return fp.read(8)
+        if fat_jar and fat_jar.is_file():
+            import zipfile
+            with zipfile.ZipFile(fat_jar, "r") as zf:
+                with zf.open("zombie/core/Core.class", "r") as fp:
+                    return fp.read(8)
+    except (OSError, KeyError):
+        pass
+    return b""
+
+
 def detect_pz_version(content_dir: Path, necroid_pkg_dir: Path, data_dir: Path) -> PzVersion:
     """Run the probe against `content_dir` (the directory containing the
     `zombie/core/Core.class` tree) and return the parsed PzVersion.
@@ -120,16 +155,48 @@ def detect_pz_version(content_dir: Path, necroid_pkg_dir: Path, data_dir: Path) 
     """
     if not content_dir.exists():
         raise PzVersionDetectError(f"PZ content dir does not exist: {content_dir}")
-    core_class = content_dir / "zombie" / "core" / "Core.class"
-    if not core_class.is_file():
+
+    # Two layouts: loose tree (PZ <=41, `zombie/core/Core.class` on disk) or
+    # fat jar (PZ >=42, classes inside `<content>/projectzomboid.jar`). The
+    # probe just needs Core on the classpath — let the filesystem tell us
+    # which form to feed it.
+    loose_core = content_dir / "zombie" / "core" / "Core.class"
+    fat_jar = content_dir / "projectzomboid.jar"
+    if loose_core.is_file():
+        core_source = str(content_dir)
+    elif fat_jar.is_file():
+        core_source = str(fat_jar)
+    else:
         raise PzVersionDetectError(
-            f"zombie/core/Core.class not found under {content_dir} — "
-            f"is this a Project Zomboid install?"
+            f"neither zombie/core/Core.class nor projectzomboid.jar found under "
+            f"{content_dir} — is this a Project Zomboid install?"
         )
 
     cache_dir = ensure_probe_compiled(necroid_pkg_dir, data_dir)
-    java = str(resolve("java"))
-    cp = os.pathsep.join([str(cache_dir), str(content_dir)])
+
+    # Pick a `java` runtime new enough to load Core.class. PZ 42 bytecode is
+    # class-file v69 (needs JDK 25); a stale-PATH JDK 21 silently returns
+    # UnsupportedClassVersionError. Read Core's class-file version directly,
+    # then resolve via the JDK-discovery path (PATH first, then known install
+    # roots, plus PZ's bundled `jre64/` as an extra root so the JRE shipped
+    # with the install is always a candidate — guaranteed to match its own
+    # bytecode).
+    head = _read_core_classfile_head(
+        loose_core if loose_core.is_file() else None,
+        fat_jar if fat_jar.is_file() else None,
+    )
+    needed_jdk = _classfile_required_jdk(head)
+    extra_jdk_roots: tuple[Path, ...] = (
+        content_dir / "jre64",
+        content_dir.parent / "jre64",
+    )
+    if needed_jdk > 0:
+        java = str(require_java_release(needed_jdk, extra_roots=extra_jdk_roots))
+    else:
+        # Couldn't read class-file version — fall back to PATH java; if it
+        # really is too old, the probe error message is enough to diagnose.
+        java = str(resolve("java"))
+    cp = os.pathsep.join([str(cache_dir), core_source])
     cmd = [java, "-cp", cp, _PROBE_CLASS_NAME]
     proc = procs.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:

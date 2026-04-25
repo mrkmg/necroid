@@ -3,14 +3,28 @@
 Since client and server ship byte-identical Java class trees, one workspace
 serves both destinations. Pick whichever install you have via `--from`.
 
+Two install layouts are supported:
+
+- **loose** (PZ build 41 and earlier): classes live as a tree of `.class`
+  files under `<pz>/zombie/...`. `init` mirrors that tree into
+  `classes-original/` and rejars each subtree for `javac -cp`.
+- **jar** (PZ build 42+): classes live inside a single fat
+  `<pz>/projectzomboid.jar`. `init` extracts the jar into `classes-original/`
+  (so the decompiler and hash-based restore paths keep seeing a loose tree)
+  and skips the rejar step — the fat jar itself is on `javac -cp` via
+  `workspace/libs/projectzomboid.jar`.
+
 Steps:
     1. Resolve source PZ install (flag -> config -> autodetect -> default).
-    2. Check external tools (java, javac, jar, git).
+    2. Check external tools (java, jar, git; javac is version-checked later
+       once we know the target release).
     3. Download tools/vineflower.jar.
     4. Copy PZ top-level *.jar  -> workspace/libs/
-    5. Copy PZ class subtrees    -> workspace/classes-original/
+    5. Seed workspace/classes-original/  (loose: mirror; jar: extract).
     6. Rejar each subtree        -> workspace/libs/classpath-originals/<name>.jar
-    7. Detect PZ version via probe; confirm workspace major; write config.
+       (skipped on jar layout — fat jar is the classpath original).
+    7. Detect PZ version via probe; confirm workspace major; derive layout +
+       javac release; verify javac is new enough; write config.
     8. Decompile every present class subtree -> workspace/src-pristine/ (Vineflower).
     9. Scaffold mods/ and write a default .gitignore if none exists.
 """
@@ -24,14 +38,22 @@ from ..util import logging_util as log
 from ..util import procs
 from ..core.config import ModConfig, config_path, read_config, write_config
 from ..build.decompile import ensure_vineflower, decompile_all
+from ..build.jar_extract import extract_fat_jar
 from ..errors import ConfigError, PzVersionDetectError
 from ..util.fsops import ensure_dir, mirror_tree
 from ..util.hashing import file_sha256
-from ..core.profile import PZ_CLASS_SUBTREES, autodetect_server_install, load_profile
+from ..core.profile import (
+    PZ_CLASS_SUBTREES,
+    PZ_FAT_JAR_NAME,
+    autodetect_server_install,
+    detect_layout,
+    java_release_for_major,
+    load_profile,
+)
 from ..pz.pzversion import detect_pz_version
 from ..pz.steam_discovery import discover_client_install
 from ..paths import package_dir
-from ..util.tools import check_all, resolve
+from ..util.tools import check_all, require_javac_release, resolve
 
 
 def _resolve_pz_install(source: str, existing: Path | None, flag: str | None, root: Path) -> Path:
@@ -146,6 +168,7 @@ def run(args) -> int:
         raise ConfigError(f"PZ install dir does not exist: {pz}")
     log.info(str(pz))
 
+    # javac is version-gated later once we know the target release (PZ 42 needs JDK 25+).
     log.step("step 2/9: tools check (java, javac, jar, git)")
     found = check_all(["java", "javac", "jar", "git"])
     for name, path in found.items():
@@ -166,14 +189,32 @@ def run(args) -> int:
     content = profile.content_dir_for(source)
     if not content.exists():
         raise ConfigError(f"expected content dir does not exist: {content}")
+
+    layout = detect_layout(content)
+    log.info(f"detected install layout: {layout}"
+             + (" (fat jar — PZ 42+)" if layout == "jar" else " (loose class tree — PZ <=41)"))
+
     log.step(f"step 4/9: copy PZ jars -> {profile.libs.relative_to(root)}")
     _copy_pz_jars(content, profile.libs, force=args.force)
 
-    log.step(f"step 5/9: copy PZ class trees -> {profile.originals.relative_to(root)}")
-    _copy_pz_classes(content, profile.originals, force=args.force)
+    if layout == "jar":
+        fat_jar = profile.libs / PZ_FAT_JAR_NAME
+        if not fat_jar.is_file():
+            # Should never happen — _copy_pz_jars copies every top-level .jar.
+            raise ConfigError(
+                f"workspace layout is 'jar' but {fat_jar} was not copied.\n"
+                f"    is {content / PZ_FAT_JAR_NAME} present in the PZ install?"
+            )
+        log.step(f"step 5/9: extract {PZ_FAT_JAR_NAME} -> {profile.originals.relative_to(root)}")
+        extract_fat_jar(fat_jar, profile.originals, PZ_CLASS_SUBTREES, force=args.force)
 
-    log.step(f"step 6/9: rejar class trees -> {profile.classpath_originals.relative_to(root)}")
-    _rejar_originals(profile.originals, profile.classpath_originals, force=args.force)
+        log.step(f"step 6/9: rejar class trees -> {profile.classpath_originals.relative_to(root)} (skipped — fat jar serves as classpath original)")
+    else:
+        log.step(f"step 5/9: copy PZ class trees -> {profile.originals.relative_to(root)}")
+        _copy_pz_classes(content, profile.originals, force=args.force)
+
+        log.step(f"step 6/9: rejar class trees -> {profile.classpath_originals.relative_to(root)}")
+        _rejar_originals(profile.originals, profile.classpath_originals, force=args.force)
 
     log.step(f"step 7/9: detect PZ version; write {config_path(root).relative_to(root)}")
     try:
@@ -193,11 +234,25 @@ def run(args) -> int:
         )
     cfg.workspace_major = int(chosen_major)
     cfg.workspace_version = str(detected)
+    cfg.workspace_layout = layout
+    cfg.java_release = java_release_for_major(chosen_major)
     if not cfg.workspace_fingerprint:
         cfg.workspace_fingerprint = _generate_fingerprint(root)
         log.info(f"workspace fingerprint: {cfg.workspace_fingerprint[:16]}…")
+
+    # Enforce javac >= target release now that we know the target. A mismatch
+    # is a hard error here (rather than surfacing later at first `install` /
+    # `test`) because the rest of `init` ran expensive work assuming the
+    # user would be able to compile against it.
+    require_javac_release(cfg.java_release, hint_major=cfg.java_release)
+    log.info(f"javac release target: {cfg.java_release}")
+
     write_config(root, cfg)
-    log.info(f"wrote {config_path(root)}  (workspaceMajor={cfg.workspace_major})")
+    log.info(
+        f"wrote {config_path(root)}  "
+        f"(workspaceMajor={cfg.workspace_major}, layout={cfg.workspace_layout}, "
+        f"javaRelease={cfg.java_release})"
+    )
 
     log.step(f"step 8/9: decompile class subtrees -> {profile.pristine.relative_to(root)}")
     libs_jars = sorted(profile.libs.glob("*.jar")) + sorted(profile.classpath_originals.glob("*.jar"))

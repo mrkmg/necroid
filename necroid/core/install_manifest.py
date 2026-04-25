@@ -25,10 +25,12 @@ Schema v1:
       "workspace": {
         "fingerprint": "<hex>",
         "workspaceDir": "...",
-        "workspaceMajor": 41
+        "workspaceMajor": 41,
+        "workspaceLayout": "loose" | "jar"
       },
       "destination": "client" | "server",
       "pzVersionAtInstall": "41.78.19",
+      "pzJarSha256": "<hex>"|"" (jar layout only),
       "installedAt": "<ISO UTC>",
       "stack": [{"dirname": "admin-xray-41", "version": "0.3.1"}, ...],
       "files": [
@@ -39,6 +41,12 @@ Schema v1:
          "modOrigin": "admin-xray-41"}
       ]
     }
+
+The `workspaceLayout` and `pzJarSha256` fields were added when PZ build 42
+introduced the fat-jar layout. They're absent on manifests written by older
+Necroid versions; readers default `workspaceLayout` to `"loose"` and
+`pzJarSha256` to empty (no jar tracking). Jar drift detection is a no-op
+on loose-layout installs.
 """
 from __future__ import annotations
 
@@ -116,8 +124,10 @@ class InstallManifest:
     workspace_fingerprint: str = ""
     workspace_dir: str = ""
     workspace_major: int = 0
+    workspace_layout: str = "loose"          # "loose" or "jar"
     destination: str = "client"
     pz_version_at_install: str = ""
+    pz_jar_sha256: str = ""                  # jar-layout only; "" for loose installs
     installed_at: str = ""
     stack: list[ManifestStackEntry] = field(default_factory=list)
     files: list[ManifestFile] = field(default_factory=list)
@@ -129,9 +139,11 @@ class InstallManifest:
                 "fingerprint": self.workspace_fingerprint,
                 "workspaceDir": self.workspace_dir,
                 "workspaceMajor": int(self.workspace_major),
+                "workspaceLayout": self.workspace_layout or "loose",
             },
             "destination": self.destination,
             "pzVersionAtInstall": self.pz_version_at_install,
+            "pzJarSha256": self.pz_jar_sha256 or "",
             "installedAt": self.installed_at,
             "stack": [e.to_json() for e in self.stack],
             "files": [f.to_json() for f in self.files],
@@ -145,8 +157,10 @@ class InstallManifest:
             workspace_fingerprint=str(ws.get("fingerprint", "") or ""),
             workspace_dir=str(ws.get("workspaceDir", "") or ""),
             workspace_major=int(ws.get("workspaceMajor", 0) or 0),
+            workspace_layout=str(ws.get("workspaceLayout", "") or "loose"),
             destination=str(o.get("destination", "client")),
             pz_version_at_install=str(o.get("pzVersionAtInstall", "") or ""),
+            pz_jar_sha256=str(o.get("pzJarSha256", "") or ""),
             installed_at=str(o.get("installedAt", "") or ""),
             stack=[ManifestStackEntry.from_json(e) for e in (o.get("stack") or [])],
             files=[ManifestFile.from_json(f) for f in (o.get("files") or [])],
@@ -416,6 +430,50 @@ def audit_manifest_files(content_dir: Path, manifest: InstallManifest) -> list[F
             live,
         ))
     return results
+
+
+# ---------------------------------------------------------------------------
+# fat-jar drift (jar layout only)
+# ---------------------------------------------------------------------------
+
+class JarAuditResult(str, Enum):
+    NOT_TRACKED = "not_tracked"
+    """Loose layout, or no jar sha was recorded at install time. No-op."""
+
+    CLEAN = "clean"
+    """Live `projectzomboid.jar` hash matches the recorded sha — install is
+    pinned to the same PZ build it was installed against."""
+
+    JAR_MISSING = "jar_missing"
+    """The jar was tracked but no longer exists in the install — PZ was
+    uninstalled / reinstalled, or the path moved."""
+
+    JAR_DRIFT = "jar_drift"
+    """Jar exists but its hash differs from what was recorded at install
+    time. Steam patch update is the typical cause; the install's vanilla
+    classes are now a different version than the workspace's pristine."""
+
+
+def audit_pz_jar(content_dir: Path, manifest: InstallManifest) -> JarAuditResult:
+    """Compare the live `projectzomboid.jar` hash to the manifest's record.
+
+    Returns NOT_TRACKED for loose-layout installs and for jar-layout manifests
+    that were written before the field existed (legacy field, treated as
+    "no record"). The caller decides how strict to be — `verify` and `doctor`
+    surface the result; `resync_pristine` gates on it via --force-version-drift.
+    """
+    if (manifest.workspace_layout or "loose") != "jar":
+        return JarAuditResult.NOT_TRACKED
+    if not manifest.pz_jar_sha256:
+        return JarAuditResult.NOT_TRACKED
+    jar_path = content_dir / "projectzomboid.jar"
+    if not jar_path.is_file():
+        return JarAuditResult.JAR_MISSING
+    live = (file_sha256(jar_path) or "").upper()
+    recorded = (manifest.pz_jar_sha256 or "").upper()
+    if live != recorded:
+        return JarAuditResult.JAR_DRIFT
+    return JarAuditResult.CLEAN
 
 
 # ---------------------------------------------------------------------------

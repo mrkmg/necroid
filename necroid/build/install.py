@@ -193,6 +193,7 @@ def install_stack(profile: Profile, stack: list[str], install_to: str,
                 classpath_originals=profile.classpath_originals,
                 out_dir=profile.classes_out,
                 clean=True,
+                java_release=int(profile.java_release or 17),
             )
         except BuildError:
             shutil.rmtree(profile.stage, ignore_errors=True)
@@ -205,6 +206,15 @@ def install_stack(profile: Profile, stack: list[str], install_to: str,
     # --- Phase 5: copy new class files to PZ install ---
     log.step(f"copy class files to {content_dir}")
     installed: list[InstalledEntry] = []
+
+    # Jar layout (PZ >=42): every installed `.class` lands at a path that
+    # didn't previously exist as a loose file (the pre-image was inside
+    # `projectzomboid.jar`). Treat all such installs as "added" so uninstall
+    # = delete the loose override, letting the JVM fall back to the jar
+    # entry on the launcher's `./;projectzomboid.jar` classpath. The
+    # `original_sha256` is still recorded as the jar-entry hash for
+    # documentation / audit, but the restore path is delete-not-copy.
+    layout_is_jar = (getattr(profile, "workspace_layout", "loose") == "jar")
 
     for rel, mod_origin in result.touched.items():
         if not rel.endswith(".java"):
@@ -222,7 +232,7 @@ def install_stack(profile: Profile, stack: list[str], install_to: str,
             dst = content_dir / Path(rel_class)
             orig_path = profile.originals / Path(rel_class)
             orig_sha = file_sha256(orig_path) if orig_path.exists() else None
-            was_added = orig_sha is None
+            was_added = layout_is_jar or orig_sha is None
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(cf, dst)
             log.info(f"+ {rel_class}" + ("  (added)" if was_added else ""))
@@ -276,12 +286,26 @@ def _write_install_manifest(profile: Profile, install_to: str, stack: list[str],
         except Exception:
             ver = ""
         stack_entries.append(manifest_mod.ManifestStackEntry(dirname=name, version=ver))
+
+    # On jar-layout installs, hash the live `projectzomboid.jar` so resync /
+    # doctor / verify can detect Steam patch updates that swapped the fat
+    # jar out from under us (the loose-class equivalent of NEW_VERSION_DRIFT
+    # at the per-file level).
+    layout = getattr(profile, "workspace_layout", "loose") or "loose"
+    pz_jar_sha = ""
+    if layout == "jar":
+        jar_path = content_dir / "projectzomboid.jar"
+        if jar_path.is_file():
+            pz_jar_sha = (file_sha256(jar_path) or "").upper()
+
     m = manifest_mod.InstallManifest(
         workspace_fingerprint=cfg.workspace_fingerprint or "",
         workspace_dir=str(profile.root).replace("\\", "/"),
         workspace_major=int(cfg.workspace_major or 0),
+        workspace_layout=layout,
         destination=install_to,
         pz_version_at_install=pz_version,
+        pz_jar_sha256=pz_jar_sha,
         installed_at=utc_now_iso(),
         stack=stack_entries,
         files=[

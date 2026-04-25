@@ -4,9 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-**Necroid** — a Project Zomboid mod manager, not a normal Java project. Source trees under `data/workspace/src/zombie/` are **decompiled** output from PZ's shipped class files (via Vineflower 1.11.1). The goal is: edit individual classes, recompile them targeting Java 17, then **overwrite the `.class` files directly in the PZ install**. PZ loads its Java classes from a loose class tree at the install root (`<steam>/common/ProjectZomboid/{zombie,astar,se,...}`), so replacing a `.class` file there is the mod mechanism. PZ does **not** have a Java-mod loader that picks up jars from the Mods folder — a jar-based approach would require writing our own classloader, which we aren't doing.
+**Necroid** — a Project Zomboid mod manager, not a normal Java project. Source trees under `data/workspace/src-pristine/` are **decompiled** output from PZ's shipped class files (via Vineflower 1.11.1). The goal is: edit individual classes, recompile them targeting the workspace's Java release, then **overwrite the `.class` files directly in the PZ install**. PZ does **not** have a Java-mod loader that picks up jars from the Mods folder — a jar-based approach would require writing our own classloader, which we aren't doing.
 
-**Single shared workspace.** The client (`ProjectZomboid`, Steam app 108600) and dedicated server (`Project Zomboid Dedicated Server`, Steam app 380870, or `./pzserver/`) ship byte-identical Java class trees. Necroid therefore keeps **one** workspace at `data/workspace/{src,src-pristine,classes-original,libs,build}/`, seeded from whichever PZ install the user points `init` at (`--from client` or `--from server`). The chosen source is recorded in `config.workspaceSource`.
+**Two install layouts are supported.** Recorded in `config.workspaceLayout`:
+
+- **`loose`** (PZ build 41 and earlier): vanilla classes live as a loose tree at the install root (`<pz>/{zombie,astar,se,...}/**/*.class`). Necroid's class-file overwrite IS the mod mechanism. Restoring a file at uninstall = copy from `classes-original/`.
+- **`jar`** (PZ build 42+): vanilla classes live inside a single fat `<pz>/projectzomboid.jar`. The launcher's classpath is `./;projectzomboid.jar`, so a loose `.class` dropped under `<pz>/zombie/...` still overrides the jar entry — the install mechanism survives intact. Restoring a file at uninstall = **delete** the loose override, letting the JVM fall back to the jar entry. Every installed file is recorded with `wasAdded=true` because the install path didn't exist as a loose file before Necroid put it there.
+
+`init` detects the layout from the source PZ install (presence of `projectzomboid.jar` at the install root) and seeds `classes-original/` accordingly: a mirror copy of the loose tree on `loose`, or a `zipfile`-extract of `projectzomboid.jar` on `jar`. The decompile and javac stages are layout-agnostic from there on. `libs/classpath-originals/<sub>.jar` rejaring runs only on `loose`; on `jar` the fat jar itself sits on `javac -cp` via `data/workspace/libs/projectzomboid.jar`.
+
+**Java release target is per-major.** PZ 41 ships JRE 17; PZ 42 ships JDK 25 runtime (class-file v69). `config.javaRelease` is derived at `init` from the workspace major via `{41:17, 42:25}` (extend the table in `necroid/core/profile.py:_JAVA_RELEASE_BY_MAJOR` for future PZ majors). All `javac --release N` invocations and the install-time enforcement use this value. PZ's bundled `<pz>/jre64/` is **runtime-only** (no javac), so users need a system JDK whose major is >= the target — but they don't have to fight PATH: `necroid/util/tools.py:_find_jdk_binary` first tries PATH, then scans well-known JDK install roots (Adoptium / Java / Microsoft / Zulu / Corretto / BellSoft / Semeru on Windows; `/Library/Java/JavaVirtualMachines` on macOS; `/usr/lib/jvm`, `/usr/java`, `/opt` on Linux), and picks the *lowest qualifying major*. The PZ-bundled `<pz>/jre64` is included as an `extra_roots` entry by `pzversion.detect_pz_version` so the version probe always has access to a runtime that matches the install's bytecode (PATH java being too old — e.g. JDK 21 against B42's class-file v69 — is the most common failure mode without this).
+
+**Single shared workspace.** The client (`ProjectZomboid`, Steam app 108600) and dedicated server (`Project Zomboid Dedicated Server`, Steam app 380870, or `./pzserver/`) ship byte-identical Java class trees (loose-tree on B41; fat jar on B42). Necroid therefore keeps **one** workspace at `data/workspace/{src-pristine,classes-original,libs,build}/`, seeded from whichever PZ install the user points `init` at (`--from client` or `--from server`). The chosen source is recorded in `config.workspaceSource`.
 
 **Install destinations are per-invocation.** `necroid install <stack> --to client|server` chooses where the compiled `.class` files land. Each destination has its own state file: `data/.mod-state-client.json` and `data/.mod-state-server.json`. Both can coexist — a user may have, say, admin-xray installed to client and gravymod installed to server at the same time.
 
@@ -20,13 +29,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Major changes require an explicit opt-in.** `necroid resync-pristine` refuses to silently re-bind the workspace to a different major when the source install has moved (e.g. 41 → 42). Pass `--force-major-change` to acknowledge that every existing mod's patches will need to be re-captured against the new pristine. The old-major mod dirs are left on disk (filtered out of default views); re-enter and re-capture each to port.
 
-Uninstall restores originals from `data/workspace/classes-original/` (verbatim copy of the install's class tree) — that directory is the single source of truth for "what the vanilla class looks like", and **must not be edited**.
+Uninstall restores originals from `data/workspace/classes-original/` (verbatim copy of the install's class tree on `loose`, or `zipfile`-extracted contents of `projectzomboid.jar` on `jar`) — that directory is the single source of truth for "what the vanilla class looks like", and **must not be edited**. On `jar` layout the restore step short-circuits to `delete the loose .class` (the JVM falls back to the in-jar entry); `classes-original/` is still consulted for hash provenance and audit reporting.
 
 Writing to `C:\Program Files (x86)\...` requires an elevated shell. If Steam "Verify Integrity of Game Files" is run, it will revert any installed overrides — just re-run `necroid install <stack> --to <dest>` afterwards (or `necroid doctor --to <dest>` first to see exactly what Steam changed).
 
 **Steam's file management is asymmetric — the integrity system has strong implications for this tool.** Steam's Verify / patch-update flows only touch files that appear in Steam's manifest for the current PZ build. That means:
 
-- Files Necroid **overwrote** (e.g. `zombie/core/Core.class`) may be rewritten by Steam back to vanilla — either the *same* vanilla (Verify on an unchanged build) or a *different-version* vanilla (patch update). Necroid can't tell those apart without hash evidence.
+- On `loose` layout: files Necroid **overwrote** (e.g. `zombie/core/Core.class`) may be rewritten by Steam back to vanilla — either the *same* vanilla (Verify on an unchanged build) or a *different-version* vanilla (patch update). Necroid can't tell those apart without hash evidence.
+- On `jar` layout: there are no overwrites to revert (the fat jar is what Steam tracks; Necroid's loose `.class` files don't appear in any Steam manifest). Steam leaves the loose overrides alone, but a patch update will replace the fat jar itself — workspaces are then pinned to the *old* jar's bytecode while the live install runs the new one. The `pzJarSha256` field in the install-side manifest detects this; `verify` / `doctor` / `resync-pristine --force-version-drift` handle it.
 - Files Necroid **added** (e.g. `zombie/gravymod/GravyMain.class` compiled from a mod's `.java.new`) are not in Steam's manifest, so Steam leaves them alone forever. They can outlive uninstalls, PZ reinstalls, and major-version changes if Necroid state ever gets lost.
 
 This is the root reason for the install-side manifest (below): without an authoritative record stamped into the install, a `resync-pristine` can't distinguish "Steam reverted my overwrite to the new-version vanilla" (dangerous — would poison `classes-original/`) from "Steam left everything alone" (safe). See the **Install-side manifest** and **When a PZ update lands** sections.
@@ -76,27 +86,33 @@ Manifest schema v1 (written by `necroid/core/install_manifest.py`):
   "workspace": {
     "fingerprint": "<hex from config.workspaceFingerprint>",
     "workspaceDir": "C:\\path\\to\\PZ-Mod-Work",
-    "workspaceMajor": 41
+    "workspaceMajor": 42,
+    "workspaceLayout": "jar"
   },
   "destination": "client",
-  "pzVersionAtInstall": "41.78.19",
+  "pzVersionAtInstall": "42.17.0",
+  "pzJarSha256": "<hex>",
   "installedAt": "<ISO UTC>",
-  "stack": [{"dirname": "admin-xray-41", "version": "0.3.1"}],
+  "stack": [{"dirname": "admin-xray-42", "version": "0.3.1"}],
   "files": [
     {"rel": "zombie/Foo.class",
      "writtenSha256": "<hex>",
      "originalSha256": "<hex>|null",
-     "wasAdded": false,
-     "modOrigin": "admin-xray-41"}
+     "wasAdded": true,
+     "modOrigin": "admin-xray-42"}
   ]
 }
 ```
+
+`workspaceLayout` and `pzJarSha256` were added when B42 introduced the fat-jar layout; both are absent on manifests written by older Necroid (read with defaults `"loose"` and `""`). On `jar` installs, every `wasAdded` is `true` because the install path didn't exist as a loose file before — uninstall = delete. `originalSha256` is still recorded (the jar-entry hash) so audits can describe provenance even though the restore path doesn't use it.
 
 **Workspace fingerprint** (`config.workspaceFingerprint`, a sha256 over workspaceDir + timestamp + random salt) is minted once at `init` and persists across CLI invocations. Workspaces upgraded from pre-v2 Necroid get a fingerprint stamped on the first install via the `_ensure_workspace_fingerprint` path in `install.py` — no user action needed. The fingerprint is what distinguishes two different Necroid checkouts pointing at the same PZ install; the install-side manifest carries it so the comparison is possible at any later command.
 
 **Reconciliation matrix** (`install_manifest.reconcile()`): read at the start of `install` / `uninstall` / `verify` / `doctor` / `resync-pristine`. Returns one of `CLEAN`, `FIRST_TIME`, `WIPED`, `LEGACY_UNMIGRATED`, `FINGERPRINT_MISMATCH`, `CACHE_STALE`, `TAMPERED`. Callers decide whether each is a hard error, a warning, or auto-healed (e.g. `CACHE_STALE` refreshes the local cache from the install-side manifest transparently).
 
-**Per-file audit** (`install_manifest.audit_manifest_files()`): hashes every file the manifest claims we installed and classifies each as `STILL_MODDED` / `REVERTED_TO_OLD_VANILLA` / `NEW_VERSION_DRIFT` / `MISSING` / `ADDED_UNTOUCHED` / `ADDED_TAMPERED`. The audit is the mechanism behind `verify`, `doctor`, and the `resync-pristine` pre-flight.
+**Per-file audit** (`install_manifest.audit_manifest_files()`): hashes every file the manifest claims we installed and classifies each as `STILL_MODDED` / `REVERTED_TO_OLD_VANILLA` / `NEW_VERSION_DRIFT` / `MISSING` / `ADDED_UNTOUCHED` / `ADDED_TAMPERED`. The audit is the mechanism behind `verify`, `doctor`, and the `resync-pristine` pre-flight. On `jar` layout every installed file lands in `ADDED_UNTOUCHED` / `ADDED_TAMPERED` since `wasAdded=true` for all of them.
+
+**Fat-jar audit** (`install_manifest.audit_pz_jar()`, jar-layout only): compares the live `<pz>/projectzomboid.jar` hash to the manifest's `pzJarSha256`. Returns one of `NOT_TRACKED` (loose layout or pre-B42 manifest), `CLEAN`, `JAR_MISSING`, or `JAR_DRIFT`. `JAR_DRIFT` is the jar-layout equivalent of per-file `NEW_VERSION_DRIFT` — Steam shipped a patch update that swapped the jar's bytes. Surfaced by `verify` / `doctor`; gated by `resync-pristine --force-version-drift`.
 
 **State schema v2** (`data/.mod-state-<dest>.json`): adds `writtenSha256` (renamed from `sha256`), `originalSha256`, `wasAdded`, and `workspaceFingerprint`. Old v1 entries are migrated transparently on read: `writtenSha256` falls back to `sha256`; `wasAdded` / `originalSha256` default to conservative values. First install after upgrade rewrites at v2 and seeds the install-side manifest.
 
@@ -209,9 +225,9 @@ There are **no tests and no linter** for the PZ-decompiled code — it's decompi
 
 ## Critical build constraints
 
-- **Only pass modified files to `javac`** (the `install` flow does this automatically). Compiling all ~1601 decompiled files produces thousands of errors — decompiled Java doesn't round-trip cleanly (lambdas, generics erasure, obfuscation artifacts). The install overwrites individual `.class` files, so compiling the changed files only is correct.
-- `buildjava.javac_compile` deliberately **does not pass `-sourcepath`**. With a sourcepath, javac would try to recompile sibling decompiled files on demand. Every non-modified symbol resolves from the original class jars in `data/workspace/libs/classpath-originals/`.
-- Java target is **17** (`javac --release 17`). PZ bundles JRE 17 (`jre64/`).
+- **Only pass modified files to `javac`** (the `install` flow does this automatically). Compiling all decompiled files produces thousands of errors — decompiled Java doesn't round-trip cleanly (lambdas, generics erasure, obfuscation artifacts). The install overwrites individual `.class` files, so compiling the changed files only is correct.
+- `buildjava.javac_compile` deliberately **does not pass `-sourcepath`**. With a sourcepath, javac would try to recompile sibling decompiled files on demand. Every non-modified symbol resolves from the original classpath jars: `data/workspace/libs/classpath-originals/<sub>.jar` on `loose` layout, or `data/workspace/libs/projectzomboid.jar` directly on `jar` layout.
+- **Java release target is per-major** (`config.javaRelease`, derived at `init`): PZ 41 → `javac --release 17`, PZ 42 → `javac --release 25`. PZ ships a matching JRE under `<pz>/jre64/` but it has no javac, so a system JDK whose major >= the target is required. `buildjava.javac_compile` resolves javac through `tools.require_javac_release()` — PATH first, then a scan of well-known JDK roots — so a stale shell PATH (the common winget case where Temurin 25 was installed but the existing terminal still has 21) doesn't block the compile.
 - `data/workspace/build/classes/` is the javac output; `data/workspace/build/stage-src/` is the ephemeral staging tree for each install. Both safe to delete.
 
 ## Directory roles
@@ -221,15 +237,15 @@ There are **no tests and no linter** for the PZ-decompiled code — it's decompi
 - `assets/` — brand assets. `necroid.png` (source 1024²), `necroid-mark-256.png` (GUI header skull), `necroid-icon-256.png` (window icon), `necroid-icon.ico` (Windows exe icon), `build-assets.sh` (ImageMagick regen).
 - `pyproject.toml` — project metadata; script entry point `necroid = "necroid.cli:main"`.
 - `data/` — all PZ-sourced + runtime content.
-- `data/.mod-config.json` — `clientPzInstall`, `serverPzInstall`, `defaultInstallTo`, `workspaceSource`, `workspaceMajor`, `workspaceVersion`, `workspaceFingerprint` (opaque per-workspace id, minted at `init` — the install-side manifest stamps this to detect collisions between multiple Necroid checkouts pointing at the same PZ install). Schema v1. Local-only.
+- `data/.mod-config.json` — `clientPzInstall`, `serverPzInstall`, `defaultInstallTo`, `workspaceSource`, `workspaceMajor`, `workspaceVersion`, `workspaceFingerprint` (opaque per-workspace id, minted at `init` — the install-side manifest stamps this to detect collisions between multiple Necroid checkouts pointing at the same PZ install), `workspaceLayout` (`"loose"` or `"jar"`; legacy configs default to `"loose"` on read), `javaRelease` (int, e.g. 17 or 25; legacy configs derive via `_JAVA_RELEASE_BY_MAJOR`). Schema v1 (forward-compatible additions only). Local-only.
 - `mods/<base>-<major>/` — **top-level**, tracked, the portable artifact. Each mod: `mod.json` (with `clientOnly` + `expectedVersion`) + `patches/` containing `.java.patch` / `.java.new` / `.java.delete`. The `-<major>` suffix (e.g. `admin-xray-41`) is parsed by the tool and enforced against `workspaceMajor`. Everything under `data/` is local-only generated content; `mods/` is the only user-authored tree at the repo root.
 - `data/tools/vineflower.jar` — downloaded by `init`. Local-only.
 - `data/tools/pz-version-probe/` — compiled `NecroidGetPzVersion.class`, cached on first `init` / `status` / `install` run. Regenerated automatically if `necroid/java/NecroidGetPzVersion.java` changes. Local-only.
 - `src-<modname>/{zombie,astar,com,de,fmod,javax,org,se}/` — per-mod editable working tree at the **repo root**. `enter` seeds it from pristine + patches (preserving contents if it already exists), `capture` reads it back into the mod's patch set, `reset` re-seeds it, `clean` deletes it. Gitignored via `/src-*/`. Every class subtree PZ ships is decompiled, so mods can touch any of them (e.g. `se/krka/kahlua/...` for Lua-interpreter changes). Legacy `data/workspace/src/` (single shared tree) is no longer used — safe to delete if present.
 - `data/workspace/src-pristine/<same subtrees>/` — **frozen** pristine decompile. Populated by `init`; refreshed by `resync-pristine`.
-- `data/workspace/classes-original/` — verbatim class-file copies from the Steam install. Reference and restore source; **do not edit**.
-- `data/workspace/libs/` — every jar from the PZ install used to seed the workspace.
-- `data/workspace/libs/classpath-originals/` — the `classes-original/` subtrees repackaged as jars for `javac -cp`.
+- `data/workspace/classes-original/` — verbatim class-file copies from the Steam install. Populated by `mirror_tree(<pz>, ...)` on `loose` layout; populated by `build/jar_extract.extract_fat_jar(<pz>/projectzomboid.jar, ...)` on `jar` layout. Reference and restore source; **do not edit**. Layout-agnostic from the consumer's POV — the decompiler, audit, and per-file restore paths all see the same on-disk loose tree regardless of how it got there.
+- `data/workspace/libs/` — every jar from the PZ install used to seed the workspace. On `jar` layout this is where `projectzomboid.jar` lives (and is the sole entry on `javac -cp`).
+- `data/workspace/libs/classpath-originals/` — the `classes-original/` subtrees repackaged as jars for `javac -cp`. **Only populated on `loose` layout**; empty on `jar` (the fat jar in `libs/` already serves this role).
 - `data/workspace/build/classes/` — javac output mirroring `zombie/...`.
 - `data/workspace/build/stage-src/` — ephemeral install-staging tree.
 - `data/.mod-state-client.json` / `data/.mod-state-server.json` — per-destination **local cache** of the install-side manifest. Schema v2 records `stack`, `installed[]` (each entry: `rel`, `modOrigin`, `writtenSha256`, `originalSha256`, `wasAdded`), `pzVersion` (detected version at install time), and `workspaceFingerprint`. The install-side manifest at `<pz>/.necroid-install.json` is the source of truth; this file is the fast-path read. v1 entries (pre-v2 Necroid) are read with `writtenSha256` falling back to the old `sha256` field and `wasAdded`/`originalSha256` defaulting conservatively — `_restore_installed` in `necroid/build/install.py` infers `wasAdded` at uninstall time for legacy entries that lack pristine counterparts.
@@ -250,6 +266,7 @@ Run `necroid resync-pristine` (one pass — workspace is shared). The flow is:
    - `WIPED` (manifest gone, recorded files also absent) — Steam reinstall; local cache is stale, clear it, no restore needed.
    - `LEGACY_UNMIGRATED` (pre-v2 install, manifest missing but files still on disk) — fall back to state-based audit using the same classifier; this is the happy path on any workspace upgrading from pre-v2 Necroid.
    - `FINGERPRINT_MISMATCH` — abort unless `--adopt-install` is passed.
+   - **Fat-jar drift** (`jar` layout only) — `audit_pz_jar` compares live `projectzomboid.jar` to recorded `pzJarSha256`. `JAR_DRIFT` aborts unless `--force-version-drift` is passed; `JAR_MISSING` is reported by doctor/verify. Forced-drift strategy on jar: re-extract the new jar at the next `init --force` step and let it become the new `classes-original/`, every mod flagged STALE.
    - Per-file `NEW_VERSION_DRIFT` / `ADDED_TAMPERED` — Steam rewrote overwritten files with a different PZ version's vanilla, or a mod-added file's bytes changed. Abort unless `--force-version-drift` is passed. Forced-drift strategy: skip the restore for drifted files (let Steam's bytes pass through as the new pristine), warn loudly, every mod ends up flagged STALE.
    - Orphan scan — `.class` files under a mod-touched subtree that are in neither the manifest nor `classes-original/`. Abort unless `--force-orphans` is passed (adopts them into new pristine).
 3. **Pre-resync uninstall guard** — for each destination with installed state, run `uninstall_all` (which is hash-aware: restores STILL_MODDED, skips REVERTED, warns+skips drifted, deletes added files, raises `PristineDrift` if `classes-original/` has itself drifted from the recorded `originalSha256`). Without the audit above, this step would blindly copy stale `classes-original/` content over Steam's new vanilla and produce a mixed-version Frankenstein install. The audit ensures the guard only runs on files where it's safe.
@@ -280,4 +297,5 @@ Produces `dist/necroid(.exe)` + `dist/mods/` + `dist/README.txt`. PyInstaller do
 
 - Many `.java` files contain `new Float(...)` / `new Double(...)` deprecation warnings and `sun.misc.Unsafe` warnings. These are in PZ's original bytecode — leave them alone unless the file you're modding is one of them.
 - Fully-qualified names like `zombie.BaseAmbientStreamManager` inside files already in `package zombie` are a Vineflower quirk, not an error.
-- Inner classes in `classes-original/` appear as `Outer$Inner.class` (~2980 class files for the client) but decompile to inner-class declarations inside ~1601 outer `.java` files. The counts match.
+- Inner classes in `classes-original/` appear as `Outer$Inner.class` but decompile to inner-class declarations inside the corresponding outer `.java` files. The counts match (e.g. on B42: 18,107 `.class` entries extracted from `projectzomboid.jar`, decompiling to 10,917 `.java` files across 8 subtrees).
+- On B42, `<pz>/zombie/` may contain leftover loose subdirs (e.g. `admin_xray/`, `gravymod/`) from prior B41 mod installs against the same Steam install. They're orphans relative to the B42 install (B42's vanilla classes all live in the jar) but harmless — the classpath-prepend trick means Necroid's loose overrides are how the mod system *works* on B42 too. `doctor`'s orphan scan surfaces these on the next install.

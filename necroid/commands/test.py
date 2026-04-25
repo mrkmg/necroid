@@ -67,6 +67,7 @@ def run(args) -> int:
             classpath_originals=p.classpath_originals,
             out_dir=p.classes_out,
             clean=True,
+            java_release=int(p.java_release or 17),
         )
     except BuildError as e:
         log.error(str(e))

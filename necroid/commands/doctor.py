@@ -63,6 +63,23 @@ def run(args) -> int:
 
     manifest = rec.manifest
 
+    # --- fat-jar drift (jar layout only)
+    if manifest is not None:
+        jar_audit = manifest_mod.audit_pz_jar(content_dir, manifest)
+        if jar_audit is manifest_mod.JarAuditResult.JAR_MISSING:
+            issues.append("projectzomboid.jar is missing from the install")
+            hints.append("PZ may have been uninstalled or moved; reinstall PZ in Steam, "
+                         f"then `necroid install ... --to {install_to}` to redeploy.")
+            print("\nfat jar: MISSING")
+        elif jar_audit is manifest_mod.JarAuditResult.JAR_DRIFT:
+            issues.append("projectzomboid.jar hash drifted (Steam patch update)")
+            hints.append(f"`necroid resync-pristine --from {install_to} --force-version-drift` "
+                         f"to adopt the new jar as pristine (every mod gets flagged for "
+                         f"re-capture).")
+            print("\nfat jar: DRIFT  (Steam patched PZ to a new build)")
+        elif jar_audit is manifest_mod.JarAuditResult.CLEAN:
+            print("\nfat jar: clean (jar hash matches install-time record)")
+
     # --- PZ version
     try:
         detected = str(detect_pz_version(content_dir, package_dir(), p.root / "data"))

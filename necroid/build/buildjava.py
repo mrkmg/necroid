@@ -10,7 +10,7 @@ from pathlib import Path
 from ..util import logging_util as log
 from ..util import procs
 from ..errors import BuildError
-from ..util.tools import resolve
+from ..util.tools import require_javac_release
 
 
 def _classpath_jars(libs: Path, classpath_originals: Path) -> list[Path]:
@@ -50,7 +50,11 @@ def javac_compile(
             raise BuildError(f"source not found: {f}")
         abs_files.append(str(p.resolve()))
 
-    javac = str(resolve("javac"))
+    # Discover a javac whose major >= java_release. PATH first; falls back
+    # to scanning known JDK install roots so a stale shell PATH (the common
+    # winget case where Temurin 25 was installed but the existing terminal
+    # still has 21) doesn't block compile.
+    javac = str(require_javac_release(int(java_release)))
     log.info(f"compiling {len(abs_files)} file(s) -> {out_dir} (Java {java_release})")
     cmd = [javac, "--release", str(java_release), "-encoding", "UTF-8",
            "-cp", cp, "-d", str(out_dir), *abs_files]

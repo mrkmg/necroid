@@ -25,6 +25,42 @@ PZ_CLASS_SUBTREES: tuple[str, ...] = (
     "zombie", "astar", "com", "de", "fmod", "javax", "org", "se",
 )
 
+# Single fat jar shipped by PZ >=42 containing every class subtree. The
+# launcher puts `./;projectzomboid.jar` on the classpath so a loose .class
+# dropped under `<pz>/zombie/...` still overrides the jar entry — the install
+# mechanism survives intact from 41. Only init-time seeding changes: for jar
+# layout we extract entries into `classes-original/` instead of copying a
+# loose tree.
+PZ_FAT_JAR_NAME = "projectzomboid.jar"
+
+# javac --release target per PZ major. PZ 41 ships JRE 17; PZ 42 ships JDK 25.
+# Users must have a system JDK whose major is >= the target (PZ's bundled
+# `jre64/` is runtime-only, no javac). Unknown majors fall back to 17 so
+# pre-existing 41 workspaces and legacy configs keep compiling.
+_JAVA_RELEASE_BY_MAJOR: dict[int, int] = {
+    41: 17,
+    42: 25,
+}
+
+
+def java_release_for_major(major: int) -> int:
+    """Map a PZ major to the `javac --release N` target. Unknown majors fall
+    back to 17 (the 41 target), which is safe for any legacy/unset workspace."""
+    return _JAVA_RELEASE_BY_MAJOR.get(int(major), 17)
+
+
+def detect_layout(content_dir: Path) -> str:
+    """Decide whether a PZ install uses the fat-jar layout (>=42) or the
+    loose class-tree layout (<=41). Returns `"jar"` or `"loose"`.
+
+    The jar check wins if present — a fresh B42 install has an empty `zombie/`
+    subtree (or one populated only by a previous Necroid install's leftover
+    .class files), so looking at `zombie/` alone would misclassify.
+    """
+    if (content_dir / PZ_FAT_JAR_NAME).is_file():
+        return "jar"
+    return "loose"
+
 
 def existing_subtrees(root: Path) -> list[str]:
     """Return the entries of PZ_CLASS_SUBTREES that exist under `root`.
@@ -66,6 +102,9 @@ class Profile:
     client_pz_install: Path | None = None
     server_pz_install: Path | None = None
     originals_override: Path | None = None
+    workspace_layout: str = "loose"  # "loose" or "jar"; from config.workspaceLayout
+    java_release: int = 17           # javac --release target; from config.javaRelease
+    workspace_major: int = 0         # from config.workspaceMajor (for release fallback)
 
     def pz_install(self, install_to: str) -> Path | None:
         return self.client_pz_install if install_to == "client" else self.server_pz_install
@@ -78,6 +117,17 @@ class Profile:
         if pz is None:
             return Path("")
         return pz / "java" if install_to == "server" else pz
+
+    def fat_jar_for(self, install_to: str) -> Path | None:
+        """Path to `projectzomboid.jar` for the given destination, or None if
+        the workspace is loose-layout (PZ <=41). The jar lives next to the
+        class tree root (client install root, or `<server>/java/`)."""
+        if self.workspace_layout != "jar":
+            return None
+        content = self.content_dir_for(install_to)
+        if not content or str(content) == "":
+            return None
+        return content / PZ_FAT_JAR_NAME
 
     # --- workspace dirs (shared) ---
     @property
@@ -132,12 +182,20 @@ def load_profile(root: Path, cfg: ModConfig | None = None) -> Profile:
     if cfg.originals_dir_override:
         from .config import expand_config_path
         override = expand_config_path(cfg.originals_dir_override, root)
+    # Normalize layout + release: read_config already defaults these for legacy
+    # configs, but a caller building a config in-memory (e.g. init before it
+    # has written the config) may hand us a blank layout. Fall back conservatively.
+    layout = cfg.workspace_layout or "loose"
+    release = cfg.java_release if cfg.java_release > 0 else java_release_for_major(cfg.workspace_major)
     return Profile(
         root=root,
         data_dir=root / "data",
         client_pz_install=cfg.client_pz_install,
         server_pz_install=cfg.server_pz_install,
         originals_override=override,
+        workspace_layout=layout,
+        java_release=release,
+        workspace_major=int(cfg.workspace_major),
     )
 
 
