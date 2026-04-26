@@ -1,0 +1,159 @@
+diff --git a/zombie/Lua/LuaEventManager.java b/zombie/Lua/LuaEventManager.java
+index bbe5b13..6d236f0 100644
+--- a/zombie/Lua/LuaEventManager.java
++++ b/zombie/Lua/LuaEventManager.java
+@@ -1,7 +1,12 @@
+ package zombie.Lua;
+ 
++import java.io.BufferedReader;
++import java.io.File;
++import java.io.FileReader;
++import java.io.FileWriter;
+ import java.util.ArrayList;
+ import java.util.Arrays;
++import java.util.Date;
+ import java.util.HashMap;
+ import se.krka.kahlua.vm.JavaFunction;
+ import se.krka.kahlua.vm.KahluaTable;
+@@ -9,9 +14,131 @@ import se.krka.kahlua.vm.LuaCallFrame;
+ import se.krka.kahlua.vm.LuaClosure;
+ import se.krka.kahlua.vm.Platform;
+ import se.krka.kahlua.vm.Prototype;
++import se.krka.kahlua.integration.LuaReturn;
++import se.krka.kahlua.luaj.compiler.LuaCompiler;
++import zombie.core.logger.ExceptionLogger;
+ import zombie.debug.DebugLog;
+ 
+ public final class LuaEventManager implements JavaFunction {
++   private static volatile boolean autoLoginAttempted = false;
++
++   private static void autoLoginTrace(String msg) {
++      try {
++         FileWriter fw = new FileWriter(
++            System.getProperty("user.home") + File.separator + "Zomboid"
++            + File.separator + "auto-login-trace.log", true);
++         fw.write("[" + new Date() + "] " + msg + System.lineSeparator());
++         fw.close();
++      } catch (Throwable ignore) {}
++      try {
++         DebugLog.log("auto-login: " + msg);
++      } catch (Throwable ignore) {}
++   }
++
++   private static void tryAutoJoin() {
++      if (autoLoginAttempted) {
++         return;
++      }
++      autoLoginAttempted = true;
++
++      File configFile = new File(
++         System.getProperty("user.home") + File.separator + "Zomboid"
++         + File.separator + "auto-join.txt");
++      if (!configFile.exists()) {
++         return;
++      }
++
++      autoLoginTrace("found " + configFile.getAbsolutePath() + ", parsing");
++
++      HashMap<String, String> kv = new HashMap<>();
++      try (BufferedReader br = new BufferedReader(new FileReader(configFile))) {
++         String line;
++         while ((line = br.readLine()) != null) {
++            line = line.trim();
++            if (line.isEmpty() || line.startsWith("#")) {
++               continue;
++            }
++            int eq = line.indexOf('=');
++            if (eq <= 0) {
++               continue;
++            }
++            kv.put(line.substring(0, eq).trim().toLowerCase(), line.substring(eq + 1));
++         }
++      } catch (Exception ex) {
++         autoLoginTrace("failed to read config: " + ex);
++         return;
++      }
++
++      try {
++         if (!configFile.delete()) {
++            autoLoginTrace("WARNING: failed to delete " + configFile.getAbsolutePath());
++         }
++      } catch (Throwable t) {
++         autoLoginTrace("delete threw: " + t);
++      }
++
++      String ip = kv.get("ip");
++      String port = kv.getOrDefault("port", "16261").trim();
++      String serverPassword = kv.getOrDefault("serverpassword", "");
++      String username = kv.get("username");
++      String password = kv.get("password");
++
++      if (ip == null || ip.isEmpty() || username == null || username.isEmpty() || password == null) {
++         autoLoginTrace("missing required fields (ip, username, password); aborting");
++         return;
++      }
++
++      try {
++         Integer.parseInt(port);
++      } catch (NumberFormatException nfe) {
++         autoLoginTrace("invalid port '" + port + "', aborting");
++         return;
++      }
++
++      System.clearProperty("args.server.connect");
++      System.clearProperty("args.server.password");
++
++      autoLoginTrace("connecting to " + ip + ":" + port + " as " + username);
++
++      String snippet =
++           "do\n"
++         + "  local ip, port, srvpwd, user, pass = \"" + luaEscape(ip) + "\", \"" + luaEscape(port) + "\", \"" + luaEscape(serverPassword) + "\", \"" + luaEscape(username) + "\", \"" + luaEscape(password) + "\"\n"
++         + "  local function autoConnect()\n"
++         + "    Events.OnPreUIDraw.Remove(autoConnect)\n"
++         + "    if ConnectToServer == nil or ConnectToServer.instance == nil or MainScreen == nil or MainScreen.instance == nil then\n"
++         + "      print(\"auto-login: ConnectToServer.instance not ready, falling back to direct connect\")\n"
++         + "      serverConnect(user, pass, ip, \"\", port, srvpwd, ip, false)\n"
++         + "      return\n"
++         + "    end\n"
++         + "    if MainScreen.instance.animPopup ~= nil then\n"
++         + "      MainScreen.instance.animPopup:removeFromUIManager()\n"
++         + "      MainScreen.instance.animPopup = nil\n"
++         + "    end\n"
++         + "    local prev = MainScreen.instance.bottomPanel or MainScreen.instance\n"
++         + "    ConnectToServer.instance:connect(prev, \"\", user, pass, ip, \"\", port, srvpwd, false)\n"
++         + "  end\n"
++         + "  Events.OnPreUIDraw.Add(autoConnect)\n"
++         + "end\n";
++
++      try {
++         LuaClosure cl = LuaCompiler.loadstring(snippet, "auto-join", LuaManager.env);
++         LuaReturn ret = LuaManager.caller.protectedCall(LuaManager.thread, cl);
++         if (!ret.isSuccess()) {
++            autoLoginTrace("Lua eval failed: " + ret.getErrorString());
++         } else {
++            autoLoginTrace("connect scheduled on next OnPreUIDraw");
++         }
++      } catch (Exception ex) {
++         autoLoginTrace("Lua eval threw: " + ex);
++         ExceptionLogger.logException(ex);
++      }
++   }
++
++   private static String luaEscape(String s) {
++      if (s == null) return "";
++      return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "");
++   }
++
+    public static final ArrayList<LuaClosure> OnTickCallbacks = new ArrayList<>();
+    static Object[][] a1 = new Object[1][1];
+    static Object[][] a2 = new Object[1][2];
+@@ -43,6 +170,9 @@ public final class LuaEventManager implements JavaFunction {
+    }
+ 
+    public static void triggerEvent(String var0) {
++      if ("OnMainMenuEnter".equals(var0)) {
++         tryAutoJoin();
++      }
+       synchronized (EventMap) {
+          Event var2 = checkEvent(var0);
+          if (var2 != null) {
