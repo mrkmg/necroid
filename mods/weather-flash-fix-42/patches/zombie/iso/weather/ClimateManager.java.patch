@@ -1,0 +1,38 @@
+diff --git a/zombie/iso/weather/ClimateManager.java b/zombie/iso/weather/ClimateManager.java
+index c2a82f9..3ec6ee2 100644
+--- a/zombie/iso/weather/ClimateManager.java
++++ b/zombie/iso/weather/ClimateManager.java
+@@ -1893,19 +1893,31 @@ public class ClimateManager {
+ 
+             for (int i = 0; i < this.climateFloats.length; i++) {
+                ClimateManager.ClimateFloat fo = this.climateFloats[i];
++               float incoming = input.getFloat();
++               if (fo.isModded && fo.modInterpolate > 0.0F) {
++                  continue;
++               }
+                fo.internalValue = fo.finalValue;
+-               fo.setOverride(input.getFloat(), 0.0F);
++               fo.setOverride(incoming, 0.0F);
+             }
+ 
+             for (int i = 0; i < this.climateColors.length; i++) {
+                ClimateManager.ClimateColor co = this.climateColors[i];
++               if (co.isModded && co.modInterpolate > 0.0F) {
++                  co.override.read(input);
++                  continue;
++               }
+                co.internalValue.setTo(co.finalValue);
+                co.setOverride(input, 0.0F);
+             }
+ 
+             for (int i = 0; i < this.climateBooleans.length; i++) {
+                ClimateManager.ClimateBool bo = this.climateBooleans[i];
+-               bo.setOverride(input.getBoolean());
++               boolean incoming = input.getBoolean();
++               if (bo.isModded) {
++                  continue;
++               }
++               bo.setOverride(incoming);
+             }
+ 
+             this.airMass = input.getFloat();

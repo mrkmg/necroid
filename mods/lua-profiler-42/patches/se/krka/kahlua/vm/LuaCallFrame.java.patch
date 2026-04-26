@@ -1,0 +1,22 @@
+diff --git a/se/krka/kahlua/vm/LuaCallFrame.java b/se/krka/kahlua/vm/LuaCallFrame.java
+index 4d7bad2..734db65 100644
+--- a/se/krka/kahlua/vm/LuaCallFrame.java
++++ b/se/krka/kahlua/vm/LuaCallFrame.java
+@@ -21,6 +21,9 @@ public final class LuaCallFrame {
+    public final HashMap localVarToStackMap = new HashMap();
+    public final HashMap localStackToVarMap = new HashMap();
+    public final ArrayList<String> localVarNames = new ArrayList<>();
++   public LuaClosure[] tailCallClosures;
++   public int[] tailCallPcs;
++   public int tailCallDepth = 0;
+ 
+    public LuaCallFrame(Coroutine coroutine) {
+       this.coroutine = coroutine;
+@@ -182,6 +185,7 @@ public final class LuaCallFrame {
+       this.canYield = insideCoroutine;
+       this.closure = closure;
+       this.javaFunction = javaFunction;
++      this.tailCallDepth = 0;
+       if (Core.debug) {
+          LuaCallFrame f = this;
+          this.localsAssigned = 0;

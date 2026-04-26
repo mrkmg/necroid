@@ -1,0 +1,13 @@
+{
+  "name": "more-zoom",
+  "clientOnly": true,
+  "description": "Adds more zoom levels.",
+  "category": "ui",
+  "version": "0.1.1",
+  "expectedVersion": "42.17.0",
+  "createdAt": "2026-04-25T03:52:33.819178Z",
+  "updatedAt": "2026-04-25T03:54:20.490081Z",
+  "pristineSnapshot": "3aec268eb914aba85eb28ccf902700023b46bece42d75a39714224897b953b1e",
+  "dependencies": [],
+  "incompatibleWith": []
+}

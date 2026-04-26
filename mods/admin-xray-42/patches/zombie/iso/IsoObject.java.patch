@@ -1,0 +1,31 @@
+diff --git a/zombie/iso/IsoObject.java b/zombie/iso/IsoObject.java
+index 570e661..32a451b 100644
+--- a/zombie/iso/IsoObject.java
++++ b/zombie/iso/IsoObject.java
+@@ -3452,6 +3452,15 @@ public class IsoObject extends GameEntity implements Serializable, ILuaIsoObject
+ 
+    @Override
+    public void render(float x, float y, float z, ColorInfo col, boolean bDoAttached, boolean bWallLightingPass, Shader shader) {
++      int xrayPi = -1;
++      float xrayOldA = 0.0F;
++      float xrayOldT = 0.0F;
++      if (zombie.admin_xray.AdminXray.shouldFade(this)) {
++         xrayPi = IsoCamera.frameState.playerIndex;
++         xrayOldA = this.getAlpha(xrayPi);
++         xrayOldT = this.getTargetAlpha(xrayPi);
++         this.setAlphaAndTarget(xrayPi, zombie.admin_xray.AdminXray.XRAY_ALPHA);
++      }
+       if (this.getDoRender()) {
+          if (!this.isSceneCulled()) {
+             if (this.renderModel(x + 0.5F, y + 0.5F, z, col)) {
+@@ -3552,6 +3561,10 @@ public class IsoObject extends GameEntity implements Serializable, ILuaIsoObject
+             }
+          }
+       }
++      if (xrayPi >= 0) {
++         this.setAlpha(xrayPi, xrayOldA);
++         this.setTargetAlpha(xrayPi, xrayOldT);
++      }
+    }
+ 
+    private void debugRenderItemHeight(float x, float y, float z) {

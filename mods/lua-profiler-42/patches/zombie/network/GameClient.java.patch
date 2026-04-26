@@ -1,0 +1,18 @@
+diff --git a/zombie/network/GameClient.java b/zombie/network/GameClient.java
+index 1462897..9b5a33d 100644
+--- a/zombie/network/GameClient.java
++++ b/zombie/network/GameClient.java
+@@ -951,6 +951,13 @@ public class GameClient {
+    }
+ 
+    public static void SendCommandToServer(String command) {
++      if (command != null && (command.equals("/luaprofile") || command.startsWith("/luaprofile "))) {
++         String rest = command.length() > 12 ? command.substring(12).trim() : "";
++         String reply = zombie.Lua.LuaProfiler.handleCommand(zombie.Lua.LuaProfiler.tokenize(rest));
++         ChatManager.getInstance().showInfoMessage("LuaProfiler", reply);
++         return;
++      }
++
+       if (ServerOptions.clientOptionsList == null) {
+          ServerOptions.initClientCommandsHelp();
+       }

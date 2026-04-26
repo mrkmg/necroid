@@ -1,0 +1,22 @@
+diff --git a/zombie/commands/CommandBase.java b/zombie/commands/CommandBase.java
+index d91f6c8..683ecee 100644
+--- a/zombie/commands/CommandBase.java
++++ b/zombie/commands/CommandBase.java
+@@ -49,6 +49,7 @@ import zombie.commands.serverCommands.ReloadOptionsCommand;
+ import zombie.commands.serverCommands.RemoveAdminCommand;
+ import zombie.commands.serverCommands.RemoveCommand;
+ import zombie.commands.serverCommands.RemoveItemCommand;
++import zombie.commands.serverCommands.LuaProfileCommand;
+ import zombie.commands.serverCommands.RemoveMapSymbolsForUserCommand;
+ import zombie.commands.serverCommands.RemoveSteamIDCommand;
+ import zombie.commands.serverCommands.RemoveUserFromWhiteList;
+@@ -155,7 +156,8 @@ public abstract class CommandBase {
+       SetPasswordCommand.class,
+       StatisticsCommand.class,
+       WorldGeneratorCommand.class,
+-      RemoveMapSymbolsForUserCommand.class
++      RemoveMapSymbolsForUserCommand.class,
++      LuaProfileCommand.class
+    };
+ 
+    public static Class<?>[] getSubClasses() {

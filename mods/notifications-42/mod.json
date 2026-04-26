@@ -1,0 +1,13 @@
+{
+  "name": "notifications-42",
+  "clientOnly": true,
+  "description": "Custom toast notifications: bottom-right slide-in, stacked, fully configurable per call.",
+  "category": "ui",
+  "version": "0.1.0",
+  "expectedVersion": "42.17.0",
+  "createdAt": "2026-04-25T04:09:33.501993Z",
+  "updatedAt": "2026-04-25T04:11:32.729726Z",
+  "pristineSnapshot": "044db78d649691061ea05dd21f5b39b918c4d002948b9f72705741eba8a1310a",
+  "dependencies": [],
+  "incompatibleWith": []
+}

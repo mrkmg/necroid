@@ -1,0 +1,13 @@
+{
+  "name": "staff-priority-42",
+  "clientOnly": false,
+  "description": "Staff (admin/moderator/overseer/gm/observer) enter the preferred login queue and load ahead of VIPs and regular players when the server is full.",
+  "category": "admin",
+  "version": "0.1.0",
+  "expectedVersion": "42.17.0",
+  "createdAt": "2026-04-25T04:12:02.302871Z",
+  "updatedAt": "2026-04-25T04:14:41.373396Z",
+  "pristineSnapshot": "d969cbbed80126f5eacd09d48b18bc8391bb80ed21a72b14f437475a8b3bff76",
+  "dependencies": [],
+  "incompatibleWith": []
+}

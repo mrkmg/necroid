@@ -1,0 +1,24 @@
+diff --git a/zombie/network/LoginQueue.java b/zombie/network/LoginQueue.java
+index 4bb4948..555472b 100644
+--- a/zombie/network/LoginQueue.java
++++ b/zombie/network/LoginQueue.java
+@@ -55,7 +55,18 @@ public class LoginQueue {
+                .trace("PlaceInQueue ip=%s preferredInQueue=%b", connection.getIP(), connection.getRole().hasCapability(Capability.PriorityLogin));
+             if (connection.getRole().hasCapability(Capability.PriorityLogin)) {
+                if (!PreferredLoginQueue.contains(connection)) {
+-                  PreferredLoginQueue.add(connection);
++                  if (connection.getRole().hasCapability(Capability.CanSeeMessageForAdmin)) {
++                     int insertIdx = PreferredLoginQueue.size();
++                     for (int i = 0; i < PreferredLoginQueue.size(); i++) {
++                        if (!PreferredLoginQueue.get(i).getRole().hasCapability(Capability.CanSeeMessageForAdmin)) {
++                           insertIdx = i;
++                           break;
++                        }
++                     }
++                     PreferredLoginQueue.add(insertIdx, connection);
++                  } else {
++                     PreferredLoginQueue.add(connection);
++                  }
+                }
+             } else if (!LoginQueue.contains(connection)) {
+                LoginQueue.add(connection);

@@ -1,0 +1,22 @@
+diff --git a/zombie/iso/objects/IsoTree.java b/zombie/iso/objects/IsoTree.java
+index 683df0e..3cca3ba 100644
+--- a/zombie/iso/objects/IsoTree.java
++++ b/zombie/iso/objects/IsoTree.java
+@@ -264,6 +264,17 @@ public class IsoTree extends IsoObject implements IHasHealth {
+ 
+    @Override
+    public void render(float x, float y, float z, ColorInfo col, boolean bDoAttached, boolean bWallLightingPass, Shader shader) {
++      if (zombie.admin_xray.AdminXray.fadeOverride && !this.isHighlighted()) {
++         int xrayPi = IsoCamera.frameState.playerIndex;
++         float xrayOldA = this.getAlpha(xrayPi);
++         float xrayOldT = this.getTargetAlpha(xrayPi);
++         this.setAlphaAndTarget(xrayPi, zombie.admin_xray.AdminXray.XRAY_ALPHA);
++         this.renderInner(x, y, z, col, true, false);
++         this.setAlpha(xrayPi, xrayOldA);
++         this.setTargetAlpha(xrayPi, xrayOldT);
++         this.checkChopTreeIndicator();
++         return;
++      }
+       if (this.isHighlighted()) {
+          if (this.square != null) {
+             chopTreeHighlighted = this;

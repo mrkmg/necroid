@@ -1,0 +1,44 @@
+package zombie.commands.serverCommands;
+
+import zombie.Lua.LuaProfiler;
+import zombie.commands.CommandArgs;
+import zombie.commands.CommandBase;
+import zombie.commands.CommandHelp;
+import zombie.commands.CommandName;
+import zombie.characters.Capability;
+import zombie.characters.Role;
+import zombie.commands.RequiredCapability;
+import zombie.core.raknet.UdpConnection;
+
+/**
+ * Server-side `/luaprofile` admin command. Fires from the dedicated server
+ * console and from RCON (both routed via GameServer.handleServerCommand),
+ * targeting the server's Lua VM.
+ *
+ * MP clients do NOT reach this class — their chat is intercepted client-side
+ * in {@code zombie.chat.ChatManager.sendMessageToChat} so `/luaprofile`
+ * typed in chat profiles the local client VM instead of the server.
+ *
+ * Subcommands: see {@link zombie.Lua.LuaProfiler#handleCommand(String[])}.
+ */
+@CommandName(name = "luaprofile")
+@CommandArgs(varArgs = true)
+@CommandHelp(
+   helpText = "Usage: /luaprofile <start [sec]|stop|dump|reset|status|enable|disable|mode <m>|interval <us>|filter <mods|files|clear> [csv]>"
+)
+@RequiredCapability(requiredCapability = Capability.GeneralCheats)
+public class LuaProfileCommand extends CommandBase {
+   public LuaProfileCommand(String var1, Role var2, String var3, UdpConnection var4) {
+      super(var1, var2, var3, var4);
+   }
+
+   @Override
+   protected String Command() {
+      int n = this.getCommandArgsCount();
+      String[] args = new String[n];
+      for (int i = 0; i < n; i++) {
+         args[i] = this.getCommandArg(i);
+      }
+      return LuaProfiler.handleCommand(args);
+   }
+}

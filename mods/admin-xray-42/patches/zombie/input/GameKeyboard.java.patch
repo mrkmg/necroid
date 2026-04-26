@@ -1,0 +1,46 @@
+diff --git a/zombie/input/GameKeyboard.java b/zombie/input/GameKeyboard.java
+index 21475fb..83ec04f 100644
+--- a/zombie/input/GameKeyboard.java
++++ b/zombie/input/GameKeyboard.java
+@@ -32,6 +32,31 @@ public final class GameKeyboard {
+          for (int n = 1; n < c; n++) {
+             lastDown[n] = down[n];
+             down[n] = s_keyboardStateCache.getState().isKeyDown(n);
++            if (down[n] && !lastDown[n] && !eatKey[n]
++               && n == org.lwjglx.input.Keyboard.KEY_F9) {
++               if (zombie.admin_xray.AdminXray.canToggle()) {
++                  boolean shift = down[org.lwjglx.input.Keyboard.KEY_LSHIFT]
++                               || down[org.lwjglx.input.Keyboard.KEY_RSHIFT];
++                  if (shift) {
++                     zombie.admin_xray.AdminXray.fadeOverride = !zombie.admin_xray.AdminXray.fadeOverride;
++                     boolean on = zombie.admin_xray.AdminXray.fadeOverride;
++                     zombie.admin_xray.AdminXray.invalidateAllFboChunks();
++                     zombie.notifications.NotificationAPI.show(
++                        zombie.notifications.NotificationSpec.of("Admin X-ray transparent objects: " + (on ? "ON" : "OFF"))
++                           .borderColor(on ? 0.35F : 0.85F, on ? 0.90F : 0.35F, 0.35F, 1.0F));
++                  } else {
++                     zombie.admin_xray.AdminXray.losOverride = !zombie.admin_xray.AdminXray.losOverride;
++                     boolean on = zombie.admin_xray.AdminXray.losOverride;
++                     zombie.admin_xray.AdminXray.invalidateAllFboChunks();
++                     zombie.notifications.NotificationAPI.show(
++                        zombie.notifications.NotificationSpec.of("Admin X-ray LOS: " + (on ? "ON" : "OFF"))
++                           .borderColor(on ? 0.35F : 0.85F, on ? 0.90F : 0.35F, 0.35F, 1.0F));
++                  }
++                  eatKey[n] = true;
++                  continue;
++               }
++            }
++
+             if (!down[n] && lastDown[n]) {
+                if (eatKey[n]) {
+                   eatKey[n] = false;
+@@ -100,6 +125,9 @@ public final class GameKeyboard {
+    }
+ 
+    public static boolean isKeyPressed(int key) {
++      if (key >= 0 && eatKey != null && key < eatKey.length && eatKey[key]) {
++         return false;
++      }
+       return isKeyDown(key) && !wasKeyDown(key);
+    }
+ 

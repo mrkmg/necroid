@@ -1,0 +1,135 @@
+package zombie.notifications;
+
+import zombie.ui.UIFont;
+
+public final class NotificationSpec {
+    String text = "";
+    UIFont font = UIFont.Small;
+
+    float textR = 1.0F, textG = 1.0F, textB = 1.0F, textA = 1.0F;
+
+    float bgR = 0.08F, bgG = 0.08F, bgB = 0.08F, bgA = 0.85F;
+    float borderR = 0.80F, borderG = 0.80F, borderB = 0.80F, borderA = 1.0F;
+
+    int borderPx = 1;
+    int paddingX = 10;
+    int paddingY = 6;
+    int minWidth = 120;
+    int maxWidth = 420;
+
+    int durationMs = 3500;
+    int slideInMs = 180;
+    int fadeOutMs = 350;
+
+    int marginRight = 16;
+    int marginBottom = 16;
+    int stackGap = 6;
+
+    private NotificationSpec() {
+    }
+
+    public static NotificationSpec of(String text) {
+        NotificationSpec s = new NotificationSpec();
+        s.text = text == null ? "" : text;
+        return s;
+    }
+
+    public NotificationSpec text(String v) {
+        this.text = v == null ? "" : v;
+        return this;
+    }
+
+    public NotificationSpec font(UIFont v) {
+        if (v != null) this.font = v;
+        return this;
+    }
+
+    public NotificationSpec textColor(float r, float g, float b, float a) {
+        this.textR = clamp01(r); this.textG = clamp01(g); this.textB = clamp01(b); this.textA = clamp01(a);
+        return this;
+    }
+
+    public NotificationSpec backgroundColor(float r, float g, float b, float a) {
+        this.bgR = clamp01(r); this.bgG = clamp01(g); this.bgB = clamp01(b); this.bgA = clamp01(a);
+        return this;
+    }
+
+    public NotificationSpec borderColor(float r, float g, float b, float a) {
+        this.borderR = clamp01(r); this.borderG = clamp01(g); this.borderB = clamp01(b); this.borderA = clamp01(a);
+        return this;
+    }
+
+    public NotificationSpec borderPx(int v) {
+        this.borderPx = Math.max(0, v);
+        return this;
+    }
+
+    public NotificationSpec padding(int x, int y) {
+        this.paddingX = Math.max(0, x);
+        this.paddingY = Math.max(0, y);
+        return this;
+    }
+
+    public NotificationSpec minWidth(int v) {
+        this.minWidth = Math.max(0, v);
+        return this;
+    }
+
+    public NotificationSpec maxWidth(int v) {
+        this.maxWidth = Math.max(1, v);
+        return this;
+    }
+
+    public NotificationSpec durationMs(int v) {
+        this.durationMs = Math.max(1, v);
+        return this;
+    }
+
+    public NotificationSpec slideInMs(int v) {
+        this.slideInMs = Math.max(0, v);
+        return this;
+    }
+
+    public NotificationSpec fadeOutMs(int v) {
+        this.fadeOutMs = Math.max(0, v);
+        return this;
+    }
+
+    public NotificationSpec margin(int right, int bottom) {
+        this.marginRight = Math.max(0, right);
+        this.marginBottom = Math.max(0, bottom);
+        return this;
+    }
+
+    public NotificationSpec stackGap(int v) {
+        this.stackGap = Math.max(0, v);
+        return this;
+    }
+
+    void normalize() {
+        if (this.minWidth > this.maxWidth) this.minWidth = this.maxWidth;
+        int phases = this.slideInMs + this.fadeOutMs;
+        if (this.durationMs < phases) this.durationMs = phases + 1;
+    }
+
+    NotificationSpec copy() {
+        NotificationSpec c = new NotificationSpec();
+        c.text = this.text; c.font = this.font;
+        c.textR = this.textR; c.textG = this.textG; c.textB = this.textB; c.textA = this.textA;
+        c.bgR = this.bgR; c.bgG = this.bgG; c.bgB = this.bgB; c.bgA = this.bgA;
+        c.borderR = this.borderR; c.borderG = this.borderG; c.borderB = this.borderB; c.borderA = this.borderA;
+        c.borderPx = this.borderPx;
+        c.paddingX = this.paddingX; c.paddingY = this.paddingY;
+        c.minWidth = this.minWidth; c.maxWidth = this.maxWidth;
+        c.durationMs = this.durationMs; c.slideInMs = this.slideInMs; c.fadeOutMs = this.fadeOutMs;
+        c.marginRight = this.marginRight; c.marginBottom = this.marginBottom; c.stackGap = this.stackGap;
+        return c;
+    }
+
+    private static float clamp01(float v) {
+        if (Float.isNaN(v)) return 0.0F;
+        if (v < 0.0F) return 0.0F;
+        if (v > 1.0F) return 1.0F;
+        return v;
+    }
+}

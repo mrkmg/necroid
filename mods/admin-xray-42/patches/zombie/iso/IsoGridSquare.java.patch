@@ -1,0 +1,179 @@
+diff --git a/zombie/iso/IsoGridSquare.java b/zombie/iso/IsoGridSquare.java
+index a15a04e..86df92e 100644
+--- a/zombie/iso/IsoGridSquare.java
++++ b/zombie/iso/IsoGridSquare.java
+@@ -158,6 +158,7 @@ import zombie.util.io.BitHeaderWrite;
+ import zombie.util.lambda.Invokers;
+ import zombie.util.list.PZArrayList;
+ import zombie.util.list.PZArrayUtil;
++import zombie.admin_xray.AdminXray;
+ import zombie.vehicles.BaseVehicle;
+ 
+ @zombie.UsedFromLua
+@@ -399,6 +400,9 @@ public final class IsoGridSquare {
+    }
+ 
+    public int getPlayerCutawayFlag(int playerIndex, long currentTimeMillis) {
++      if (AdminXray.losOverride) {
++         return 3;
++      }
+       if (PerformanceSettings.fboRenderChunk) {
+          return this.targetPlayerCutawayFlags[playerIndex];
+       } else {
+@@ -9325,6 +9329,7 @@ public final class IsoGridSquare {
+    }
+ 
+    public boolean isCouldSee(int playerIndex) {
++      if (AdminXray.losOverride) return true;
+       return this.lighting[playerIndex].bCouldSee();
+    }
+ 
+@@ -9333,6 +9338,7 @@ public final class IsoGridSquare {
+    }
+ 
+    public boolean isCanSee(int playerIndex) {
++      if (AdminXray.losOverride) return true;
+       return this.lighting[playerIndex].bCanSee();
+    }
+ 
+@@ -9601,6 +9607,7 @@ public final class IsoGridSquare {
+    }
+ 
+    public boolean getCanSee(int playerIndex) {
++      if (AdminXray.losOverride) return true;
+       return this.lighting[playerIndex].bCanSee();
+    }
+ 
+@@ -11834,30 +11841,30 @@ public final class IsoGridSquare {
+ 
+       zombie.VirtualZombieManager.instance.choices.clear();
+       zombie.VirtualZombieManager.instance.choices.add(this);
+-      IsoZombie zombie = zombie.VirtualZombieManager.instance.createRealZombieAlways(IsoDirections.getRandom(), false);
+-      if (zombie != null) {
+-         zombie.setX(this.x);
+-         zombie.setY(this.y);
+-         zombie.setFakeDead(false);
+-         zombie.setHealth(0.0F);
++      IsoZombie z = zombie.VirtualZombieManager.instance.createRealZombieAlways(IsoDirections.getRandom(), false);
++      if (z != null) {
++         z.setX(this.x);
++         z.setY(this.y);
++         z.setFakeDead(false);
++         z.setHealth(0.0F);
+          if (!isSkeleton) {
+-            zombie.dressInRandomOutfit();
++            z.dressInRandomOutfit();
+ 
+             for (int i = 0; i < 10; i++) {
+-               zombie.addHole(null);
+-               zombie.addBlood(null, false, true, false);
+-               zombie.addDirt(null, null, false);
++               z.addHole(null);
++               z.addBlood(null, false, true, false);
++               z.addDirt(null, null, false);
+             }
+ 
+-            zombie.DoCorpseInventory();
++            z.DoCorpseInventory();
+          }
+ 
+-         zombie.setSkeleton(isSkeleton);
++         z.setSkeleton(isSkeleton);
+          if (isSkeleton) {
+-            zombie.getHumanVisual().setSkinTextureIndex(1);
++            z.getHumanVisual().setSkinTextureIndex(1);
+          }
+ 
+-         body = new IsoDeadBody(zombie, true);
++         body = new IsoDeadBody(z, true);
+          if (!isSkeleton && Rand.Next(10) == 0) {
+             body.setFakeDead(true);
+             if (Rand.Next(5) == 0) {
+@@ -11870,30 +11877,30 @@ public final class IsoGridSquare {
+    }
+ 
+    public IsoDeadBody createCorpse(boolean skeleton) {
+-      IsoZombie zombie = zombie.VirtualZombieManager.instance.createRealZombieAlways(IsoDirections.getRandom(), false);
+-      return this.createCorpse(zombie, skeleton);
++      IsoZombie z = zombie.VirtualZombieManager.instance.createRealZombieAlways(IsoDirections.getRandom(), false);
++      return this.createCorpse(z, skeleton);
+    }
+ 
+    public IsoDeadBody createCorpse(IsoZombie zombie) {
+       return this.createCorpse(zombie, false);
+    }
+ 
+-   public IsoDeadBody createCorpse(IsoZombie zombie, boolean skeleton) {
+-      if (zombie == null) {
++   public IsoDeadBody createCorpse(IsoZombie z, boolean skeleton) {
++      if (z == null) {
+          return null;
+       } else {
+          zombie.VirtualZombieManager.instance.choices.clear();
+          zombie.VirtualZombieManager.instance.choices.add(this);
+-         zombie.ZombieSpawnRecorder.instance.record(zombie, this.getClass().getSimpleName());
+-         RandomizedWorldBase.alignCorpseToSquare(zombie, this);
+-         zombie.setFakeDead(false);
+-         zombie.setHealth(0.0F);
++         zombie.ZombieSpawnRecorder.instance.record(z, this.getClass().getSimpleName());
++         RandomizedWorldBase.alignCorpseToSquare(z, this);
++         z.setFakeDead(false);
++         z.setHealth(0.0F);
+          if (skeleton) {
+-            zombie.setSkeleton(true);
+-            zombie.getHumanVisual().setSkinTextureIndex(Rand.Next(1, 3));
++            z.setSkeleton(true);
++            z.getHumanVisual().setSkinTextureIndex(Rand.Next(1, 3));
+          }
+ 
+-         return new IsoDeadBody(zombie, true);
++         return new IsoDeadBody(z, true);
+       }
+    }
+ 
+@@ -12148,6 +12155,7 @@ public final class IsoGridSquare {
+ 
+       @Override
+       public int lightverts(int i) {
++         if (AdminXray.losOverride) return AdminXray.FULL_VERT_LIGHT;
+          return this.lightverts[i];
+       }
+ 
+@@ -12168,31 +12176,37 @@ public final class IsoGridSquare {
+ 
+       @Override
+       public boolean bSeen() {
++         if (AdminXray.losOverride) return true;
+          return this.seen;
+       }
+ 
+       @Override
+       public boolean bCanSee() {
++         if (AdminXray.losOverride) return true;
+          return this.canSee;
+       }
+ 
+       @Override
+       public boolean bCouldSee() {
++         if (AdminXray.losOverride) return true;
+          return this.couldSee;
+       }
+ 
+       @Override
+       public float darkMulti() {
++         if (AdminXray.losOverride) return 1.0F;
+          return this.darkMulti;
+       }
+ 
+       @Override
+       public float targetDarkMulti() {
++         if (AdminXray.losOverride) return 1.0F;
+          return this.targetDarkMulti;
+       }
+ 
+       @Override
+       public ColorInfo lightInfo() {
++         if (AdminXray.losOverride) return AdminXray.WHITE;
+          return this.lightInfo;
+       }
+ 

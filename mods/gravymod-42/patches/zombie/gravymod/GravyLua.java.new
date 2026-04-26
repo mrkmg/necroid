@@ -1,0 +1,23 @@
+package zombie.gravymod;
+
+import zombie.gravymod.Utilities.TreeManipulator;
+import se.krka.kahlua.integration.annotations.LuaMethod;
+import zombie.iso.IsoGridSquare;
+
+public class GravyLua {
+	@LuaMethod(
+		name = "spawnTree",
+		global = true
+	)
+	public static boolean spawnTree(IsoGridSquare gs, String name, int stage) throws Throwable {
+		return TreeManipulator.spawnTree(gs, name, stage);
+	}
+	
+	@LuaMethod(
+		name = "growTree",
+		global = true
+	)
+	public static boolean growTree(IsoGridSquare gs) throws Throwable {
+		return TreeManipulator.growTree(gs);
+	}
+}

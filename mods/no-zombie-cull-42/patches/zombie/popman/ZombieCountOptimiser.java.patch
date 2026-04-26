@@ -1,0 +1,23 @@
+diff --git a/zombie/popman/ZombieCountOptimiser.java b/zombie/popman/ZombieCountOptimiser.java
+index 221fd96..8d6f855 100644
+--- a/zombie/popman/ZombieCountOptimiser.java
++++ b/zombie/popman/ZombieCountOptimiser.java
+@@ -23,18 +23,5 @@ public class ZombieCountOptimiser {
+    }
+ 
+    public static void incrementZombie(IsoZombie zombie) {
+-      if (zombieCountForDelete > 0
+-         && Rand.Next(10) == 0
+-         && zombie.getTarget() == null
+-         && isOutside(zombie)
+-         && zombie.canBeDeletedUnnoticed(20.0F)
+-         && !zombie.isReanimatedPlayer()) {
+-         synchronized (zombiesForDelete) {
+-            zombiesForDelete.add(zombie);
+-         }
+-
+-         zombieCountForDelete--;
+-         GameStatistic.getInstance().zombiesCulled.increase();
+-      }
+    }
+ }

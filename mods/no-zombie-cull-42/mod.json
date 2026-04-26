@@ -1,0 +1,13 @@
+{
+  "name": "no-zombie-cull-42",
+  "clientOnly": false,
+  "description": "Disables 500-zombie client cull. Keeps zombies alive in loaded chunks.",
+  "category": "mechanics",
+  "version": "0.1.0",
+  "expectedVersion": "42.17.0",
+  "createdAt": "2026-04-25T04:28:30.067198Z",
+  "updatedAt": "2026-04-25T04:30:14.473738Z",
+  "pristineSnapshot": "6240d4ec3611feee914822bec3f99a90bb962de26acc21cff6ec5618bcb12bf1",
+  "dependencies": [],
+  "incompatibleWith": []
+}

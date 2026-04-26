@@ -1,0 +1,35 @@
+package zombie.gravymod.Utilities;
+
+import java.lang.reflect.Field;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+
+import zombie.core.logger.ExceptionLogger;
+import zombie.network.ServerWorldDatabase;
+
+public class PriorityCommand {
+	public static String Execute(String player, boolean priority) {
+		try {
+			Connection conn = getConnection();
+			String query = "UPDATE whitelist SET priority = ? WHERE username = ?";
+			PreparedStatement statement = conn.prepareStatement(query);
+			statement.setString(1, priority ? "true" : "false");
+			statement.setString(2, player);
+			int rows = statement.executeUpdate();
+        	statement.close();
+        	return rows == 0 ? player + " not found." :  player + (priority ? " priority was set." : " priority was unset.");
+		} catch (Throwable e) {
+			ExceptionLogger.logException(e);
+			return "There was an error";
+		}
+	}
+	
+	private static Connection getConnection() throws Throwable {
+		ServerWorldDatabase instance = ServerWorldDatabase.instance;
+		Class<ServerWorldDatabase> c = ServerWorldDatabase.class;
+		Field f = c.getDeclaredField("conn");
+		f.setAccessible(true);
+		Connection conn = (Connection)f.get(instance);
+		return conn;
+	}
+}

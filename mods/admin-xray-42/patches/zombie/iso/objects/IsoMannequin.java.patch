@@ -1,0 +1,107 @@
+diff --git a/zombie/iso/objects/IsoMannequin.java b/zombie/iso/objects/IsoMannequin.java
+index 09dac85..996c19d 100644
+--- a/zombie/iso/objects/IsoMannequin.java
++++ b/zombie/iso/objects/IsoMannequin.java
+@@ -69,6 +69,9 @@ import zombie.scripting.objects.ResourceLocation;
+ import zombie.util.StringUtils;
+ import zombie.util.list.PZArrayUtil;
+ import zombie.vehicles.BaseVehicle;
++import zombie.admin_xray.AdminXray;
++import zombie.GameWindow;
++import zombie.IndieGL;
+ 
+ @zombie.UsedFromLua
+ public class IsoMannequin extends IsoObject implements IHumanVisual {
+@@ -248,8 +251,8 @@ public class IsoMannequin extends IsoObject implements IHumanVisual {
+       this.female = input.get() != 0;
+       this.zombie = input.get() != 0;
+       this.skeleton = input.get() != 0;
+-      this.mannequinScriptName = zombie.GameWindow.ReadString(input);
+-      this.pose = zombie.GameWindow.ReadString(input);
++      this.mannequinScriptName = GameWindow.ReadString(input);
++      this.pose = GameWindow.ReadString(input);
+       this.humanVisual.load(input, worldVersion);
+       this.textureName = this.humanVisual.getSkinTexture();
+       this.wornItems.clear();
+@@ -266,7 +269,7 @@ public class IsoMannequin extends IsoObject implements IHumanVisual {
+             int wornItemCount = input.get();
+ 
+             for (int i = 0; i < wornItemCount; i++) {
+-               ItemBodyLocation itemBodyLocation = ItemBodyLocation.get(ResourceLocation.of(zombie.GameWindow.ReadString(input)));
++               ItemBodyLocation itemBodyLocation = ItemBodyLocation.get(ResourceLocation.of(GameWindow.ReadString(input)));
+                short index = input.getShort();
+                if (index >= 0 && index < savedItems.size() && this.wornItems.getBodyLocationGroup().getLocation(itemBodyLocation) != null) {
+                   this.wornItems.setItem(itemBodyLocation, savedItems.get(index));
+@@ -291,8 +294,8 @@ public class IsoMannequin extends IsoObject implements IHumanVisual {
+       output.put((byte)(this.female ? 1 : 0));
+       output.put((byte)(this.zombie ? 1 : 0));
+       output.put((byte)(this.skeleton ? 1 : 0));
+-      zombie.GameWindow.WriteString(output, this.mannequinScriptName);
+-      zombie.GameWindow.WriteString(output, this.pose);
++      GameWindow.WriteString(output, this.mannequinScriptName);
++      GameWindow.WriteString(output, this.pose);
+       this.humanVisual.save(output);
+       if (container != null) {
+          output.put((byte)1);
+@@ -304,7 +307,7 @@ public class IsoMannequin extends IsoObject implements IHumanVisual {
+ 
+          output.put((byte)this.wornItems.size());
+          this.wornItems.forEach(wornItem -> {
+-            zombie.GameWindow.WriteString(output, wornItem.getLocation().toString());
++            GameWindow.WriteString(output, wornItem.getLocation().toString());
+             output.putShort((short)savedItems.indexOf(wornItem.getItem()));
+          });
+       } else {
+@@ -422,6 +425,12 @@ public class IsoMannequin extends IsoObject implements IHumanVisual {
+    @Override
+    public void render(float x, float y, float z, ColorInfo col, boolean bDoChild, boolean bWallLightingPass, Shader shader) {
+       int playerIndex = IsoCamera.frameState.playerIndex;
++      boolean xrayFade = AdminXray.shouldFade(this);
++      float xrayOldA = xrayFade ? this.getAlpha(playerIndex) : 0.0F;
++      float xrayOldT = xrayFade ? this.getTargetAlpha(playerIndex) : 0.0F;
++      if (xrayFade) {
++         this.setAlphaAndTarget(playerIndex, AdminXray.XRAY_ALPHA);
++      }
+       x += 0.5F;
+       y += 0.5F;
+       this.calcScreenPos(x, y, z);
+@@ -493,7 +502,7 @@ public class IsoMannequin extends IsoObject implements IHumanVisual {
+                   this.square.interpolateLight(col, x - this.square.getX(), y - this.square.getY());
+                }
+ 
+-               zombie.IndieGL.disableDepthTest();
++               IndieGL.disableDepthTest();
+                SpriteRenderer.instance.StartShader(0, playerIndex);
+                perPlayerx.atlasTex.render(x, y, z, (int)this.screenX, (int)this.screenY, col.r, col.g, col.b, this.getAlpha(playerIndex));
+                SpriteRenderer.instance.EndShader();
+@@ -550,6 +559,10 @@ public class IsoMannequin extends IsoObject implements IHumanVisual {
+             SpriteRenderer.instance.drawGeneric(drawer);
+          }
+       }
++      if (xrayFade) {
++         this.setAlpha(playerIndex, xrayOldA);
++         this.setTargetAlpha(playerIndex, xrayOldT);
++      }
+    }
+ 
+    @Override
+@@ -755,8 +768,8 @@ public class IsoMannequin extends IsoObject implements IHumanVisual {
+ 
+    private void syncModel() {
+       this.humanVisual.setForceModelScript(this.modelScriptName);
+-      String i = this.modelScriptName;
+-      switch (i) {
++      String modelName = this.modelScriptName;
++      switch (modelName) {
+          case "FemaleBody":
+             this.humanVisual.setForceModel(ModelManager.instance.femaleModel);
+             break;
+@@ -1082,7 +1095,7 @@ public class IsoMannequin extends IsoObject implements IHumanVisual {
+                return false;
+             } else if (item.getByteData() == null) {
+                Thread thread = Thread.currentThread();
+-               if (thread != zombie.GameWindow.gameThread && thread != GameLoadingState.loader && thread == GameServer.mainThread) {
++               if (thread != GameWindow.gameThread && thread != GameLoadingState.loader && thread == GameServer.mainThread) {
+                   return false;
+                } else {
+                   if (this.mannequin == null || this.mannequin.getCell() != IsoWorld.instance.currentCell) {

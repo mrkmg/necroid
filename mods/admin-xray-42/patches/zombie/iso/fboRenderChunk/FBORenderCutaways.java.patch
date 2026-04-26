@@ -1,0 +1,76 @@
+diff --git a/zombie/iso/fboRenderChunk/FBORenderCutaways.java b/zombie/iso/fboRenderChunk/FBORenderCutaways.java
+index 4a6a19c..cc996f6 100644
+--- a/zombie/iso/fboRenderChunk/FBORenderCutaways.java
++++ b/zombie/iso/fboRenderChunk/FBORenderCutaways.java
+@@ -371,6 +371,21 @@ public final class FBORenderCutaways {
+          }
+       }
+ 
++      if (zombie.admin_xray.AdminXray.losOverride) {
++         for (int xrayJ = 0; xrayJ < perPlayerData1.cutawayWalls.size(); xrayJ++) {
++            FBORenderCutaways.CutawayWall xrayWall = perPlayerData1.cutawayWalls.get(xrayJ);
++            if (!xrayWall.isPlayerInRange(playerIndex, FBORenderCutaways.PlayerInRange.True)) {
++               xrayWall.setPlayerInRange(playerIndex, FBORenderCutaways.PlayerInRange.True);
++               xrayWall.setPlayerCutawayFlag(playerIndex, true);
++               IsoChunk xrayChunk = chunkMap.getChunkForGridSquare(xrayWall.x1, xrayWall.y1);
++               if (xrayChunk != null && !this.invalidatedChunks.contains(xrayChunk)) {
++                  this.invalidatedChunks.add(xrayChunk);
++                  xrayChunk.getRenderLevels(playerIndex).invalidateLevel(playerZ, 2048L);
++               }
++            }
++         }
++      }
++
+       for (IsoChunk chunk : this.invalidatedChunks) {
+          FBORenderCutaways.ChunkLevelData levelData = chunk.getCutawayData().getDataForLevel(playerZ);
+          if (levelData != null) {
+@@ -409,6 +424,39 @@ public final class FBORenderCutaways {
+       }
+    }
+ 
++   public void xrayResetAllForcedCutaways() {
++      try {
++         if (this.cell == null) return;
++         for (int pi = 0; pi < 4; pi++) {
++            zombie.iso.IsoChunkMap cm = this.cell.chunkMap[pi];
++            if (cm == null) continue;
++            zombie.iso.IsoChunk[] chunks = cm.getChunks();
++            if (chunks == null) continue;
++            for (int ci = 0; ci < chunks.length; ci++) {
++               zombie.iso.IsoChunk chunk = chunks[ci];
++               if (chunk == null) continue;
++               FBORenderCutaways.ChunkLevelsData lvls = chunk.getCutawayData();
++               if (lvls == null) continue;
++               for (int z = -32; z <= 31; z++) {
++                  FBORenderCutaways.ChunkLevelData levelData = lvls.levelData.get(z + 32);
++                  if (levelData == null) continue;
++                  for (int wi = 0; wi < levelData.allWalls.size(); wi++) {
++                     FBORenderCutaways.CutawayWall w = levelData.allWalls.get(wi);
++                     w.setPlayerInRange(pi, FBORenderCutaways.PlayerInRange.False);
++                     w.setPlayerCutawayFlag(pi, false);
++                  }
++                  for (int si = 0; si < levelData.slopedSurfaces.size(); si++) {
++                     FBORenderCutaways.SlopedSurface s = levelData.slopedSurfaces.get(si);
++                     s.setPlayerInRange(pi, FBORenderCutaways.PlayerInRange.False);
++                     s.setPlayerCutawayFlag(pi, false);
++                  }
++               }
++            }
++         }
++      } catch (Throwable ignored) {
++      }
++   }
++
+    private boolean hasAnyCutawayWalls(int playerIndex, IsoChunk chunk, int z, byte pcf, int x1, int y1, int x2, int y2) {
+       long currentTimeMs = 0L;
+ 
+@@ -785,6 +833,9 @@ public final class FBORenderCutaways {
+ 
+    public boolean shouldRenderBuildingSquare(int playerIndex, IsoGridSquare square) {
+       int playerZ = PZMath.fastfloor(IsoCamera.frameState.camCharacterZ);
++      if (zombie.admin_xray.AdminXray.losOverride && square.z > playerZ) {
++         return false;
++      }
+       FBORenderCutaways.PerPlayerData perPlayerData1 = this.perPlayerData[playerIndex];
+       FBORenderCutaways.BuildingsToCollapse btc = perPlayerData1.buildingsToCollapse;
+       if (square.associatedBuilding != null && btc.buildingsToCollapse.contains(square.associatedBuilding) && square.z > playerZ) {

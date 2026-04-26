@@ -1,0 +1,67 @@
+diff --git a/zombie/iso/IsoCell.java b/zombie/iso/IsoCell.java
+index b9793b3..0bb682b 100644
+--- a/zombie/iso/IsoCell.java
++++ b/zombie/iso/IsoCell.java
+@@ -1717,6 +1717,8 @@ public final class IsoCell {
+          IsoGridSquare playerSquare = player.current;
+          if (playerSquare.getZ() >= square.getZ()) {
+             return false;
++         } else if (zombie.admin_xray.AdminXray.losOverride) {
++            return true;
+          } else if (!PerformanceSettings.newRoofHiding) {
+             return this.hideFloors[playerIndex] && square.getZ() >= this.maxZ;
+          } else {
+@@ -3381,7 +3383,7 @@ public final class IsoCell {
+             }
+          }
+ 
+-         if (this.hideFloors[playerIndex]) {
++         if (this.hideFloors[playerIndex] && !zombie.admin_xray.AdminXray.losOverride) {
+             this.maxZ = isoGameCharacter.getZi() + 1;
+          }
+       }
+@@ -3445,7 +3447,8 @@ public final class IsoCell {
+ 
+       if (isoGameCharacter != null
+          && isoGameCharacter.getCurrentSquare() != null
+-         && isoGameCharacter.getCurrentSquare().getProperties().has(IsoFlagType.hidewalls)) {
++         && isoGameCharacter.getCurrentSquare().getProperties().has(IsoFlagType.hidewalls)
++         && !zombie.admin_xray.AdminXray.losOverride) {
+          this.maxZ = isoGameCharacter.getZi() + 1;
+       }
+ 
+@@ -3654,6 +3657,34 @@ public final class IsoCell {
+          this.hidesOrphanStructuresAbove = currentPlayerSquare.getZ();
+       }
+ 
++      if (zombie.admin_xray.AdminXray.losOverride && currentPlayerSquare != null) {
++         this.hidesOrphanStructuresAbove = currentPlayerSquare.getZ();
++         this.playerHidesOrphanStructures[playerIndex] = true;
++         ArrayList<IsoBuilding> xrayPob = this.playerOccluderBuildings.get(playerIndex);
++         ArrayList<IsoBuilding> xrayOob = this.otherOccluderBuildings.get(playerIndex);
++         for (int xrayBi = 0; xrayBi < this.buildingList.size(); xrayBi++) {
++            IsoBuilding xrayB = this.buildingList.get(xrayBi);
++            this.AddUniqueToBuildingList(xrayPob, xrayB);
++            this.AddUniqueToBuildingList(xrayOob, xrayB);
++         }
++         if (this.playerOccluderBuildingsArr[playerIndex] == null) {
++            this.playerOccluderBuildingsArr[playerIndex] = new IsoBuilding[500];
++         }
++         if (this.otherOccluderBuildingsArr[playerIndex] == null) {
++            this.otherOccluderBuildingsArr[playerIndex] = new IsoBuilding[500];
++         }
++         int xrayLim = Math.min(xrayPob.size(), 499);
++         for (int xrayBi = 0; xrayBi < xrayLim; xrayBi++) {
++            this.playerOccluderBuildingsArr[playerIndex][xrayBi] = xrayPob.get(xrayBi);
++         }
++         this.playerOccluderBuildingsArr[playerIndex][xrayLim] = null;
++         int xrayLim2 = Math.min(xrayOob.size(), 499);
++         for (int xrayBi = 0; xrayBi < xrayLim2; xrayBi++) {
++            this.otherOccluderBuildingsArr[playerIndex][xrayBi] = xrayOob.get(xrayBi);
++         }
++         this.otherOccluderBuildingsArr[playerIndex][xrayLim2] = null;
++      }
++
+       boolean bSetZombieBuildings = false;
+       if (this.nearestVisibleZombie[playerIndex] != null && this.nearestVisibleZombieDistSqr[playerIndex] < 150.0F) {
+          IsoGridSquare zombieSquare = this.nearestVisibleZombie[playerIndex].getCurrentSquare();

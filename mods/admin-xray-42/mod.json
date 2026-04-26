@@ -1,0 +1,15 @@
+{
+  "name": "admin-xray-42",
+  "clientOnly": true,
+  "description": "Staff toggles: LOS (F9), transparent static objects (Shift+F9).",
+  "category": "admin",
+  "version": "0.1.0",
+  "expectedVersion": "42.17.0",
+  "createdAt": "2026-04-25T04:42:32.597538Z",
+  "updatedAt": "2026-04-26T04:07:31.390716Z",
+  "pristineSnapshot": "28e60ee498397a84987437f3ba6c355f3bd8629f152d83d0476e6f7e4284900d",
+  "dependencies": [
+    "notifications"
+  ],
+  "incompatibleWith": []
+}

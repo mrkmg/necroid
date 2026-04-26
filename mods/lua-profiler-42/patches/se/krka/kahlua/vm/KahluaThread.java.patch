@@ -1,0 +1,38 @@
+diff --git a/se/krka/kahlua/vm/KahluaThread.java b/se/krka/kahlua/vm/KahluaThread.java
+index 1e85676..d5c557c 100644
+--- a/se/krka/kahlua/vm/KahluaThread.java
++++ b/se/krka/kahlua/vm/KahluaThread.java
+@@ -109,6 +109,7 @@ public class KahluaThread {
+    }
+ 
+    public int call(int nArguments) {
++      KahluaProfiler.noteReentry();
+       int top = this.currentCoroutine.getTop();
+       int base = top - nArguments - 1;
+       Object o = this.currentCoroutine.objectStack[base];
+@@ -139,7 +140,9 @@ public class KahluaThread {
+    private int callJava(JavaFunction f, int localBase, int returnBase, int nArguments) {
+       Coroutine coroutine = this.currentCoroutine;
+       LuaCallFrame callFrame = coroutine.pushNewCallFrame(null, f, localBase, returnBase, nArguments, false, false);
++      KahluaProfiler.tick(this);
+       int nReturnValues = f.call(callFrame, nArguments);
++      KahluaProfiler.tick(this);
+       int top = callFrame.getTop();
+       int actualReturnBase = top - nReturnValues;
+       int diff = returnBase - localBase;
+@@ -172,6 +175,7 @@ public class KahluaThread {
+       boolean bStepWorthy = true;
+ 
+       while (!this.reset) {
++         KahluaProfiler.tick(this);
+          if (Core.debug && this == LuaManager.thread) {
+             Coroutine c = this.getCurrentCoroutine();
+             if (c != null) {
+@@ -712,6 +716,7 @@ public class KahluaThread {
+                   this.currentCoroutine.stackCopy(base + a, returnBase, nArguments2 + 1);
+                   this.currentCoroutine.setTop(returnBase + nArguments2 + 1);
+                   if (fun instanceof LuaClosure luaClosure) {
++                     KahluaProfiler.recordTailCall(callFrame, callFrame.closure, callFrame.pc);
+                      callFrame.localBase = localBase2;
+                      callFrame.nArguments = nArguments2;
+                      callFrame.closure = luaClosure;

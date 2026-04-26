@@ -1,0 +1,55 @@
+package zombie.admin_xray;
+
+import zombie.characters.Capability;
+import zombie.characters.IsoPlayer;
+import zombie.characters.Role;
+import zombie.core.Core;
+import zombie.core.textures.ColorInfo;
+import zombie.iso.IsoMovingObject;
+import zombie.iso.IsoObject;
+import zombie.network.GameClient;
+
+public final class AdminXray {
+    public static boolean losOverride = false;
+    public static boolean fadeOverride = false;
+    public static final float XRAY_ALPHA = 0.25F;
+    public static final ColorInfo WHITE = new ColorInfo(1.0F, 1.0F, 1.0F, 1.0F);
+    public static final int FULL_VERT_LIGHT = 0xFFFFFFFF;
+
+    private AdminXray() {
+    }
+
+    public static boolean canToggle() {
+        if (Core.debug) return true;
+        IsoPlayer p = IsoPlayer.getInstance();
+        if (p == null) return false;
+        if (!GameClient.client) return true;
+        Role role = p.getRole();
+        return role != null && role.hasCapability(Capability.CanSeeMessageForAdmin);
+    }
+
+    public static boolean shouldFade(IsoObject obj) {
+        return fadeOverride && !(obj instanceof IsoMovingObject);
+    }
+
+    public static void invalidateAllFboChunks() {
+        try {
+            zombie.iso.IsoCell cell = zombie.iso.IsoWorld.instance.getCell();
+            if (cell == null) return;
+            for (int pi = 0; pi < 4; pi++) {
+                zombie.iso.IsoChunkMap cm = cell.chunkMap[pi];
+                if (cm == null) continue;
+                zombie.iso.IsoChunk[] chunks = cm.getChunks();
+                if (chunks == null) continue;
+                for (int i = 0; i < chunks.length; i++) {
+                    zombie.iso.IsoChunk chunk = chunks[i];
+                    if (chunk == null) continue;
+                    zombie.iso.fboRenderChunk.FBORenderLevels rl = chunk.getRenderLevels(pi);
+                    if (rl != null) rl.invalidateAll(2048L);
+                }
+            }
+            zombie.iso.fboRenderChunk.FBORenderCutaways.getInstance().xrayResetAllForcedCutaways();
+        } catch (Throwable ignored) {
+        }
+    }
+}

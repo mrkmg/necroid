@@ -1,0 +1,13 @@
+{
+  "name": "gravymod-42",
+  "clientOnly": false,
+  "description": "Adds various lua utils and commands.",
+  "category": "utility",
+  "version": "0.1.0",
+  "expectedVersion": "42.17.0",
+  "createdAt": "2026-04-25T04:15:04.165950Z",
+  "updatedAt": "2026-04-25T04:19:41.712689Z",
+  "pristineSnapshot": "3b7d3d733cfddaf5343cec76dab9c7198925ec008826d08f01351eabb8ebbc47",
+  "dependencies": [],
+  "incompatibleWith": []
+}

@@ -1,0 +1,129 @@
+package zombie.gravymod;
+
+import java.lang.reflect.Field;
+
+import zombie.gravymod.Utilities.PorterCommand;
+import zombie.gravymod.Utilities.PriorityCommand;
+import zombie.gravymod.Utilities.ReloadWeatherCommand;
+import zombie.commands.CommandArgs;
+import zombie.commands.CommandBase;
+import zombie.commands.CommandHelp;
+import zombie.commands.CommandName;
+import zombie.characters.Capability;
+import zombie.characters.Role;
+import zombie.commands.RequiredCapability;
+import zombie.core.logger.ExceptionLogger;
+import zombie.core.raknet.UdpConnection;
+import zombie.core.raknet.UdpEngine;
+import zombie.core.znet.SteamGameServer;
+import zombie.network.GameServer;
+import zombie.network.ServerOptions;
+
+@CommandName(
+        name = "gutil"
+)
+@CommandArgs(
+		varArgs = true
+)
+@CommandHelp(
+        helpText = "GravyUtilities: reloadweather, porter, setpriority"
+)
+@RequiredCapability(
+        requiredCapability = Capability.GeneralCheats
+)
+public class GutilCommand extends CommandBase {
+	public GutilCommand(String var1, Role var2, String var3, UdpConnection var4) {
+		super(var1, var2, var3, var4);
+	}
+
+	protected String Command() {
+		try {
+			switch (this.getCommandArg(0))
+			{
+			case "reloadweather": return reloadWeather();		
+			case "porter": return porter();		
+			case "setpriority": return setPriority();
+			case "setmaxplayers": return setMaxPlayers();
+			case "setserverpass": return setServerPassword();
+			case "clearserverpass": return clearServerPassword();
+			case "slowlua": return slowLua();
+			default: return "Unknown Sub-Command";
+			}
+		} catch (Throwable e) {
+			ExceptionLogger.logException(e);
+			return "Something went wrong";
+		}
+		
+	}
+	
+	private String reloadWeather() {
+		return ReloadWeatherCommand.execute();
+	}
+	
+	private String porter() {
+		if (this.getCommandArgsCount() < 3)
+			return "Incorrect number of arguments. gutil porter [in|ex] [username|username1,username2|*]";
+		String direction = this.getCommandArg(1);
+		String player = this.getCommandArg(2);
+		return PorterCommand.execute(direction, player);
+	}
+	
+	private String setPriority() {
+		if (this.getCommandArgsCount() < 3)
+			return "Incorrect number of arguments. gutil porter username true/false";
+		String player = this.getCommandArg(1);
+		boolean priority = this.getCommandArg(2).trim().equalsIgnoreCase("true");
+		return PriorityCommand.Execute(player, priority);
+	}
+
+	private String setMaxPlayers() {
+		if (this.getCommandArgsCount() < 2)
+			return "Incorrect number of argument. gutil setmaxplayers [numMaxPlayers]";
+		try {
+			int maxPlayers = Integer.valueOf(this.getCommandArg(1));
+			if (maxPlayers < 2 || maxPlayers > 100)
+				return "numMaxPlayers must between 2 and 100";
+			SteamGameServer.SetMaxPlayerCount(maxPlayers);
+			return "Max Players Set";
+		} catch (NumberFormatException e)
+		{
+			return "invalid numMaxPlayers"; 
+		}
+	}
+	
+	private String setServerPassword() {
+		if (this.getCommandArgsCount() < 2)
+			return "Incorrect number of argument. gutil setserverpass [password]";
+		String newPass = this.getCommandArg(1);
+		if (newPass.length() < 3) return "Password too short";
+		GameServer.udpEngine.getPeer().SetIncomingPassword(GameServer.udpEngine.hashServerPassword(newPass));
+		return "Password Updated";
+	}
+	
+	private String clearServerPassword() {
+		GameServer.udpEngine.getPeer().SetIncomingPassword(GameServer.udpEngine.hashServerPassword(""));
+		return "Password Cleared";
+	}
+	
+	private String slowLua() {
+		if (this.getCommandArgsCount() > 2)
+			return "Incorrect number of arguments. gutil slowlua [time]";
+		try {
+			double time = 0.0D;
+			String arg = this.getCommandArg(1);
+			if (arg != null)
+				time = Double.parseDouble(arg);
+			if (time <= 0) {
+				GravyMain.DoLuaTiming = false;
+				return "Disabled lua timing";
+			} else {
+				GravyMain.DoLuaTiming = true;
+				GravyMain.LuaSlow = time;
+				return "Lua SLOW timing enabled and set to " + time;
+			}
+		} catch (NumberFormatException e)
+		{
+			return "Invalid time";
+		}
+	}
+}

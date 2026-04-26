@@ -1,0 +1,290 @@
+package se.krka.kahlua.vm;
+
+import java.util.function.Consumer;
+
+/**
+ * In-VM sampling profiler for Kahlua. Runs on the Lua execution thread
+ * itself — no background thread, no reflection, no seqlock. Every opcode
+ * in {@code luaMainloop} calls {@link #tick(KahluaThread)}, which in the
+ * common disabled case is a single volatile-bool read.
+ *
+ * When enabled, tick compares {@code now} against {@code lastSampleNs +
+ * intervalNs}; if due, it snapshots the current call stack (including
+ * per-frame tail-call history) and writes N records into a preallocated
+ * ring, where N = (now - lastSampleNs) / intervalNs capped at
+ * {@link #MAX_CATCHUP}. A single snapshot is shared across a catch-up
+ * burst — this is the key to correct time-weighting: time spent inside a
+ * native Java call (when the VM is suspended in {@code javaFunction.call})
+ * is filled in on the next tick with synthetic samples crediting whichever
+ * Lua frame invoked the Java call.
+ *
+ * The zombie-side profiler (LuaProfiler) drives this facade:
+ *   enable(intervalNs, durationNs, capacity) → sampling runs
+ *   disable() → sampling stops (also happens automatically at deadline)
+ *   drain(consumer) → records emitted to consumer in FIFO order
+ */
+public final class KahluaProfiler {
+   private KahluaProfiler() {}
+
+   /** Public record shape seen by the drain consumer. */
+   public static final class SampleRecord {
+      public long tsNs;
+      /** Rootmost frame first, tail-call history expanded in place. */
+      public LuaClosure[] closures;
+      /** Parallel to {@link #closures}: the pc that was executing. */
+      public int[] pcs;
+      public int depth;
+   }
+
+   /** Hard cap on tail-call history length per frame. */
+   public static final int TAILCALL_CAP = 256;
+
+   /** Hard cap on samples emitted from a single tick's catch-up burst. */
+   public static final int MAX_CATCHUP = 4096;
+
+   // ---------------- state ----------------
+
+   // Fast-path flag. Read every opcode; everything else is gated behind it
+   // so disabled cost is a single volatile-bool read.
+   private static volatile boolean enabled = false;
+
+   // Written only under the enable/disable synchronized block and read-only
+   // from the VM thread while enabled. Marked volatile so disable() from
+   // another thread is observed on the VM thread promptly.
+   private static volatile long intervalNs = 1_000_000L;
+   private static volatile long deadlineNs = 0L;
+
+   // Ring-buffer state. Only the VM thread writes; only drain (post-disable)
+   // reads. No lock needed on the hot path.
+   private static SampleRecord[] ring;
+   private static int ringCapacity;
+   private static int ringHead;     // next write index
+   private static int ringCount;    // 0 .. ringCapacity
+
+   private static long droppedCount;         // ring overwrites
+   private static long catchupOverflowCount; // samples skipped past MAX_CATCHUP
+
+   // VM-thread-only scratch state (snapshot builder).
+   private static long lastSampleNs = 0L;
+   private static LuaClosure[] scratchClosures = new LuaClosure[256];
+   private static int[] scratchPcs = new int[256];
+
+   // ---------------- public API ----------------
+
+   public static synchronized void enable(long intervalNs_, long durationNs, int ringCap) {
+      if (enabled) throw new IllegalStateException("KahluaProfiler already enabled");
+      if (ringCap <= 0) throw new IllegalArgumentException("ringCap must be > 0");
+      intervalNs = Math.max(1L, intervalNs_);
+      ring = new SampleRecord[ringCap];
+      ringCapacity = ringCap;
+      ringHead = 0;
+      ringCount = 0;
+      droppedCount = 0;
+      catchupOverflowCount = 0;
+      lastSampleNs = System.nanoTime();
+      deadlineNs = lastSampleNs + durationNs;
+      enabled = true;
+   }
+
+   public static synchronized void disable() {
+      enabled = false;
+   }
+
+   /**
+    * Emit every buffered record to {@code sink} in FIFO order, then release
+    * the ring. Must be called after {@link #disable()}; returns 0 otherwise.
+    */
+   public static synchronized int drain(Consumer<SampleRecord> sink) {
+      if (enabled) return 0;
+      if (ring == null) return 0;
+      int n = ringCount;
+      int start = (ringHead - n + ringCapacity) % ringCapacity;
+      for (int i = 0; i < n; i++) {
+         SampleRecord rec = ring[(start + i) % ringCapacity];
+         if (rec != null) sink.accept(rec);
+      }
+      ring = null;
+      ringCount = 0;
+      ringHead = 0;
+      return n;
+   }
+
+   public static boolean isEnabled() { return enabled; }
+   public static long getDroppedCount() { return droppedCount; }
+   public static long getCatchupOverflowCount() { return catchupOverflowCount; }
+
+   /**
+    * Reset the sample cursor to "now". Call at Java→Lua entry points
+    * (KahluaThread.call()) where the gap since the last sample reflects
+    * idle time the game spent outside Lua — not Lua or Java-from-Lua
+    * time — and should not be retroactively attributed to the closure
+    * the entry is about to call.
+    */
+   public static void noteReentry() {
+      if (!enabled) return;
+      lastSampleNs = System.nanoTime();
+   }
+
+   // ---------------- VM integration ----------------
+
+   /** Called from luaMainloop on every opcode dispatch. */
+   public static void tick(KahluaThread th) {
+      if (!enabled) return;
+      long now = System.nanoTime();
+      if (now >= deadlineNs) {
+         enabled = false;
+         return;
+      }
+      long interval = intervalNs;
+      long due = lastSampleNs + interval;
+      if (now < due) return;
+
+      // Build one snapshot for the whole catch-up burst. All samples share
+      // the same closures/pcs arrays by reference — any wall-clock gap
+      // (e.g. a 500 ms Java call) becomes N samples all crediting whatever
+      // Lua frame was on top when the gap began.
+      int depth;
+      try {
+         depth = buildSnapshot(th);
+      } catch (Throwable t) {
+         droppedCount++;
+         lastSampleNs = now;
+         return;
+      }
+      if (depth == 0) {
+         lastSampleNs = now;
+         return;
+      }
+      LuaClosure[] closures = new LuaClosure[depth];
+      int[] pcs = new int[depth];
+      System.arraycopy(scratchClosures, 0, closures, 0, depth);
+      System.arraycopy(scratchPcs, 0, pcs, 0, depth);
+
+      long t = due;
+      int emitted = 0;
+      while (t <= now && emitted < MAX_CATCHUP) {
+         writeRecord(t, closures, pcs, depth);
+         t += interval;
+         emitted++;
+      }
+      if (t <= now) {
+         // Exceeded catch-up cap — skip the rest of the gap so we don't
+         // bury future ticks in stale synthetic samples.
+         long skipped = (now - t) / interval + 1L;
+         catchupOverflowCount += skipped;
+         t += skipped * interval;
+      }
+      lastSampleNs = t - interval;
+   }
+
+   /**
+    * Called from OP_TAILCALL in KahluaThread, BEFORE the in-place closure
+    * swap. Appends the outgoing closure + pc to the frame's tail-call
+    * history so the sampler can expand the caller chain. No-op when the
+    * profiler is disabled.
+    */
+   public static void recordTailCall(LuaCallFrame frame, LuaClosure outgoing, int outgoingPc) {
+      if (!enabled) return;
+      if (outgoing == null) return;
+      LuaClosure[] tc = frame.tailCallClosures;
+      int[] tp = frame.tailCallPcs;
+      int d = frame.tailCallDepth;
+      if (tc == null) {
+         tc = new LuaClosure[8];
+         tp = new int[8];
+         frame.tailCallClosures = tc;
+         frame.tailCallPcs = tp;
+      } else if (d == tc.length) {
+         if (d >= TAILCALL_CAP) {
+            // Runaway tail recursion — drop oldest, keep most recent.
+            System.arraycopy(tc, 1, tc, 0, d - 1);
+            System.arraycopy(tp, 1, tp, 0, d - 1);
+            tc[d - 1] = outgoing;
+            tp[d - 1] = outgoingPc;
+            return;
+         }
+         int grow = Math.min(tc.length * 2, TAILCALL_CAP);
+         LuaClosure[] tc2 = new LuaClosure[grow];
+         int[] tp2 = new int[grow];
+         System.arraycopy(tc, 0, tc2, 0, d);
+         System.arraycopy(tp, 0, tp2, 0, d);
+         frame.tailCallClosures = tc = tc2;
+         frame.tailCallPcs = tp = tp2;
+      }
+      tc[d] = outgoing;
+      tp[d] = outgoingPc;
+      frame.tailCallDepth = d + 1;
+   }
+
+   // ---------------- snapshot builder ----------------
+
+   private static int buildSnapshot(KahluaThread th) {
+      // Walk rootmost-parent → leaf-child via Coroutine.getParent().
+      Coroutine[] chain = new Coroutine[16];
+      int chainLen = 0;
+      for (Coroutine c = th.currentCoroutine; c != null && chainLen < chain.length; c = c.getParent()) {
+         chain[chainLen++] = c;
+      }
+      int written = 0;
+      for (int ci = chainLen - 1; ci >= 0; ci--) {
+         Coroutine co = chain[ci];
+         int top = co.getCallframeTop();
+         for (int i = 0; i < top; i++) {
+            LuaCallFrame f = co.getCallFrame(i);
+            if (f == null) continue;
+            // Tail-call history first so it appears as ancestors of the
+            // current closure in the flame graph (outermost caller first).
+            int tcd = f.tailCallDepth;
+            if (tcd > 0) {
+               LuaClosure[] tc = f.tailCallClosures;
+               int[] tp = f.tailCallPcs;
+               for (int j = 0; j < tcd; j++) {
+                  LuaClosure hist = tc[j];
+                  if (hist == null) continue;
+                  if (written >= scratchClosures.length) growScratch(written + 1);
+                  scratchClosures[written] = hist;
+                  scratchPcs[written] = tp[j];
+                  written++;
+               }
+            }
+            LuaClosure cc = f.closure;
+            // Java-only frames (closure == null) are skipped — they carry
+            // no Lua metadata. The effective leaf after a skip is the Lua
+            // frame that invoked the Java call, which is exactly the
+            // attribution we want for time-spent-in-Java.
+            if (cc == null) continue;
+            if (written >= scratchClosures.length) growScratch(written + 1);
+            scratchClosures[written] = cc;
+            scratchPcs[written] = f.pc;
+            written++;
+         }
+      }
+      return written;
+   }
+
+   private static void growScratch(int need) {
+      int n = scratchClosures.length;
+      while (n < need) n *= 2;
+      LuaClosure[] c2 = new LuaClosure[n];
+      int[] p2 = new int[n];
+      System.arraycopy(scratchClosures, 0, c2, 0, scratchClosures.length);
+      System.arraycopy(scratchPcs, 0, p2, 0, scratchPcs.length);
+      scratchClosures = c2;
+      scratchPcs = p2;
+   }
+
+   private static void writeRecord(long ts, LuaClosure[] closures, int[] pcs, int depth) {
+      SampleRecord r = ring[ringHead];
+      if (r == null) {
+         r = new SampleRecord();
+         ring[ringHead] = r;
+      }
+      if (ringCount == ringCapacity) droppedCount++;
+      r.tsNs = ts;
+      r.closures = closures;
+      r.pcs = pcs;
+      r.depth = depth;
+      ringHead = (ringHead + 1) % ringCapacity;
+      if (ringCount < ringCapacity) ringCount++;
+   }
+}

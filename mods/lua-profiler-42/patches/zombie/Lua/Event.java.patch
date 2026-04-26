@@ -1,0 +1,72 @@
+diff --git a/zombie/Lua/Event.java b/zombie/Lua/Event.java
+index 44d2a2f..7a6e703 100644
+--- a/zombie/Lua/Event.java
++++ b/zombie/Lua/Event.java
+@@ -26,44 +26,36 @@ public final class Event {
+          return false;
+       } else {
+          zombie.GameProfiler profiler = zombie.GameProfiler.getInstance();
+-         if (DebugOptions.instance.checks.slowLuaEvents.getValue()) {
+-            for (int n = 0; n < this.callbacks.size(); n++) {
+-               LuaClosure closure = this.callbacks.get(n);
+-
+-               try (zombie.GameProfiler.ProfileArea var20 = profiler.profile("Lua - " + this.name)) {
+-                  long start = System.nanoTime();
+-                  caller.protectedCallVoid(LuaManager.thread, closure, params);
+-                  double delayMS = (System.nanoTime() - start) / 1000000.0;
+-                  if (delayMS > 250.0) {
+-                     DebugType.Lua.warn("SLOW Lua event callback %s %s %dms", closure.prototype.file, closure, (int)delayMS);
+-                  }
+-               } catch (Exception var15) {
+-                  ExceptionLogger.logException(var15);
+-               }
+-
+-               if (!this.callbacks.contains(closure)) {
+-                  n--;
+-               }
++         boolean slowChecks = DebugOptions.instance.checks.slowLuaEvents.getValue();
++         for (int n = 0; n < this.callbacks.size(); n++) {
++            LuaClosure closure = this.callbacks.get(n);
++            long start = System.nanoTime();
++
++            try (zombie.GameProfiler.ProfileArea ex = profiler.profile("Lua - " + this.name)) {
++               caller.protectedCallVoid(LuaManager.thread, closure, params);
++            } catch (Exception ex) {
++               ExceptionLogger.logException(ex);
+             }
++            long dt = System.nanoTime() - start;
+ 
+-            return true;
+-         } else {
+-            for (int n = 0; n < this.callbacks.size(); n++) {
+-               LuaClosure closure = this.callbacks.get(n);
+-
+-               try (zombie.GameProfiler.ProfileArea ex = profiler.profile("Lua - " + this.name)) {
+-                  caller.protectedCallVoid(LuaManager.thread, closure, params);
+-               } catch (Exception var17) {
+-                  ExceptionLogger.logException(var17);
+-               }
++            try {
++               LuaProfiler.record(this.name, closure, dt);
++            } catch (Throwable profilerErr) {
++            }
+ 
+-               if (!this.callbacks.contains(closure)) {
+-                  n--;
++            if (slowChecks) {
++               double delayMS = dt / 1000000.0;
++               if (delayMS > 250.0) {
++                  DebugType.Lua.warn("SLOW Lua event callback %s %s %dms", closure.prototype.file, closure, (int)delayMS);
+                }
+             }
+ 
+-            return true;
++            if (!this.callbacks.contains(closure)) {
++               n--;
++            }
+          }
++
++         return true;
+       }
+    }
+ 

@@ -1,0 +1,106 @@
+diff --git a/zombie/radio/ZomboidRadio.java b/zombie/radio/ZomboidRadio.java
+index 97e4647..9430cb9 100644
+--- a/zombie/radio/ZomboidRadio.java
++++ b/zombie/radio/ZomboidRadio.java
+@@ -775,13 +775,6 @@ public final class ZomboidRadio {
+    }
+ 
+    private String doDeviceRangeDistortion(String msg, int signalStrength, int dist) {
+-      float distortRange = signalStrength * 0.9F;
+-      if (distortRange < signalStrength && dist > distortRange) {
+-         float scambleIntensity = 100.0F * ((dist - distortRange) / (signalStrength - distortRange));
+-         msg = this.scrambleString(msg, (int)scambleIntensity, false);
+-         this.hasAppliedRangeDistortion = true;
+-      }
+-
+       return msg;
+    }
+ 
+@@ -799,12 +792,7 @@ public final class ZomboidRadio {
+    }
+ 
+    private String applyWeatherInterference(String msg, int signalStrength) {
+-      if (ClimateManager.getInstance().getWeatherInterference() <= 0.0F) {
+-         return msg;
+-      } else {
+-         int intensity = (int)(ClimateManager.getInstance().getWeatherInterference() * 100.0F);
+-         return this.scrambleString(msg, intensity, signalStrength == -1);
+-      }
++      return msg;
+    }
+ 
+    private String scrambleString(String msg, int intensity, boolean ignoreBBcode) {
+@@ -813,72 +801,7 @@ public final class ZomboidRadio {
+ 
+    public String scrambleString(String msg, int intensity, boolean ignoreBBcode, String customScramble) {
+       this.hasAppliedInterference = false;
+-      StringBuilder newMsg = this.stringBuilder;
+-      newMsg.setLength(0);
+-      if (intensity <= 0) {
+-         return msg;
+-      } else if (intensity >= 100) {
+-         return customScramble != null ? customScramble : this.getRandomBzztFzzt();
+-      } else {
+-         this.hasAppliedInterference = true;
+-         if (ignoreBBcode) {
+-            char[] chars = msg.toCharArray();
+-            boolean scrmbl = false;
+-            boolean hasOpened = false;
+-            String word = "";
+-
+-            for (int i = 0; i < chars.length; i++) {
+-               char c = chars[i];
+-               if (hasOpened) {
+-                  word = word + c;
+-                  if (c == ']') {
+-                     newMsg.append(word);
+-                     word = "";
+-                     hasOpened = false;
+-                  }
+-               } else if (c == '[' || Character.isWhitespace(c) && i > 0 && !Character.isWhitespace(chars[i - 1])) {
+-                  int r = Rand.Next(100);
+-                  if (r > intensity) {
+-                     newMsg.append(word).append(" ");
+-                     scrmbl = false;
+-                  } else if (!scrmbl) {
+-                     newMsg.append(customScramble != null ? customScramble : this.getRandomBzztFzzt()).append(" ");
+-                     scrmbl = true;
+-                  }
+-
+-                  if (c == '[') {
+-                     word = "[";
+-                     hasOpened = true;
+-                  } else {
+-                     word = "";
+-                  }
+-               } else {
+-                  word = word + c;
+-               }
+-            }
+-
+-            if (word != null && !word.isEmpty()) {
+-               newMsg.append(word);
+-            }
+-         } else {
+-            boolean scrmbl = false;
+-            String[] words = msg.split("\\s+");
+-
+-            for (int ix = 0; ix < words.length; ix++) {
+-               String word = words[ix];
+-               int rx = Rand.Next(100);
+-               if (rx > intensity) {
+-                  newMsg.append(word).append(" ");
+-                  scrmbl = false;
+-               } else if (!scrmbl) {
+-                  newMsg.append(customScramble != null ? customScramble : this.getRandomBzztFzzt()).append(" ");
+-                  scrmbl = true;
+-               }
+-            }
+-         }
+-
+-         return newMsg.toString();
+-      }
++      return msg;
+    }
+ 
+    public void SendTransmission(int sourceX, int sourceY, ChatMessage msg, int signalStrength) {
