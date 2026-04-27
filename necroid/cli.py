@@ -281,6 +281,11 @@ def main(argv: list[str] | None = None) -> int:
     root = (args.root or find_root()).resolve()
     args.root = root
 
+    # Bind the auto-fetch cache so `tools.resolve()` can fall back to a
+    # portable JDK / Git under `data/tools/` when nothing is on PATH.
+    from .util import tools as _tools
+    _tools.set_tools_dir(root / "data" / "tools")
+
     # Sweep any leftover `.old` binary from a prior self-update.
     updater.cleanup_stale_old(root)
 

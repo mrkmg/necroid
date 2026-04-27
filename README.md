@@ -107,6 +107,7 @@ Each mod ships with its own README — click through for behaviour notes, in-gam
 |---|---|---|
 | [gravymod](mods/gravymod-41/README.md) | no | Adds various lua utils and commands. |
 | [multi-login](mods/multi-login-41/README.md) | no | Server-side: login queue admits N players concurrently instead of one at a time. Adds `MaxConcurrentLogins` (1–32, default 3). Depends on staff-priority. |
+| [auto-login](mods/auto-login-41/README.md) | yes | Allows launchers to auto-login you to a server. |
 
 "Client-only" mods require a Project Zomboid **client** install and can only be installed to the client. Non-client-only mods can install to either the client or the Dedicated Server.
 

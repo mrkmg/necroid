@@ -169,6 +169,8 @@ def run(args) -> int:
     log.info(str(pz))
 
     # javac is version-gated later once we know the target release (PZ 42 needs JDK 25+).
+    # Missing tools auto-fetch into `data/tools/` (portable Temurin JDK; MinGit
+    # on Windows). Set NECROID_NO_AUTO_FETCH=1 to require system installs.
     log.step("step 2/9: tools check (java, javac, jar, git)")
     found = check_all(["java", "javac", "jar", "git"])
     for name, path in found.items():

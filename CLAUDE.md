@@ -129,6 +129,8 @@ Python 3.10+ (stdlib only — tkinter, subprocess, hashlib, urllib, json). Cross
 
 External requirements on PATH: `git`, `java` (17+), `javac` (17+), `jar` (ships with JDK). `init` downloads Vineflower itself.
 
+**Auto-fetch fallback for missing tools.** When `git` or any JDK binary (`java`/`javac`/`jar`) is absent from PATH and no JDK is found in well-known install roots, Necroid downloads a portable copy into `data/tools/` on demand: an Eclipse Temurin JDK via the Adoptium API on all 3 OSes (`tools_dir/jdk-<major>/`), and MinGit on Windows (`tools_dir/git/cmd/git.exe`). macOS/Linux have no first-party portable git; if `git` is missing on those, Necroid still raises `ToolMissing` with the existing `brew install git` / `apt install git` hint. The fetch is lazy (first command that needs the tool triggers it), idempotent (subsequent commands hit the on-disk cache), and SHA-verified for the JDK against Adoptium's checksum endpoint. Bound to the auto-fetch cache via `tools.set_tools_dir(data/tools)` from `cli.main()`. Opt-out: `NECROID_NO_AUTO_FETCH=1`. See `necroid/util/tools_fetch.py` and the fallback wiring in `necroid/util/tools.py`.
+
 Run from the repo root:
 
 ```bash

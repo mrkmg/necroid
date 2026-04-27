@@ -11,6 +11,20 @@ from pathlib import Path
 from ..errors import ToolMissing
 
 
+# Set by `cli.main()` (and `init`) once the workspace root is known. When set,
+# `resolve()` and `_find_jdk_binary()` will consult `<tools_dir>/jdk-*/` and
+# `<tools_dir>/git/` as fallbacks, and fetch from upstream on first miss.
+# Stays None for callers that import this module without a workspace context;
+# behavior degrades back to the pre-auto-fetch path.
+_TOOLS_DIR: Path | None = None
+
+
+def set_tools_dir(path: Path) -> None:
+    """Bind the auto-fetch cache directory (typically `data/tools/`). Idempotent."""
+    global _TOOLS_DIR
+    _TOOLS_DIR = path
+
+
 _HINTS_WIN = {
     "git":   "winget install --id Git.Git -e",
     "java":  "winget install --id EclipseAdoptium.Temurin.17.JDK",
@@ -40,11 +54,80 @@ def _hint(name: str) -> str:
 
 
 def resolve(name: str) -> Path:
-    """Return full path to an external tool or raise ToolMissing with install hint."""
+    """Return full path to an external tool or raise ToolMissing with install hint.
+
+    PATH wins. If PATH has nothing and `set_tools_dir()` has been called, fall
+    back to the auto-fetched copy under `<tools_dir>/`:
+      - `git` (Windows only): downloaded MinGit at `<tools_dir>/git/cmd/git.exe`.
+      - `java` / `javac` / `jar`: scan `<tools_dir>/jdk-*/` for any extracted JDK.
+    On a fresh install the fetch is performed lazily; subsequent calls hit the
+    on-disk cache. macOS/Linux have no portable git distribution — `resolve("git")`
+    falls through to `ToolMissing` with the usual hint.
+    """
     exe = shutil.which(name)
-    if not exe:
-        raise ToolMissing(name, _hint(name))
-    return Path(exe)
+    if exe:
+        return Path(exe)
+
+    cached = _resolve_from_tools_dir(name)
+    if cached:
+        return cached
+    fetched = _fetch_and_resolve(name)
+    if fetched:
+        return fetched
+    raise ToolMissing(name, _hint(name))
+
+
+def _resolve_from_tools_dir(name: str) -> Path | None:
+    if _TOOLS_DIR is None:
+        return None
+    from . import tools_fetch
+    if name == "git":
+        return tools_fetch.fetched_git_exe(_TOOLS_DIR)
+    if name in ("java", "javac", "jar"):
+        return _scan_jdk_for_binary(name, tools_fetch.fetched_jdk_roots(_TOOLS_DIR))
+    return None
+
+
+def _fetch_and_resolve(name: str) -> Path | None:
+    if _TOOLS_DIR is None:
+        return None
+    from . import tools_fetch
+    if name == "git" and sys.platform == "win32":
+        return tools_fetch.ensure_portable_git(_TOOLS_DIR)
+    if name in ("java", "javac", "jar"):
+        # Plain (non-version-gated) callers — e.g. `init` step 2's check_all,
+        # or `resolve("jar")` from `_copy_pz_jars`. We don't know the caller's
+        # target release here; fetch the highest PZ-major release we know
+        # about (25), which satisfies every supported workspace. The
+        # version-gated path picks the lowest qualifying JDK on disk anyway,
+        # so this download is reused rather than duplicated later.
+        from ..core.profile import _JAVA_RELEASE_BY_MAJOR  # type: ignore[attr-defined]
+        target_major = max(_JAVA_RELEASE_BY_MAJOR.values())
+        root = tools_fetch.ensure_portable_jdk(_TOOLS_DIR, target_major)
+        if root is None:
+            return None
+        return _scan_jdk_for_binary(name, (root,))
+    return None
+
+
+def _scan_jdk_for_binary(name: str, jdk_roots: tuple[Path, ...]) -> Path | None:
+    """Find `<name>` inside any of the given fetched-JDK parent dirs. Walks one
+    level (Adoptium archives extract to e.g. `jdk-25.0.1+9/bin/<name>`)."""
+    exe_name = f"{name}.exe" if sys.platform == "win32" else name
+    for root in jdk_roots:
+        if not root.is_dir():
+            continue
+        direct = root / "bin" / exe_name
+        if direct.is_file():
+            return direct
+        for entry in root.iterdir():
+            if not entry.is_dir():
+                continue
+            for rel in (Path("bin") / exe_name, Path("Contents") / "Home" / "bin" / exe_name):
+                cand = entry / rel
+                if cand.is_file():
+                    return cand
+    return None
 
 
 def check_all(names: list[str]) -> dict[str, Path]:
@@ -115,19 +198,23 @@ def _find_jdk_binary(
         return exe
 
     candidates = _discover_jdk_binaries(name, extra_roots=extra_roots)
-    best: tuple[int, Path] | None = None
-    for cand in candidates:
-        try:
-            ver = version_fn(cand)
-        except ToolMissing:
-            continue
-        if ver and ver >= target and (best is None or ver < best[0]):
-            best = (ver, cand)
-
+    best = _pick_lowest_qualifying(candidates, version_fn, target)
     if best is not None:
         from . import logging_util as log
         log.info(f"using JDK {best[0]} {name} at {best[1]} (PATH {name} is {have or '?'})")
         return best[1]
+
+    # Last resort: download a portable Temurin JDK matching the target.
+    if _TOOLS_DIR is not None:
+        from . import tools_fetch
+        fetched_root = tools_fetch.ensure_portable_jdk(_TOOLS_DIR, target)
+        if fetched_root is not None:
+            candidates = _discover_jdk_binaries(name, extra_roots=(fetched_root,))
+            best = _pick_lowest_qualifying(candidates, version_fn, target)
+            if best is not None:
+                from . import logging_util as log
+                log.info(f"using portable JDK {best[0]} {name} at {best[1]}")
+                return best[1]
 
     extra = f" PATH {name} is {have}; " if have else " "
     if candidates:
@@ -162,6 +249,22 @@ def require_java_release(target_release: int, *, extra_roots: tuple[Path, ...] =
         version_fn=java_major_version,
         extra_roots=extra_roots,
     )
+
+
+def _pick_lowest_qualifying(
+    candidates: list[Path],
+    version_fn,
+    target: int,
+) -> tuple[int, Path] | None:
+    best: tuple[int, Path] | None = None
+    for cand in candidates:
+        try:
+            ver = version_fn(cand)
+        except ToolMissing:
+            continue
+        if ver and ver >= target and (best is None or ver < best[0]):
+            best = (ver, cand)
+    return best
 
 
 def _discover_jdk_binaries(
@@ -210,8 +313,14 @@ def _discover_jdk_binaries(
                     found.append(cand)
                     break
 
+    # Auto-fetch cache: any previously-downloaded `tools_dir/jdk-*/` parents.
+    auto_roots: tuple[Path, ...] = ()
+    if _TOOLS_DIR is not None:
+        from . import tools_fetch
+        auto_roots = tools_fetch.fetched_jdk_roots(_TOOLS_DIR)
+
     # Extra roots: either a parent of multiple JDKs, or a JDK home itself.
-    for root in extra_roots:
+    for root in (*extra_roots, *auto_roots):
         if not root.is_dir():
             continue
         # Direct JDK home? <root>/bin/<exe>
