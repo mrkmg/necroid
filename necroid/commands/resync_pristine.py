@@ -10,9 +10,7 @@ we poison every mod's diff. The flow below:
 
   1. Reconcile local state with the install-side manifest. A missing manifest
      + non-empty local stack means the install was wiped — harmless; we just
-     drop the stale local cache. A fingerprint mismatch means another
-     Necroid workspace is managing this install; we refuse unless the user
-     passes `--adopt-install`.
+     drop the stale local cache.
 
   2. Per-file audit of every file the manifest claims we installed. We
      classify each as STILL_MODDED / REVERTED_TO_OLD_VANILLA / NEW_VERSION_DRIFT.
@@ -49,7 +47,6 @@ from ..core.depgraph import resolve_deps
 from ..core import install_manifest as manifest_mod
 from ..errors import (
     ConfigError,
-    InstallFingerprintMismatch,
     InstallVersionDrift,
     ModDependencyCycle,
     ModDependencyMissing,
@@ -70,28 +67,26 @@ from . import init as init_cmd
 
 
 def _audit_destination(profile, dest: str, *, force_version_drift: bool,
-                       force_orphans: bool, adopt: bool) -> None:
+                       force_orphans: bool) -> None:
     """Run the reconciliation matrix + per-file audit + orphan scan for one
     destination, then roll back any still-modded stack. Raises if the user's
     flags don't authorize a detected hazard."""
+    install_root = profile.pz_install(dest)
+    if install_root is None:
+        return
     content_dir = profile.content_dir_for(dest)
     if not content_dir.exists():
         return  # destination not configured / not present
 
-    cfg = read_config(profile.root, required=False)
-    local_fp = cfg.workspace_fingerprint if cfg else ""
     state = read_state(profile.state_file(dest))
 
     rec = manifest_mod.reconcile(
-        content_dir, local_fp, list(state.stack),
+        install_root, content_dir, list(state.stack),
         probe_rels=[e.rel for e in state.installed],
     )
 
     if rec.status is manifest_mod.ReconcileStatus.FIRST_TIME:
         return  # nothing to do on this dest
-
-    if rec.status is manifest_mod.ReconcileStatus.FINGERPRINT_MISMATCH and not adopt:
-        raise InstallFingerprintMismatch(rec.message)
 
     if rec.status is manifest_mod.ReconcileStatus.WIPED:
         log.warn(f"{dest}: {rec.message}")
@@ -216,7 +211,6 @@ def run(args) -> int:
     force_major = bool(getattr(args, "force_major_change", False))
     force_version_drift = bool(getattr(args, "force_version_drift", False))
     force_orphans = bool(getattr(args, "force_orphans", False))
-    adopt_install = bool(getattr(args, "adopt_install", False))
     assume_yes = bool(getattr(args, "yes", False))
 
     # Major-change guard runs BEFORE the uninstall pre-flight — otherwise a
@@ -234,7 +228,7 @@ def run(args) -> int:
         detected = detect_pz_version(
             src_content,
             package_dir(),
-            args.root / "data",
+            p.data_dir,
         )
     except PzVersionDetectError as e:
         raise ConfigError(f"could not detect PZ version at {src_content}: {e}")
@@ -260,7 +254,6 @@ def run(args) -> int:
             dest,
             force_version_drift=force_version_drift,
             force_orphans=force_orphans,
-            adopt=adopt_install,
         )
 
     _uninstall_active_stacks(p, force_version_drift=force_version_drift)
@@ -332,9 +325,8 @@ def run(args) -> int:
 def _state_as_manifest(state) -> "manifest_mod.InstallManifest":
     """Adapt a local-cache ModState into an InstallManifest-shaped object so
     the audit can classify files uniformly. Used only for LEGACY installs
-    (pre-v2) where no install-side manifest exists yet."""
+    where no install-side manifest exists yet."""
     return manifest_mod.InstallManifest(
-        workspace_fingerprint=state.workspace_fingerprint or "",
         pz_version_at_install=state.pz_version or "",
         installed_at=state.installed_at or "",
         stack=[manifest_mod.ManifestStackEntry(dirname=n) for n in state.stack],

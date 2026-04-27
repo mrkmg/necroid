@@ -1,28 +1,29 @@
 # -----------------------------------------------------------------------------
-# Shared workspace populated by `necroid init` from one PZ install.
-# Never commit — each user rebuilds from their own Steam install.
+# Workspace state lives inside the PZ install at <pz>/necroid/, not here in
+# the checkout. The checkout only carries the pointer file, an entered-mod
+# record, downloaded tooling, and per-mod editable working trees.
 # -----------------------------------------------------------------------------
-/data/workspace/
 
-# -----------------------------------------------------------------------------
 # Per-mod editable working trees — `necroid enter <mod>` seeds one at
 # `/src-<mod>/`. Ephemeral; user-local. `necroid clean` removes them.
-# -----------------------------------------------------------------------------
 /src-*/
 
-# -----------------------------------------------------------------------------
 # Downloaded tooling. The tools/ dir itself is tracked via .gitkeep; contents are not.
-# -----------------------------------------------------------------------------
 /data/tools/*
 
-# -----------------------------------------------------------------------------
-# Local runtime state — user-specific, not shared
-# -----------------------------------------------------------------------------
-/data/.mod-config.json
+# Workspace anchor — points at the PZ install holding <pz>/necroid/
+/data/.necroid-pointer.json
+# Currently-entered mod (per-checkout work-in-progress)
 /data/.mod-enter.json
+# Self-update TTL for the binary
+/data/.update-cache.json
+
+# Legacy paths from pre-PZ-anchored Necroid (workspace + state now live
+# inside the PZ install at <pz>/necroid/). Safe to keep ignored.
+/data/workspace/
+/data/.mod-config.json
 /data/.mod-state-client.json
 /data/.mod-state-server.json
-/data/.update-cache.json
 /data/.update-cache-mods.json
 /data/.import-tmp/
 /data/.update-tmp/

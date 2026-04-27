@@ -135,10 +135,6 @@ def _build_parser() -> argparse.ArgumentParser:
     s.add_argument("--replace", action="store_true",
                    help="replace the destination's stack with the given mods exactly "
                         "(default: additive — merges into the existing stack)")
-    s.add_argument("--adopt-install", dest="adopt_install", action="store_true",
-                   help="adopt a PZ install whose manifest was written by a different "
-                        "Necroid workspace (fingerprint mismatch). Use when you've cloned "
-                        "or moved the workspace dir; rare.")
 
     s = sub.add_parser("uninstall", help="restore everything, or remove named mods and rebuild")
     s.add_argument("mods", nargs="*")
@@ -242,9 +238,6 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="proceed even when the install contains class files that are in "
                         "neither the install-side manifest nor `classes-original/`. They "
                         "will be adopted into the new pristine.")
-    s.add_argument("--adopt-install", dest="adopt_install", action="store_true",
-                   help="accept an install-side manifest written by a different workspace "
-                        "fingerprint (cloned / moved workspace).")
     s.add_argument("--yes", "-y", action="store_true",
                    help="skip confirmation prompts")
 

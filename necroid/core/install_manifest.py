@@ -1,20 +1,18 @@
 """Install-side manifest — authoritative record of what Necroid has done to
 a PZ install.
 
-Lives at `<pz_install>/.necroid-install.json` (or `<pz_install>/java/.necroid-install.json`
-for the dedicated server, since that's the content dir the classes ship under).
-On Windows the file is marked hidden so it doesn't clutter File Explorer.
+Lives at `<pz_install>/necroid/install-manifest.json` for both client and
+server (per-install — server's PZ install root is the dedicated server's dir).
+The manifest sits at the install ROOT, not the content dir, so all of
+Necroid's per-install state lands under one tidy `necroid/` subdir.
 
-Why it lives on the install side (not just in the workspace's `data/`):
+Why it lives on the install side (not just in the workspace dir):
     * Steam "Verify Integrity of Game Files" or a patch update can rewrite
-      class files out from under us. The local state still claims "mod X is
+      class files out from under us. The local cache still claims "mod X is
       installed" — the manifest lets us detect the discrepancy.
     * A PZ reinstall wipes the whole directory, including our manifest. Local
-      state thinking "installed" + no manifest on disk is the unambiguous
+      cache thinking "installed" + no manifest on disk is the unambiguous
       signal that the install was wiped.
-    * Two Necroid workspaces (e.g. a clone in a second dir) pointing at the
-      same PZ install would silently clobber each other without a shared
-      source of truth. The `workspace.fingerprint` field prevents that.
     * A user manually patching a class file outside Necroid leaves files
       that are in neither the manifest nor `classes-original/` — the
       orphan-scan picks those up.
@@ -23,7 +21,6 @@ Schema v1:
     {
       "schemaVersion": 1,
       "workspace": {
-        "fingerprint": "<hex>",
         "workspaceDir": "...",
         "workspaceMajor": 41,
         "workspaceLayout": "loose" | "jar"
@@ -41,32 +38,24 @@ Schema v1:
          "modOrigin": "admin-xray-41"}
       ]
     }
-
-The `workspaceLayout` and `pzJarSha256` fields were added when PZ build 42
-introduced the fat-jar layout. They're absent on manifests written by older
-Necroid versions; readers default `workspaceLayout` to `"loose"` and
-`pzJarSha256` to empty (no jar tracking). Jar drift detection is a no-op
-on loose-layout installs.
 """
 from __future__ import annotations
 
-import ctypes
 import json
 import os
-import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
 from ..errors import (
-    InstallFingerprintMismatch,
     InstallManifestTampered,
     OrphanInstalledFile,
 )
 from ..util.hashing import file_sha256
 
 MANIFEST_SCHEMA_VERSION = 1
-MANIFEST_FILENAME = ".necroid-install.json"
+MANIFEST_DIRNAME = "necroid"
+MANIFEST_FILENAME = "install-manifest.json"
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +110,6 @@ class ManifestStackEntry:
 @dataclass
 class InstallManifest:
     schema_version: int = MANIFEST_SCHEMA_VERSION
-    workspace_fingerprint: str = ""
     workspace_dir: str = ""
     workspace_major: int = 0
     workspace_layout: str = "loose"          # "loose" or "jar"
@@ -136,7 +124,6 @@ class InstallManifest:
         return {
             "schemaVersion": self.schema_version,
             "workspace": {
-                "fingerprint": self.workspace_fingerprint,
                 "workspaceDir": self.workspace_dir,
                 "workspaceMajor": int(self.workspace_major),
                 "workspaceLayout": self.workspace_layout or "loose",
@@ -154,7 +141,6 @@ class InstallManifest:
         ws = o.get("workspace") or {}
         return InstallManifest(
             schema_version=int(o.get("schemaVersion", 1)),
-            workspace_fingerprint=str(ws.get("fingerprint", "") or ""),
             workspace_dir=str(ws.get("workspaceDir", "") or ""),
             workspace_major=int(ws.get("workspaceMajor", 0) or 0),
             workspace_layout=str(ws.get("workspaceLayout", "") or "loose"),
@@ -171,27 +157,22 @@ class InstallManifest:
 # read / write / delete
 # ---------------------------------------------------------------------------
 
-def manifest_path(content_dir: Path) -> Path:
-    return content_dir / MANIFEST_FILENAME
+def manifest_dir(install_root: Path) -> Path:
+    return install_root / MANIFEST_DIRNAME
 
 
-def _mark_hidden_on_windows(path: Path) -> None:
-    """Best-effort: set the Windows hidden attribute so the file doesn't clutter
-    Steam's install folder in Explorer. Silently no-op on other OSes or failure."""
-    if sys.platform != "win32":
-        return
-    try:
-        FILE_ATTRIBUTE_HIDDEN = 0x02
-        ctypes.windll.kernel32.SetFileAttributesW(str(path), FILE_ATTRIBUTE_HIDDEN)
-    except Exception:
-        pass
+def manifest_path(install_root: Path) -> Path:
+    """Path to the install manifest. `install_root` is the PZ install ROOT
+    (not the content_dir — both client and server keep their manifest under
+    `<install>/necroid/install-manifest.json`)."""
+    return manifest_dir(install_root) / MANIFEST_FILENAME
 
 
-def read_manifest(content_dir: Path) -> InstallManifest | None:
+def read_manifest(install_root: Path) -> InstallManifest | None:
     """Return the parsed manifest, or None if the file doesn't exist. Raises
     `InstallManifestTampered` if the file exists but is unreadable / malformed
     / an unsupported schema version."""
-    p = manifest_path(content_dir)
+    p = manifest_path(install_root)
     if not p.exists():
         return None
     try:
@@ -200,8 +181,7 @@ def read_manifest(content_dir: Path) -> InstallManifest | None:
         raise InstallManifestTampered(
             f"cannot read install manifest at {p}: {e}\n"
             f"    it may have been corrupted. Inspect by hand, then either restore "
-            f"from backup or run `necroid uninstall --to {_destination_from_path(content_dir)}` "
-            f"to clear state."
+            f"from backup or run `necroid uninstall` to clear state."
         )
     ver = int(raw.get("schemaVersion", 1) or 1)
     if ver > MANIFEST_SCHEMA_VERSION:
@@ -212,21 +192,20 @@ def read_manifest(content_dir: Path) -> InstallManifest | None:
     return InstallManifest.from_json(raw)
 
 
-def write_manifest(content_dir: Path, manifest: InstallManifest) -> Path:
+def write_manifest(install_root: Path, manifest: InstallManifest) -> Path:
     """Atomic write: `<path>.new` + rename (so a crash mid-write doesn't
     leave a half-written authoritative record)."""
-    p = manifest_path(content_dir)
+    p = manifest_path(install_root)
     tmp = p.with_suffix(p.suffix + ".new")
-    content_dir.mkdir(parents=True, exist_ok=True)
+    p.parent.mkdir(parents=True, exist_ok=True)
     manifest.schema_version = MANIFEST_SCHEMA_VERSION
     tmp.write_text(json.dumps(manifest.to_json(), indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, p)
-    _mark_hidden_on_windows(p)
     return p
 
 
-def delete_manifest(content_dir: Path) -> bool:
-    p = manifest_path(content_dir)
+def delete_manifest(install_root: Path) -> bool:
+    p = manifest_path(install_root)
     if p.exists():
         try:
             p.unlink()
@@ -234,11 +213,6 @@ def delete_manifest(content_dir: Path) -> bool:
         except OSError:
             return False
     return False
-
-
-def _destination_from_path(content_dir: Path) -> str:
-    # Heuristic for the error message; not load-bearing.
-    return "server" if content_dir.name == "java" else "client"
 
 
 # ---------------------------------------------------------------------------
@@ -259,14 +233,9 @@ class ReconcileStatus(str, Enum):
 
     LEGACY_UNMIGRATED = "legacy_unmigrated"
     """Cache says something is installed, manifest is gone, but the state's
-    recorded class files are still on disk in the install. The install
-    predates the install-side manifest (pre-v2 Necroid). The next install
-    or uninstall will seed a manifest. `verify` / `doctor` suppress the
-    scarier WIPED messaging when this is the case."""
-
-    FINGERPRINT_MISMATCH = "fingerprint_mismatch"
-    """Manifest exists but was written by a different workspace. Abort unless
-    the user passes `--adopt-install`."""
+    recorded class files are still on disk in the install. Either a pre-v2
+    install that never had a manifest, or a workspace migrated from the
+    old layout. The next install or uninstall will seed a manifest."""
 
     CACHE_STALE = "cache_stale"
     """Manifest exists and matches this workspace, but the local cache is
@@ -284,23 +253,23 @@ class Reconciliation:
     message: str = ""
 
 
-def reconcile(content_dir: Path, local_fingerprint: str, local_stack: list[str],
+def reconcile(install_root: Path, content_dir: Path, local_stack: list[str],
               *, probe_rels: list[str] | None = None) -> Reconciliation:
     """Compare the install-side manifest against what this workspace's local
-    state thinks is installed. Never raises except on truly corrupted manifest
-    (delegated to `read_manifest`). The caller decides whether to abort on
-    each status.
+    cache thinks is installed. Never raises except on truly corrupted manifest
+    (delegated to `read_manifest`).
 
-    `local_fingerprint` is `config.workspaceFingerprint`. `local_stack` is
-    `ModState.stack` from the per-destination state file. Either may be empty.
+    `install_root` is the PZ install dir; `content_dir` is where class files
+    live (PZ install root for client, `<server>/java/` for server) and is
+    used only for the legacy probe (do recorded files still exist?).
 
     `probe_rels` is an optional list of relative paths (typically from
     `ModState.installed`) used to distinguish a truly-wiped install from a
-    legacy pre-v2 install whose files are still there but never had a manifest
+    legacy install whose files are still there but never had a manifest
     written. If any probed path exists, LEGACY_UNMIGRATED is returned instead
     of WIPED.
     """
-    manifest = read_manifest(content_dir)
+    manifest = read_manifest(install_root)
 
     if manifest is None:
         if local_stack:
@@ -309,7 +278,7 @@ def reconcile(content_dir: Path, local_fingerprint: str, local_stack: list[str],
                     status=ReconcileStatus.LEGACY_UNMIGRATED,
                     manifest=None,
                     message=(
-                        "install predates the install-side manifest (pre-v2 Necroid). "
+                        "install predates the install-side manifest. "
                         "Next install/uninstall will seed one."
                     ),
                 )
@@ -319,28 +288,13 @@ def reconcile(content_dir: Path, local_fingerprint: str, local_stack: list[str],
                 message=(
                     f"local cache says stack {local_stack!r} is installed, but the "
                     f"install-side manifest is missing. The PZ install was wiped "
-                    f"or reinstalled — local state will be cleared."
+                    f"or reinstalled — local cache will be cleared."
                 ),
             )
         return Reconciliation(
             status=ReconcileStatus.FIRST_TIME,
             manifest=None,
             message="no install manifest and no local cache — clean install destination.",
-        )
-
-    if local_fingerprint and manifest.workspace_fingerprint and \
-            manifest.workspace_fingerprint != local_fingerprint:
-        return Reconciliation(
-            status=ReconcileStatus.FINGERPRINT_MISMATCH,
-            manifest=manifest,
-            message=(
-                f"install manifest at {manifest_path(content_dir)} was written by a "
-                f"different Necroid workspace "
-                f"(their fp {manifest.workspace_fingerprint[:16]}… vs ours {local_fingerprint[:16]}…; "
-                f"their workspaceDir={manifest.workspace_dir!r}).\n"
-                f"    Pass `--adopt-install` to take ownership; that invalidates the other "
-                f"workspace's state for this destination."
-            ),
         )
 
     # Manifest's stack diverges from local cache's stack → cache is stale.
@@ -455,13 +409,7 @@ class JarAuditResult(str, Enum):
 
 
 def audit_pz_jar(content_dir: Path, manifest: InstallManifest) -> JarAuditResult:
-    """Compare the live `projectzomboid.jar` hash to the manifest's record.
-
-    Returns NOT_TRACKED for loose-layout installs and for jar-layout manifests
-    that were written before the field existed (legacy field, treated as
-    "no record"). The caller decides how strict to be — `verify` and `doctor`
-    surface the result; `resync_pristine` gates on it via --force-version-drift.
-    """
+    """Compare the live `projectzomboid.jar` hash to the manifest's record."""
     if (manifest.workspace_layout or "loose") != "jar":
         return JarAuditResult.NOT_TRACKED
     if not manifest.pz_jar_sha256:
@@ -486,11 +434,6 @@ def scan_orphans(content_dir: Path, originals_dir: Path, manifest: InstallManife
     "orphan" if: it's a `.class` under one of `subtrees`, it's not listed in
     `manifest.files`, and its hash differs from `originals_dir/<rel>` (or no
     original exists). Returns forward-slash relative paths.
-
-    Catches: mid-install crashes that left files with no matching manifest
-    entry; user hand-patches; Steam-added new files the manifest doesn't know
-    about; stale orphans from a prior Necroid that crashed before writing
-    state.
     """
     if not content_dir.exists():
         return []
@@ -522,31 +465,6 @@ def scan_orphans(content_dir: Path, originals_dir: Path, manifest: InstallManife
 # ---------------------------------------------------------------------------
 # helpers used by installers / commands
 # ---------------------------------------------------------------------------
-
-def require_matching_workspace(content_dir: Path, local_fingerprint: str,
-                               *, adopt: bool) -> InstallManifest | None:
-    """Read the manifest and either raise on fingerprint mismatch or adopt.
-    Returns the manifest (or None) for the caller to consume. Use before
-    any write that assumes "this install is ours"."""
-    manifest = read_manifest(content_dir)
-    if manifest is None:
-        return None
-    if not manifest.workspace_fingerprint or not local_fingerprint:
-        return manifest  # legacy manifest or uninitialized workspace — permissive
-    if manifest.workspace_fingerprint == local_fingerprint:
-        return manifest
-    if adopt:
-        return manifest  # caller will overwrite workspace fingerprint on next write
-    raise InstallFingerprintMismatch(
-        f"install manifest at {manifest_path(content_dir)} was written by a "
-        f"different Necroid workspace (fp {manifest.workspace_fingerprint[:16]}… "
-        f"vs this workspace's {local_fingerprint[:16]}…; "
-        f"other workspaceDir={manifest.workspace_dir!r}).\n"
-        f"    Pass `--adopt-install` to take ownership. Doing so invalidates "
-        f"the other workspace's state for this destination; they'll need to "
-        f"`verify` + re-install from their end."
-    )
-
 
 def raise_if_orphans(orphans: list[str], *, context: str) -> None:
     """Helper for resync_pristine: abort if the install carries untracked

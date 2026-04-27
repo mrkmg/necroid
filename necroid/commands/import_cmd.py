@@ -87,7 +87,7 @@ def run(args) -> int:
     log.info(f"commit {sha_info.sha[:7]} ({'tag' if sha_info.is_tag else 'branch/sha'})")
 
     # --- Download + extract ---
-    tmp_root = profile.data_dir / ".import-tmp"
+    tmp_root = profile.tmp_dir / "import-tmp"
     if tmp_root.exists():
         shutil.rmtree(tmp_root, ignore_errors=True)
     ensure_dir(tmp_root)

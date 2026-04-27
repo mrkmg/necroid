@@ -1,9 +1,18 @@
 """The Profile dataclass — shared workspace handle.
 
-There is now a single workspace rooted at `data/workspace/`. The Profile
-carries the root and the resolved client/server PZ install paths (either may
-be empty). Install destination is chosen per-invocation (`install_to`) and
-is not stored on the Profile.
+Necroid's heavy state (decompiled pristine, classes-original, libs, build
+output, install-state caches, install-side manifests, mod-update cache,
+ephemeral tmp dirs) all live inside the chosen PZ install at
+`<pz_install>/necroid/`. The checkout's only local state is the pointer file
+(`<repo>/data/.necroid-pointer.json`), the entered-mod record
+(`<repo>/data/.mod-enter.json`), per-mod scratch trees (`<repo>/src-<mod>/`),
+auto-fetched tools (`<repo>/data/tools/`), and the binary self-update cache
+(`<repo>/data/.update-cache.json`).
+
+The Profile carries both anchors:
+    * `root`           — the checkout root (Python source, mods, tools, enter).
+    * `pz_necroid_dir` — `<pz_workspace_source>/necroid/`. None for an
+                         uninitialised checkout (no pointer written yet).
 """
 from __future__ import annotations
 
@@ -11,8 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from .config import ModConfig, read_config
-from ..errors import ConfigError
+from .config import ModConfig, pz_necroid_dir, read_config
+from ..errors import ConfigError, NotInitialized
 
 
 InstallTo = Literal["client", "server"]
@@ -97,15 +106,16 @@ def find_root(start: Path | None = None) -> Path:
 
 @dataclass(frozen=True)
 class Profile:
-    root: Path
-    data_dir: Path
+    root: Path                              # checkout dir (Python, mods, tools, enter)
+    pz_necroid_dir: Path | None = None      # <pz_workspace_source>/necroid/  (None pre-init)
     client_pz_install: Path | None = None
     server_pz_install: Path | None = None
     originals_override: Path | None = None
-    workspace_layout: str = "loose"  # "loose" or "jar"; from config.workspaceLayout
-    java_release: int = 17           # javac --release target; from config.javaRelease
-    workspace_major: int = 0         # from config.workspaceMajor (for release fallback)
+    workspace_layout: str = "loose"
+    java_release: int = 17
+    workspace_major: int = 0
 
+    # --- destinations ---
     def pz_install(self, install_to: str) -> Path | None:
         return self.client_pz_install if install_to == "client" else self.server_pz_install
 
@@ -120,8 +130,7 @@ class Profile:
 
     def fat_jar_for(self, install_to: str) -> Path | None:
         """Path to `projectzomboid.jar` for the given destination, or None if
-        the workspace is loose-layout (PZ <=41). The jar lives next to the
-        class tree root (client install root, or `<server>/java/`)."""
+        the workspace is loose-layout (PZ <=41)."""
         if self.workspace_layout != "jar":
             return None
         content = self.content_dir_for(install_to)
@@ -129,67 +138,96 @@ class Profile:
             return None
         return content / PZ_FAT_JAR_NAME
 
-    # --- workspace dirs (shared) ---
+    def install_necroid_dir(self, install_to: str) -> Path | None:
+        """Where the install-side manifest for `install_to` lives:
+        `<pz_install>/necroid/`. Note this is the install ROOT, not the
+        content dir — both client and server keep their manifest at
+        `<install>/necroid/install-manifest.json` for symmetry."""
+        pz = self.pz_install(install_to)
+        if pz is None:
+            return None
+        return pz_necroid_dir(pz)
+
+    # --- checkout-local paths ---
     @property
-    def workspace_dir(self) -> Path: return self.data_dir / "workspace"
+    def data_dir(self) -> Path:        return self.root / "data"
     @property
-    def src(self) -> Path:
-        # Legacy single-tree path. Kept so any stray caller still resolves,
-        # but no command uses it any more — each mod has its own src-<name>/
-        # tree at the repo root (see `src_for`). Safe to remove once external
-        # callers are gone.
-        return self.workspace_dir / "src"
+    def mods_dir(self) -> Path:        return self.root / "mods"
+    @property
+    def tools_dir(self) -> Path:       return self.data_dir / "tools"
+    @property
+    def vineflower_jar(self) -> Path:  return self.tools_dir / "vineflower.jar"
+    @property
+    def enter_file(self) -> Path:      return self.data_dir / ".mod-enter.json"
+    @property
+    def update_cache_binary(self) -> Path:
+        """Self-update cache for the binary itself — checkout-local because
+        the binary lives next to the checkout, not inside any PZ install."""
+        return self.data_dir / ".update-cache.json"
+
     def src_for(self, mod_name: str) -> Path:
-        """Per-mod editable working tree, rooted at the repo root.
-        `enter` populates it; `capture`/`test`/`status`/`reset` read/write it."""
+        """Per-mod editable working tree, rooted at the checkout root."""
         return self.root / f"src-{mod_name}"
+
+    # --- workspace paths (anchored in the PZ install) ---
+    def _ws_root(self) -> Path:
+        if self.pz_necroid_dir is None:
+            raise NotInitialized(
+                "no workspace pointer — run `necroid init` to bootstrap the workspace."
+            )
+        return self.pz_necroid_dir
+
     @property
-    def pristine(self) -> Path:      return self.workspace_dir / "src-pristine"
+    def workspace_dir(self) -> Path:   return self._ws_root() / "workspace"
+    @property
+    def pristine(self) -> Path:        return self.workspace_dir / "src-pristine"
     @property
     def originals(self) -> Path:
         return self.originals_override or (self.workspace_dir / "classes-original")
     @property
-    def libs(self) -> Path:          return self.workspace_dir / "libs"
+    def libs(self) -> Path:                return self.workspace_dir / "libs"
     @property
     def classpath_originals(self) -> Path: return self.libs / "classpath-originals"
     @property
-    def build(self) -> Path:         return self.workspace_dir / "build"
+    def build(self) -> Path:               return self.workspace_dir / "build"
     @property
-    def classes_out(self) -> Path:   return self.build / "classes"
+    def classes_out(self) -> Path:         return self.build / "classes"
     @property
-    def stage(self) -> Path:         return self.build / "stage-src"
-    @property
-    def enter_file(self) -> Path:    return self.data_dir / ".mod-enter.json"
+    def stage(self) -> Path:               return self.build / "stage-src"
 
     def state_file(self, install_to: str) -> Path:
-        return self.data_dir / f".mod-state-{install_to}.json"
+        return self._ws_root() / f"state-{install_to}.json"
 
-    # --- shared ---
     @property
-    def mods_dir(self) -> Path:      return self.root / "mods"
+    def update_cache_mods_file(self) -> Path:
+        return self._ws_root() / "update-cache-mods.json"
+
     @property
-    def tools_dir(self) -> Path:     return self.data_dir / "tools"
-    @property
-    def vineflower_jar(self) -> Path: return self.tools_dir / "vineflower.jar"
+    def tmp_dir(self) -> Path:
+        """Workspace-side scratch dir for import + mod-update archive extraction."""
+        return self._ws_root() / "tmp"
 
 
 def load_profile(root: Path, cfg: ModConfig | None = None) -> Profile:
-    """Load the shared Profile. Neither PZ install is required up front — install /
-    uninstall / verify re-check with `require_pz_install(profile, install_to)` when
-    they actually need to write."""
-    cfg = cfg or read_config(root)
+    """Load the shared Profile. Reads the pointer + workspace config; both PZ
+    install paths are optional (commands that need to write re-check via
+    `require_pz_install(profile, install_to)`)."""
+    cfg = cfg if cfg is not None else read_config(root, required=False)
     override: Path | None = None
     if cfg.originals_dir_override:
         from .config import expand_config_path
         override = expand_config_path(cfg.originals_dir_override, root)
-    # Normalize layout + release: read_config already defaults these for legacy
-    # configs, but a caller building a config in-memory (e.g. init before it
-    # has written the config) may hand us a blank layout. Fall back conservatively.
+
     layout = cfg.workspace_layout or "loose"
     release = cfg.java_release if cfg.java_release > 0 else java_release_for_major(cfg.workspace_major)
+
+    ws_dir: Path | None = None
+    if cfg.pz_install is not None:
+        ws_dir = pz_necroid_dir(cfg.pz_install)
+
     return Profile(
         root=root,
-        data_dir=root / "data",
+        pz_necroid_dir=ws_dir,
         client_pz_install=cfg.client_pz_install,
         server_pz_install=cfg.server_pz_install,
         originals_override=override,
@@ -206,7 +244,7 @@ def require_pz_install(profile: Profile, install_to: str) -> Path:
     field = "clientPzInstall" if install_to == "client" else "serverPzInstall"
     if pz is None or str(pz) == "":
         raise ConfigError(
-            f"{field} not set in data/.mod-config.json\n"
+            f"{field} not set in workspace config\n"
             f"    re-run `necroid init --from {install_to}` or edit the config."
         )
     if not pz.exists():

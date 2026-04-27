@@ -1,22 +1,17 @@
 """Per-profile state + enter files.
 
-`data/.mod-state-<dest>.json` is now a **local cache** of the authoritative
-install-side manifest (`<pz_install>/.necroid-install.json`). It exists so CLI
-reads are fast and so `status` / `verify` work offline (without having to probe
-the PZ install for every invocation). Any command that commits to the PZ install
-is responsible for keeping both in sync and for running the reconciliation matrix
-in `necroid.core.install_manifest` on entry.
+`<pz_install>/necroid/state-<dest>.json` is a **local cache** of the
+authoritative install-side manifest (`<pz_install>/necroid/install-manifest.json`).
+It exists so CLI reads are fast and so `status` / `verify` work without
+re-hashing every install file on every invocation. Any command that commits
+to the PZ install is responsible for keeping both in sync.
 
-Schema v2 additions to InstalledEntry:
-    written_sha256   — hash of the .class file Necroid wrote (was: `sha256`)
+InstalledEntry fields:
+    written_sha256   — hash of the .class file Necroid wrote
     original_sha256  — hash of classes-original/<rel> at install time, or None
                        if the file didn't exist (i.e. it was mod-added)
     was_added        — True iff original_sha256 is None (the mod's .java.new
                        produced a file that never shipped with vanilla PZ)
-
-Old v1 entries read correctly: `written_sha256` falls back to the legacy
-`sha256` field; `was_added` / `original_sha256` default to conservative values
-(False / None). First install after upgrade rewrites the state at v2.
 """
 from __future__ import annotations
 
@@ -43,12 +38,6 @@ class InstalledEntry:
     original_sha256: str | None = None   # hash of classes-original/<rel> at install time
     was_added: bool = False          # True iff no classes-original/<rel> existed at install time
 
-    # Legacy read-compat: some callers may still read `.sha256`. Keep as an
-    # alias so we don't have to chase every callsite at once.
-    @property
-    def sha256(self) -> str:
-        return self.written_sha256
-
     def to_json(self) -> dict:
         return {
             "rel": self.rel,
@@ -60,22 +49,14 @@ class InstalledEntry:
 
     @staticmethod
     def from_json(o: dict) -> "InstalledEntry":
-        written = o.get("writtenSha256") or o.get("sha256") or ""
+        written = o.get("writtenSha256") or ""
         orig = o.get("originalSha256")
-        was_added_raw = o.get("wasAdded")
-        if was_added_raw is None:
-            # v1 migration: infer from presence of originalSha256 if provided,
-            # else default False (safe — worst case uninstall attempts a restore
-            # that no-ops because orig_path doesn't exist, and verify flags it).
-            was_added = False
-        else:
-            was_added = bool(was_added_raw)
         return InstalledEntry(
             rel=o["rel"],
             mod_origin=o["modOrigin"],
             written_sha256=str(written),
             original_sha256=str(orig) if orig else None,
-            was_added=was_added,
+            was_added=bool(o.get("wasAdded", False)),
         )
 
 
@@ -86,7 +67,6 @@ class ModState:
     installed_at: str | None = None
     installed: list[InstalledEntry] = field(default_factory=list)
     pz_version: str | None = None   # full PZ version string at install time
-    workspace_fingerprint: str = ""   # matches `<pz>/.necroid-install.json` workspace.fingerprint
 
     def to_json(self) -> dict:
         return {
@@ -95,7 +75,6 @@ class ModState:
             "installedAt": self.installed_at,
             "installed": [e.to_json() for e in self.installed],
             "pzVersion": self.pz_version,
-            "workspaceFingerprint": self.workspace_fingerprint,
         }
 
     @staticmethod
@@ -107,7 +86,6 @@ class ModState:
             installed_at=o.get("installedAt"),
             installed=[InstalledEntry.from_json(e) for e in (o.get("installed") or [])],
             pz_version=str(pz) if pz else None,
-            workspace_fingerprint=str(o.get("workspaceFingerprint") or ""),
         )
 
 

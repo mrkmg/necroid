@@ -545,7 +545,7 @@ class ModderApp:
         self._rebuild_relation_maps(mods_dir, candidates)
 
         # Pull update-cache once per refresh — drives outdated badges.
-        cache_doc = read_update_cache(self.root / "data") if cfg else {}
+        cache_doc = read_update_cache(profile.update_cache_mods_file) if profile and profile.pz_necroid_dir else {}
         update_cache = dict((cache_doc.get("mods") or {}))
         self._update_cache = update_cache
         self._mj_by_name = {}      # name -> ModJson, for context menu / origin reads
@@ -805,8 +805,13 @@ class ModderApp:
         self.btn_revert.configure(state=state)
 
     def _update_primary_button(self) -> None:
-        pristine = self.root / "data" / "workspace" / "src-pristine"
-        if pristine.exists():
+        try:
+            cfg = read_config(self.root, required=False)
+            profile = load_profile(self.root, cfg=cfg)
+            ready = profile.pz_necroid_dir is not None and profile.pristine.exists()
+        except Exception:
+            ready = False
+        if ready:
             self.btn_init.configure(text="Update from Game")
         else:
             self.btn_init.configure(text="Set Up")
@@ -1051,9 +1056,14 @@ class ModderApp:
             self._update_apply_button_state()
 
     def on_init(self) -> None:
-        # First-time setup or resync? Workspace pristine is the tell.
-        workspace_pristine = self.root / "data" / "workspace" / "src-pristine"
-        if workspace_pristine.exists():
+        # First-time setup or resync? Pristine on disk is the tell.
+        try:
+            cfg = read_config(self.root, required=False)
+            profile = load_profile(self.root, cfg=cfg)
+            workspace_ready = profile.pz_necroid_dir is not None and profile.pristine.exists()
+        except Exception:
+            workspace_ready = False
+        if workspace_ready:
             if not messagebox.askyesno(
                 "Update from game",
                 "Re-sync the frozen source from your Project Zomboid install?\n\n"

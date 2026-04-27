@@ -12,7 +12,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..core import install_manifest as manifest_mod
-from ..core.config import read_config
 from ..core.profile import PZ_CLASS_SUBTREES, existing_subtrees, require_pz_install
 from ..core.state import read_state
 from ..errors import PzVersionDetectError
@@ -24,10 +23,9 @@ from ..util.hashing import file_sha256
 def run(args) -> int:
     p = args.profile
     install_to: str = args.install_to
-    require_pz_install(p, install_to)
+    install_root = require_pz_install(p, install_to)
 
     state = read_state(p.state_file(install_to))
-    cfg = read_config(args.root, required=False)
     content_dir = p.content_dir_for(install_to)
 
     print(f"=== doctor: {install_to}  ({content_dir}) ===\n")
@@ -37,7 +35,7 @@ def run(args) -> int:
 
     # --- reconciliation
     rec = manifest_mod.reconcile(
-        content_dir, cfg.workspace_fingerprint or "", list(state.stack),
+        install_root, content_dir, list(state.stack),
         probe_rels=[e.rel for e in state.installed],
     )
     print(f"manifest status: {rec.status.value}")
@@ -45,11 +43,7 @@ def run(args) -> int:
         for line in rec.message.splitlines():
             print(f"    {line}")
 
-    if rec.status is manifest_mod.ReconcileStatus.FINGERPRINT_MISMATCH:
-        issues.append("another Necroid workspace manages this install")
-        hints.append(f"`necroid install ... --to {install_to} --adopt-install` to take ownership, "
-                     f"or switch to the other workspace.")
-    elif rec.status is manifest_mod.ReconcileStatus.WIPED:
+    if rec.status is manifest_mod.ReconcileStatus.WIPED:
         issues.append("local cache thinks a stack is installed but manifest is gone")
         hints.append(f"`necroid uninstall --to {install_to}` to clear local cache, "
                      f"then `necroid install ...` fresh.")

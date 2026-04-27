@@ -7,7 +7,7 @@
     necroid mod-update --json --check      # machine-readable for the GUI
 
 Groups targets by (repo, ref) so a single archive download serves N peer mods.
-On `--check`, persists results to data/.update-cache-mods.json (24h TTL).
+On `--check`, persists results to <pz>/necroid/update-cache-mods.json (24h TTL).
 Refuses any mod that is currently entered.
 """
 from __future__ import annotations
@@ -50,7 +50,6 @@ from ..core.state import read_enter, utc_now_iso
 from ..remote.updater import parse_version
 
 
-CACHE_FILENAME = ".update-cache-mods.json"
 CACHE_TTL_SECONDS = 24 * 3600
 
 
@@ -105,7 +104,7 @@ def run(args) -> int:
         groups.setdefault(key, []).append(t)
 
     results: list[dict] = []
-    tmp_root = profile.data_dir / ".update-tmp"
+    tmp_root = profile.tmp_dir / "update-tmp"
     if tmp_root.exists():
         shutil.rmtree(tmp_root, ignore_errors=True)
 
@@ -123,7 +122,7 @@ def run(args) -> int:
 
     # --- Persist cache (always, on --check OR full updates — both reflect the
     # latest known upstream state) ---
-    _write_cache(profile.data_dir, results)
+    _write_cache(profile.update_cache_mods_file, results)
 
     # --- Output ---
     if json_out:
@@ -395,11 +394,10 @@ def _result(t: _Target, *, status: str, message: str,
     }
 
 
-def _write_cache(data_dir: Path, results: list[dict]) -> None:
+def _write_cache(path: Path, results: list[dict]) -> None:
     """Merge results into the on-disk update cache. We keep stale entries for
     mods that weren't part of this run (so a `mod-update <one>` doesn't blow
     away the prior 'check all' state for the others)."""
-    path = data_dir / CACHE_FILENAME
     existing: dict = {}
     if path.exists():
         try:
@@ -425,13 +423,12 @@ def _write_cache(data_dir: Path, results: list[dict]) -> None:
         pass
 
 
-def read_cache(data_dir: Path) -> dict:
+def read_cache(path: Path) -> dict:
     """Public reader for the GUI."""
-    p = data_dir / CACHE_FILENAME
-    if not p.exists():
+    if not path.exists():
         return {}
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
 

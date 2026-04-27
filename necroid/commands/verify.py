@@ -2,7 +2,7 @@
 
 What `verify` covers:
     * Install-side manifest reconciliation vs the local cache
-      (MISSING_MANIFEST / FINGERPRINT_MISMATCH / CACHE_STALE).
+      (WIPED / CACHE_STALE / LEGACY_UNMIGRATED).
     * Per-file audit: STILL_MODDED / REVERTED_TO_OLD_VANILLA /
       NEW_VERSION_DRIFT / MISSING / ADDED_UNTOUCHED / ADDED_TAMPERED.
     * Pristine drift: does classes-original/<rel> still hash to the
@@ -21,7 +21,6 @@ from ..errors import PzVersionDetectError
 from ..paths import package_dir
 from ..util.hashing import file_sha256
 from ..core import install_manifest as manifest_mod
-from ..core.config import read_config
 from ..core.profile import PZ_CLASS_SUBTREES, existing_subtrees, require_pz_install
 from ..pz.pzversion import detect_pz_version
 from ..core.state import read_state
@@ -30,17 +29,16 @@ from ..core.state import read_state
 def run(args) -> int:
     p = args.profile
     install_to: str = args.install_to
-    require_pz_install(p, install_to)
+    install_root = require_pz_install(p, install_to)
 
     state = read_state(p.state_file(install_to))
-    cfg = read_config(args.root, required=False)
     content_dir = p.content_dir_for(install_to)
 
     print(f"verify {install_to}: {content_dir}")
 
     # --- reconciliation (manifest <-> local cache) ---
     rec = manifest_mod.reconcile(
-        content_dir, cfg.workspace_fingerprint or "", list(state.stack),
+        install_root, content_dir, list(state.stack),
         probe_rels=[e.rel for e in state.installed],
     )
     print(f"  reconcile: {rec.status.value}")

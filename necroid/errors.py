@@ -6,7 +6,8 @@ class PzModderError(Exception):
 
 
 class ConfigError(PzModderError):
-    """Missing / malformed / incomplete .mod-config.json."""
+    """Missing / malformed / incomplete workspace config (or legacy on-disk
+    layout that needs to be cleared and re-initialised)."""
 
 
 class NotInitialized(PzModderError):
@@ -99,16 +100,9 @@ class ModUpdateError(PzModderError):
 
 class InstallManifestMissing(PzModderError):
     """Local cache says the install has a stack, but the install-side manifest
-    (`<pz>/.necroid-install.json`) is absent. Indicates the PZ install was
-    wiped or reinstalled by Steam out from under us. Resync/verify treat this
-    as a "stack cleared" signal; install refuses to proceed without confirmation."""
-
-
-class InstallFingerprintMismatch(PzModderError):
-    """The install-side manifest exists but was written by a different Necroid
-    workspace (fingerprint does not match this workspace). Another checkout or
-    clone of Necroid is managing this PZ install. Pass `--adopt-install` to
-    take ownership (and implicitly invalidate the other workspace's state)."""
+    (`<pz>/necroid/install-manifest.json`) is absent. Indicates the PZ install
+    was wiped or reinstalled by Steam out from under us. Resync/verify treat
+    this as a "stack cleared" signal."""
 
 
 class InstallManifestTampered(PzModderError):

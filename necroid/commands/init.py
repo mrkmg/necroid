@@ -1,7 +1,11 @@
-"""init — bootstrap the shared workspace from one PZ install (client or server).
+"""init — bootstrap the shared workspace inside a PZ install (`<pz>/necroid/`).
 
 Since client and server ship byte-identical Java class trees, one workspace
-serves both destinations. Pick whichever install you have via `--from`.
+serves both destinations. Pick whichever install you have via `--from`. The
+workspace lives inside the chosen install (`<pz>/necroid/workspace/`); a
+small pointer file at `<repo>/data/.necroid-pointer.json` anchors the
+checkout to that install. Multiple checkouts of necroid pointing at the same
+PZ install share one workspace.
 
 Two install layouts are supported:
 
@@ -10,23 +14,19 @@ Two install layouts are supported:
   `classes-original/` and rejars each subtree for `javac -cp`.
 - **jar** (PZ build 42+): classes live inside a single fat
   `<pz>/projectzomboid.jar`. `init` extracts the jar into `classes-original/`
-  (so the decompiler and hash-based restore paths keep seeing a loose tree)
-  and skips the rejar step — the fat jar itself is on `javac -cp` via
-  `workspace/libs/projectzomboid.jar`.
+  and skips the rejar step — the fat jar itself is on `javac -cp`.
 
 Steps:
-    1. Resolve source PZ install (flag -> config -> autodetect -> default).
-    2. Check external tools (java, jar, git; javac is version-checked later
-       once we know the target release).
-    3. Download tools/vineflower.jar.
-    4. Copy PZ top-level *.jar  -> workspace/libs/
-    5. Seed workspace/classes-original/  (loose: mirror; jar: extract).
-    6. Rejar each subtree        -> workspace/libs/classpath-originals/<name>.jar
-       (skipped on jar layout — fat jar is the classpath original).
-    7. Detect PZ version via probe; confirm workspace major; derive layout +
-       javac release; verify javac is new enough; write config.
-    8. Decompile every present class subtree -> workspace/src-pristine/ (Vineflower).
-    9. Scaffold mods/ and write a default .gitignore if none exists.
+    1. Refuse if a legacy (pre-PZ-anchored) layout is on disk.
+    2. Resolve source PZ install (flag -> existing pointer -> autodetect).
+    3. Check external tools (java, jar, git).
+    4. Download tools/vineflower.jar.
+    5. Copy PZ top-level *.jar  -> <pz>/necroid/workspace/libs/
+    6. Seed classes-original/   (loose: mirror; jar: extract).
+    7. Rejar each subtree -> classpath-originals/  (loose only).
+    8. Detect PZ version, write workspace config, write pointer.
+    9. Decompile every present class subtree -> src-pristine/.
+   10. Scaffold mods/ + default .gitignore.
 """
 from __future__ import annotations
 
@@ -36,7 +36,16 @@ from pathlib import Path
 
 from ..util import logging_util as log
 from ..util import procs
-from ..core.config import ModConfig, config_path, read_config, write_config
+from ..core.config import (
+    ModConfig,
+    assert_no_legacy_layout,
+    pz_necroid_dir,
+    read_config,
+    read_pointer,
+    workspace_config_path,
+    write_config,
+    write_pointer,
+)
 from ..build.decompile import ensure_vineflower, decompile_all
 from ..build.jar_extract import extract_fat_jar
 from ..errors import ConfigError, PzVersionDetectError
@@ -67,19 +76,19 @@ def _resolve_pz_install(source: str, existing: Path | None, flag: str | None, ro
         log.info(f"using configured {source}PzInstall: {existing}")
         return existing
 
-    # Steam-aware discovery (OS-specific roots + libraryfolders.vdf),
-    # plus legacy fallbacks for the server (sibling-of-client, $ROOT/pzserver).
     if source == "client":
         guess = discover_client_install()
         if guess:
             return guess
     else:
-        cfg = None
+        # Reading peer install from config requires the config to exist already.
+        # Pre-init we may not have one, so skip silently.
+        client = None
         try:
             cfg = read_config(root, required=False)
+            client = cfg.client_pz_install
         except Exception:
-            cfg = None
-        client = cfg.client_pz_install if cfg else None
+            pass
         guess = autodetect_server_install(client, root)
         if guess:
             log.info(f"autodetected server install: {guess}")
@@ -88,7 +97,7 @@ def _resolve_pz_install(source: str, existing: Path | None, flag: str | None, ro
     raise ConfigError(
         f"could not locate {source} PZ install.\n"
         f"    tried Steam registry / library folders for this OS.\n"
-        f"    pass --pz-install '<path>' or edit data/.mod-config.json."
+        f"    pass --pz-install '<path>'."
     )
 
 
@@ -142,7 +151,6 @@ def _rejar_originals(originals: Path, out_jar_dir: Path, force: bool) -> None:
                 log.info(f"[skip] libs/classpath-originals/{sub}.jar (up to date)")
                 continue
         log.info(f"libs/classpath-originals/{sub}.jar <- classes-original/{sub}")
-        # Pre-delete: modern `jar` refuses to overwrite on rename-into-place.
         if jar_path.exists():
             jar_path.unlink()
         proc = procs.run([jar_exe, "cf", str(jar_path), sub], cwd=str(originals))
@@ -152,25 +160,44 @@ def _rejar_originals(originals: Path, out_jar_dir: Path, force: bool) -> None:
 
 def run(args) -> int:
     root: Path = args.root
-    source: str = args.source  # populated in cli.py from --from (or default)
-    
-    # create data dirs
+    source: str = args.source
+
+    # Step 1: refuse to run on a legacy on-disk layout.
+    assert_no_legacy_layout(root)
+
     ensure_dir(root / "data")
     ensure_dir(root / "data" / "tools")
-    ensure_dir(root / "data" / "workspace")
 
     log.step(f"init [from={source}] — step 1/9: resolve PZ install path")
-    cfg = read_config(root, required=False)
 
-    existing = cfg.pz_install(source)
-    pz = _resolve_pz_install(source, existing, args.pz_install, root)
+    # If a pointer already exists, prefer the install it names (a re-init
+    # against the same install). Otherwise fall back to the configured peer
+    # path or autodetect.
+    existing_pz: Path | None = None
+    try:
+        existing_pz = read_pointer(root)
+    except ConfigError:
+        existing_pz = None
+
+    # If the pointer's install matches the requested source, great. Otherwise
+    # resolve fresh: the user may be re-anchoring the workspace to a different
+    # install.
+    pre_cfg = None
+    if existing_pz is not None:
+        try:
+            pre_cfg = read_config(root, required=False)
+        except Exception:
+            pre_cfg = None
+
+    candidate_existing: Path | None = None
+    if pre_cfg is not None:
+        candidate_existing = pre_cfg.install_path(source)
+
+    pz = _resolve_pz_install(source, candidate_existing, args.pz_install, root)
     if not pz.exists():
         raise ConfigError(f"PZ install dir does not exist: {pz}")
     log.info(str(pz))
 
-    # javac is version-gated later once we know the target release (PZ 42 needs JDK 25+).
-    # Missing tools auto-fetch into `data/tools/` (portable Temurin JDK; MinGit
-    # on Windows). Set NECROID_NO_AUTO_FETCH=1 to require system installs.
     log.step("step 2/9: tools check (java, javac, jar, git)")
     found = check_all(["java", "javac", "jar", "git"])
     for name, path in found.items():
@@ -179,12 +206,27 @@ def run(args) -> int:
     log.step(f"step 3/9: vineflower.jar (v{__import__('necroid.build.decompile', fromlist=['VINEFLOWER_VERSION']).VINEFLOWER_VERSION})")
     ensure_vineflower(root / "data" / "tools", force=args.force)
 
-    # Record this install path into the config.
+    # Build a fresh ModConfig for this init run. Read existing if present so
+    # the peer install path is preserved.
+    cfg = ModConfig()
+    if pre_cfg is not None:
+        cfg.client_pz_install = pre_cfg.client_pz_install
+        cfg.server_pz_install = pre_cfg.server_pz_install
+        cfg.default_install_to = pre_cfg.default_install_to
+        cfg.workspace_source = pre_cfg.workspace_source
+        cfg.originals_dir_override = pre_cfg.originals_dir_override
+
     if source == "client":
         cfg.client_pz_install = pz
     else:
         cfg.server_pz_install = pz
     cfg.workspace_source = source
+    cfg.pz_install = pz
+
+    # Write the pointer immediately so subsequent read_config calls during
+    # init resolve correctly.
+    pointer_p = write_pointer(root, pz)
+    log.info(f"wrote pointer: {pointer_p}")
 
     profile = load_profile(root, cfg=cfg)
 
@@ -192,35 +234,38 @@ def run(args) -> int:
     if not content.exists():
         raise ConfigError(f"expected content dir does not exist: {content}")
 
+    # Make sure the workspace dir exists before any subordinate step writes to it.
+    ensure_dir(profile.pz_necroid_dir)
+    ensure_dir(profile.workspace_dir)
+
     layout = detect_layout(content)
     log.info(f"detected install layout: {layout}"
              + (" (fat jar — PZ 42+)" if layout == "jar" else " (loose class tree — PZ <=41)"))
 
-    log.step(f"step 4/9: copy PZ jars -> {profile.libs.relative_to(root)}")
+    log.step(f"step 4/9: copy PZ jars -> {profile.libs}")
     _copy_pz_jars(content, profile.libs, force=args.force)
 
     if layout == "jar":
         fat_jar = profile.libs / PZ_FAT_JAR_NAME
         if not fat_jar.is_file():
-            # Should never happen — _copy_pz_jars copies every top-level .jar.
             raise ConfigError(
                 f"workspace layout is 'jar' but {fat_jar} was not copied.\n"
                 f"    is {content / PZ_FAT_JAR_NAME} present in the PZ install?"
             )
-        log.step(f"step 5/9: extract {PZ_FAT_JAR_NAME} -> {profile.originals.relative_to(root)}")
+        log.step(f"step 5/9: extract {PZ_FAT_JAR_NAME} -> {profile.originals}")
         extract_fat_jar(fat_jar, profile.originals, PZ_CLASS_SUBTREES, force=args.force)
 
-        log.step(f"step 6/9: rejar class trees -> {profile.classpath_originals.relative_to(root)} (skipped — fat jar serves as classpath original)")
+        log.step(f"step 6/9: rejar class trees -> {profile.classpath_originals} (skipped — fat jar serves as classpath original)")
     else:
-        log.step(f"step 5/9: copy PZ class trees -> {profile.originals.relative_to(root)}")
+        log.step(f"step 5/9: copy PZ class trees -> {profile.originals}")
         _copy_pz_classes(content, profile.originals, force=args.force)
 
-        log.step(f"step 6/9: rejar class trees -> {profile.classpath_originals.relative_to(root)}")
+        log.step(f"step 6/9: rejar class trees -> {profile.classpath_originals}")
         _rejar_originals(profile.originals, profile.classpath_originals, force=args.force)
 
-    log.step(f"step 7/9: detect PZ version; write {config_path(root).relative_to(root)}")
+    log.step(f"step 7/9: detect PZ version; write {workspace_config_path(pz)}")
     try:
-        detected = detect_pz_version(content, package_dir(), root / "data")
+        detected = detect_pz_version(content, package_dir(), profile.data_dir)
     except PzVersionDetectError as e:
         raise ConfigError(
             f"could not detect PZ version at {content}: {e}\n"
@@ -238,25 +283,18 @@ def run(args) -> int:
     cfg.workspace_version = str(detected)
     cfg.workspace_layout = layout
     cfg.java_release = java_release_for_major(chosen_major)
-    if not cfg.workspace_fingerprint:
-        cfg.workspace_fingerprint = _generate_fingerprint(root)
-        log.info(f"workspace fingerprint: {cfg.workspace_fingerprint[:16]}…")
 
-    # Enforce javac >= target release now that we know the target. A mismatch
-    # is a hard error here (rather than surfacing later at first `install` /
-    # `test`) because the rest of `init` ran expensive work assuming the
-    # user would be able to compile against it.
     require_javac_release(cfg.java_release, hint_major=cfg.java_release)
     log.info(f"javac release target: {cfg.java_release}")
 
-    write_config(root, cfg)
+    write_config(pz, cfg)
     log.info(
-        f"wrote {config_path(root)}  "
+        f"wrote {workspace_config_path(pz)}  "
         f"(workspaceMajor={cfg.workspace_major}, layout={cfg.workspace_layout}, "
         f"javaRelease={cfg.java_release})"
     )
 
-    log.step(f"step 8/9: decompile class subtrees -> {profile.pristine.relative_to(root)}")
+    log.step(f"step 8/9: decompile class subtrees -> {profile.pristine}")
     libs_jars = sorted(profile.libs.glob("*.jar")) + sorted(profile.classpath_originals.glob("*.jar"))
     decompile_all(
         classes_orig=profile.originals,
@@ -271,7 +309,11 @@ def run(args) -> int:
     ensure_dir(profile.mods_dir)
     _ensure_default_gitignore(root)
 
-    log.success(f"init [from={source}] complete. Workspace bound to PZ {cfg.workspace_version} (major {cfg.workspace_major}).")
+    log.success(
+        f"init [from={source}] complete. "
+        f"Workspace at {pz_necroid_dir(pz)}. "
+        f"Bound to PZ {cfg.workspace_version} (major {cfg.workspace_major})."
+    )
     log.info("next: `necroid new <mod-name>`  then  `capture <mod-name>`")
     return 0
 
@@ -279,11 +321,9 @@ def run(args) -> int:
 DEFAULT_GITIGNORE = """\
 # -----------------------------------------------------------------------------
 # Necroid — local-only files. Your mods live at /mods/ and should be committed.
-# Everything below is regenerated from your own PZ install via `necroid init`.
+# Workspace state (decompiled pristine, classes-original, install caches) lives
+# inside the PZ install at `<pz>/necroid/`, not here in the checkout.
 # -----------------------------------------------------------------------------
-
-# Shared workspace populated by `necroid init` from your PZ install.
-/data/workspace/
 
 # Per-mod editable working trees — `necroid enter <mod>` seeds one at /src-<mod>/.
 /src-*/
@@ -292,12 +332,17 @@ DEFAULT_GITIGNORE = """\
 /data/tools/*
 !/data/tools/.gitkeep
 
-# Local runtime state
-/data/.mod-config.json
+# Local checkout state
+/data/.necroid-pointer.json
 /data/.mod-enter.json
+/data/.update-cache.json
+
+# Legacy paths from pre-PZ-anchored Necroid (in case anyone migrates a checkout
+# that still has them on disk). Safe to keep ignored.
+/data/workspace/
+/data/.mod-config.json
 /data/.mod-state-client.json
 /data/.mod-state-server.json
-/data/.update-cache.json
 /data/.update-cache-mods.json
 /data/.import-tmp/
 /data/.update-tmp/
@@ -312,26 +357,12 @@ def _ensure_default_gitignore(root: Path) -> None:
     """Write a default `.gitignore` covering every Necroid-generated path.
 
     No-op when one already exists — never clobber a user's gitignore.
-    This is what makes the 3rd-party dev flow one-step: drop necroid in
-    your repo, `init`, and the local-only paths are already ignored.
     """
     gi = root / ".gitignore"
     if gi.exists():
         return
     gi.write_text(DEFAULT_GITIGNORE, encoding="utf-8")
     log.info(f"wrote {gi}")
-
-
-def _generate_fingerprint(root: Path) -> str:
-    """Per-workspace opaque id. Persistent across CLI invocations (written to
-    config), unique per-init. Stamped into the install-side manifest so a
-    second Necroid checkout can't silently reuse the same install.
-    """
-    import secrets
-    from datetime import datetime, timezone
-    from ..util.hashing import string_sha256
-    seed = f"{root.resolve()}|{datetime.now(timezone.utc).isoformat()}|{secrets.token_hex(16)}"
-    return string_sha256(seed).upper()
 
 
 def _choose_workspace_major(detected_major: int, args) -> int:
