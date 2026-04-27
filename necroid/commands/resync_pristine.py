@@ -319,7 +319,13 @@ def run(args) -> int:
             if scratch.exists():
                 shutil.rmtree(scratch, ignore_errors=True)
             cleanup_baseline()
-    return 1 if any_stale else 0
+    if any_stale:
+        log.warn(
+            "Some mods need re-capture (decompiler drift, PZ patch, or stale capture). "
+            "For each: `necroid enter <mod>`, resolve any conflict markers in src-<mod>/, "
+            "then `necroid capture <mod>`."
+        )
+    return 0
 
 
 def _state_as_manifest(state) -> "manifest_mod.InstallManifest":

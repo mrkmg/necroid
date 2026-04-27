@@ -75,6 +75,10 @@ def decompile_subtree(
     tmp_out = out_pristine_dir / (subtree + "-tmp")
     empty_dir(tmp_out)
 
+    # `require_java_release` returns the pinned bundled JDK 25 — Vineflower's
+    # output is JVM-version-sensitive (HashMap iteration order in some passes,
+    # type-resolution differences), so a single shared JVM is the only way to
+    # keep mod patches portable across users. See `tools_fetch.BUNDLED_JDK_RELEASE`.
     java = str(require_java_release(VINEFLOWER_MIN_JAVA))
     # -Xmx2g: zombie/ on B41/B42 is large; Vineflower's default heap can OOM.
     args = [java, "-Xmx2g", "-jar", str(vineflower_jar)]

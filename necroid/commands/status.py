@@ -125,7 +125,12 @@ def _status_mod(profile, install_to: str, name: str) -> int:
         if scratch.exists():
             shutil.rmtree(scratch, ignore_errors=True)
         cleanup_baseline()
-    return 1 if stale_any else 0
+    if stale_any:
+        log.warn(
+            f"{name}: some patches don't apply against the current pristine — "
+            f"`necroid enter {name}` and `necroid capture {name}` to refresh."
+        )
+    return 0
 
 
 def _baseline_for_status(profile, name: str, deps: list[str], install_to: str):

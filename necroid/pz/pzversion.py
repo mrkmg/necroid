@@ -175,26 +175,18 @@ def detect_pz_version(content_dir: Path, necroid_pkg_dir: Path, data_dir: Path) 
     cache_dir = ensure_probe_compiled(necroid_pkg_dir, data_dir)
 
     # Pick a `java` runtime new enough to load Core.class. PZ 42 bytecode is
-    # class-file v69 (needs JDK 25); a stale-PATH JDK 21 silently returns
-    # UnsupportedClassVersionError. Read Core's class-file version directly,
-    # then resolve via the JDK-discovery path (PATH first, then known install
-    # roots, plus PZ's bundled `jre64/` as an extra root so the JRE shipped
-    # with the install is always a candidate — guaranteed to match its own
-    # bytecode).
+    # class-file v69 (needs JDK 25); the bundled pinned JDK satisfies every
+    # PZ major we support. We still read Core's class-file version so a
+    # future PZ that targets JDK > bundled triggers a clear ToolMissing
+    # ("bump BUNDLED_JDK_RELEASE") instead of a runtime UnsupportedClassVersionError.
     head = _read_core_classfile_head(
         loose_core if loose_core.is_file() else None,
         fat_jar if fat_jar.is_file() else None,
     )
     needed_jdk = _classfile_required_jdk(head)
-    extra_jdk_roots: tuple[Path, ...] = (
-        content_dir / "jre64",
-        content_dir.parent / "jre64",
-    )
     if needed_jdk > 0:
-        java = str(require_java_release(needed_jdk, extra_roots=extra_jdk_roots))
+        java = str(require_java_release(needed_jdk))
     else:
-        # Couldn't read class-file version — fall back to PATH java; if it
-        # really is too old, the probe error message is enough to diagnose.
         java = str(resolve("java"))
     cp = os.pathsep.join([str(cache_dir), core_source])
     cmd = [java, "-cp", cp, _PROBE_CLASS_NAME]

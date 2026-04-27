@@ -3,11 +3,17 @@
 Mirrors the existing Vineflower auto-download pattern (see
 `necroid/build/decompile.py:ensure_vineflower`). Stdlib only.
 
-- JDK: Eclipse Temurin via the Adoptium API. Works on Windows, macOS, Linux.
+- JDK: Eclipse Temurin via the Adoptium API. Pinned to a specific release
+  (BUNDLED_JDK_RELEASE) so every user gets byte-identical decompile output —
+  Vineflower's pass ordering depends on the JVM running it. PATH and
+  well-known JDK install roots are NEVER consulted by `tools.resolve` for
+  java/javac/jar; the bundled JDK is the single source of truth.
 - Git: MinGit on Windows only. macOS/Linux fall back to `ToolMissing` install
   hints (no first-party portable git distribution exists).
 
-Opt-out: set `NECROID_NO_AUTO_FETCH=1`.
+Opt-out: set `NECROID_NO_AUTO_FETCH=1`. With the bundled JDK pin, opt-out
+means "I have already provisioned a JDK at the expected path" — there is no
+PATH-fallback for java/javac/jar.
 """
 from __future__ import annotations
 
@@ -18,12 +24,24 @@ import shutil
 import sys
 import tarfile
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
 
+from ..errors import ToolMissing
 from . import logging_util as log
 
+
+# Pinned bundled JDK. Bumping this is a deliberate change — every user who
+# upgrades will re-decompile their pristine, and bundled mods may need
+# recapture if Vineflower's output shifts under the new JVM. When bumping,
+# verify the new release_name resolves on Adoptium's `/v3/binary/version/...`
+# endpoint and update verification notes.
+BUNDLED_JDK_RELEASE = "jdk-25.0.2+10"
+BUNDLED_JDK_MAJOR = 25
+_BUNDLED_DIRNAME = "jdk-bundled"
+_PIN_MARKER_NAME = ".pinned-version"
 
 # Pinned MinGit (Git for Windows portable). Bump deliberately.
 _MINGIT_VERSION = "2.46.0"
@@ -63,48 +81,90 @@ def _adoptium_archive_ext() -> str:
     return "zip" if sys.platform == "win32" else "tar.gz"
 
 
-def ensure_portable_jdk(tools_dir: Path, major: int) -> Path | None:
-    """Download + extract a Temurin JDK for `major` into `tools_dir/jdk-<major>/`.
+def bundled_jdk_dir(tools_dir: Path) -> Path:
+    """Path of the pinned bundled-JDK install dir (may not exist yet)."""
+    return tools_dir / _BUNDLED_DIRNAME
 
-    Returns the directory containing the extracted JDK (a parent of one or more
-    `jdk-X.Y.Z+B/` entries). Callers pass it as an `extra_roots` entry to
-    `_discover_jdk_binaries`, which already walks one level to find `bin/`.
 
-    Returns None when auto-fetch is disabled, or when the platform isn't
-    supported (the caller falls back to `ToolMissing`).
+def _read_pin_marker(jdk_home: Path) -> str:
+    try:
+        return (jdk_home / _PIN_MARKER_NAME).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _cleanup_legacy_caches(tools_dir: Path) -> None:
+    """Remove pre-pinning auto-fetch caches (`jdk-25/`, `jdk-21/`, etc.).
+    Silent when nothing matches. Saves ~200MB per stale cache."""
+    if not tools_dir.is_dir():
+        return
+    for entry in tools_dir.iterdir():
+        if not entry.is_dir():
+            continue
+        name = entry.name
+        if name == _BUNDLED_DIRNAME:
+            continue
+        # Match `jdk-25`, `jdk-21`, etc. — never the new `jdk-bundled` dir.
+        if name.startswith("jdk-") and name[4:].isdigit():
+            log.info(f"removing legacy JDK cache: {entry}")
+            shutil.rmtree(entry, ignore_errors=True)
+
+
+def ensure_bundled_jdk(tools_dir: Path) -> Path:
+    """Download + extract the pinned Temurin JDK into `tools_dir/jdk-bundled/`.
+
+    Returns the directory containing the extracted JDK (a parent of one
+    `jdk-X.Y.Z+B/` entry on Windows/Linux, or a `jdk-X.Y.Z+B/Contents/Home/`
+    layout on macOS). Idempotent: a hit on the pin marker short-circuits.
+
+    Raises `ToolMissing` when auto-fetch is disabled and no bundled JDK is on
+    disk, when the platform/arch isn't supported by Adoptium, or when the
+    download or extract fails. The pin guarantees byte-identical decompile
+    output across users, so "fall back to PATH" is no longer offered.
     """
-    if auto_fetch_disabled():
-        return None
-    target = tools_dir / f"jdk-{int(major)}"
-    if target.is_dir() and any(target.iterdir()):
+    target = bundled_jdk_dir(tools_dir)
+    if target.is_dir() and any(target.iterdir()) and _read_pin_marker(target) == BUNDLED_JDK_RELEASE:
         return target
+
+    if auto_fetch_disabled():
+        raise ToolMissing(
+            "java",
+            f"NECROID_NO_AUTO_FETCH=1 set, but the pinned bundled JDK is not on disk.\n"
+            f"    Expected: {target} containing release {BUNDLED_JDK_RELEASE}\n"
+            f"    Either unset NECROID_NO_AUTO_FETCH, or pre-stage the JDK at that path\n"
+            f"    with a `{_PIN_MARKER_NAME}` file containing the release name.",
+        )
 
     try:
         os_name = _adoptium_os()
         arch = _adoptium_arch()
     except RuntimeError as e:
-        log.warn(str(e))
-        return None
+        raise ToolMissing("java", f"unsupported platform for bundled JDK fetch: {e}")
     ext = _adoptium_archive_ext()
+    quoted_release = urllib.parse.quote(BUNDLED_JDK_RELEASE, safe="")
 
     binary_url = (
-        f"https://api.adoptium.net/v3/binary/latest/{int(major)}/ga/"
+        f"https://api.adoptium.net/v3/binary/version/{quoted_release}/"
         f"{os_name}/{arch}/jdk/hotspot/normal/eclipse"
     )
     checksum_url = (
-        f"https://api.adoptium.net/v3/checksum/latest/{int(major)}/ga/"
+        f"https://api.adoptium.net/v3/checksum/version/{quoted_release}/"
         f"{os_name}/{arch}/jdk/hotspot/normal/eclipse"
     )
 
     tools_dir.mkdir(parents=True, exist_ok=True)
-    tmp_archive = tools_dir / f"jdk-{int(major)}.{ext}.tmp"
-    tmp_extract = tools_dir / f"jdk-{int(major)}.extract.tmp"
+    _cleanup_legacy_caches(tools_dir)
+    tmp_archive = tools_dir / f"{_BUNDLED_DIRNAME}.{ext}.tmp"
+    tmp_extract = tools_dir / f"{_BUNDLED_DIRNAME}.extract.tmp"
     if tmp_archive.exists():
         tmp_archive.unlink()
     if tmp_extract.exists():
         shutil.rmtree(tmp_extract)
 
-    log.info(f"downloading portable JDK {major} from Adoptium ({os_name}/{arch})")
+    log.info(
+        f"downloading pinned JDK {BUNDLED_JDK_RELEASE} from Adoptium "
+        f"({os_name}/{arch}) -> {target}"
+    )
     try:
         _download(binary_url, tmp_archive)
         expected_sha = _fetch_checksum(checksum_url)
@@ -122,15 +182,14 @@ def ensure_portable_jdk(tools_dir: Path, major: int) -> Path | None:
         else:
             with tarfile.open(tmp_archive, "r:gz") as tf:
                 _safe_tar_extract(tf, tmp_extract)
-        # Atomic publish.
         if target.exists():
             shutil.rmtree(target)
         tmp_extract.replace(target)
+        (target / _PIN_MARKER_NAME).write_text(BUNDLED_JDK_RELEASE, encoding="utf-8")
     except (urllib.error.URLError, OSError, RuntimeError) as e:
-        log.warn(f"portable JDK fetch failed: {e}")
         if tmp_extract.exists():
             shutil.rmtree(tmp_extract, ignore_errors=True)
-        return None
+        raise ToolMissing("java", f"bundled JDK fetch failed: {e}")
     finally:
         if tmp_archive.exists():
             try:
@@ -240,15 +299,6 @@ def _safe_tar_extract(tf: tarfile.TarFile, dest: Path) -> None:
 
 
 # ----- discovery surface -------------------------------------------------
-
-def fetched_jdk_roots(tools_dir: Path) -> tuple[Path, ...]:
-    """Return any `tools_dir/jdk-*/` already on disk so the JDK scanner can
-    consider them without re-downloading. Used by `tools._discover_jdk_binaries`
-    via the `extra_roots` mechanism."""
-    if not tools_dir.is_dir():
-        return ()
-    return tuple(p for p in tools_dir.iterdir() if p.is_dir() and p.name.startswith("jdk-"))
-
 
 def fetched_git_exe(tools_dir: Path) -> Path | None:
     """Return the previously-fetched `git.exe` if one exists on disk."""
