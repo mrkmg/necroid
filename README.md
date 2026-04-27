@@ -165,7 +165,7 @@ These are decoupled on purpose: you don't have to download a fresh binary just b
 - **GUI**: a yellow banner appears below the header when an update is available — click **Install Update** and Necroid downloads the new binary, swaps it in place, and closes. Re-open it to start using the new version. Click **Dismiss** to ignore the banner for the current session.
 - **CLI**: a one-line `update available: vX.Y.Z → vA.B.C (run: necroid update)` notice prints after any command (silenced when stderr is redirected — scripts stay clean). Run `necroid update` to apply, `necroid update --check` to just check, or `necroid update --rollback` to swap back to the previous binary if something went wrong. Set `NECROID_NO_UPDATE_CHECK=1` to disable background checks entirely.
 
-Self-update only works for the packaged binary you downloaded from the [Releases page](https://github.com/mrkmg/necroid/releases). If you installed from source (`pip install -e .`), use `git pull` instead. On Windows, if Necroid lives under `C:\Program Files`, the update needs an elevated shell — run as administrator. Your installed mods, your Project Zomboid install, and `data/.mod-config.json` are never touched by the updater; only the `necroid` binary itself is replaced.
+Self-update only works for the packaged binary you downloaded from the [Releases page](https://github.com/mrkmg/necroid/releases). If you installed from source (`pip install -e .`), use `git pull` instead. On Windows, if Necroid lives under `C:\Program Files`, the update needs an elevated shell — run as administrator. Your installed mods, your Project Zomboid install, and your workspace state at `<pz>/necroid/` are never touched by the updater; only the `necroid` binary itself is replaced.
 
 ### Updating mods (bundled + imported)
 
@@ -216,7 +216,7 @@ Every published Necroid mod looks exactly like this. A user on PZ 41 imports and
 
 1. **Create your repo** and `cd` into it.
 2. **Drop Necroid at the root.** Copy-paste from a release into the repo root.
-3. **Run `necroid init`.** Seeds the shared workspace from your local PZ install, scaffolds `mods/`, and writes a default `.gitignore` covering every Necroid-generated path (`data/workspace/`, `data/tools/*`, `data/.mod-*.json`, `src-*/`, `dist/`, `build/`). If you already have a `.gitignore`, Necroid leaves it alone.
+3. **Run `necroid init`.** Bootstraps the workspace inside your PZ install at `<pz>/necroid/`, writes the checkout-local pointer file, scaffolds `mods/`, and writes a default `.gitignore` covering every Necroid-generated path (`data/.necroid-pointer.json`, `data/.mod-enter.json`, `data/tools/*`, `src-*/`, `dist/`, `build/`). If you already have a `.gitignore`, Necroid leaves it alone.
 4. **Scaffold your mod:** `necroid new my-cool-mod -d "what it does"` → creates `mods/my-cool-mod-<workspaceMajor>/`. The `-<major>` suffix is added automatically from your bound workspace major.
 5. **Develop:** `necroid enter my-cool-mod`, edit under `src-my-cool-mod/`, `necroid capture`, `necroid test`, `necroid install my-cool-mod --to client` — iterate until it builds and behaves in-game.
 6. **Bump the version** in `mod.json` (`"0.1.0"` → `"0.1.1"`, etc). `mod-update` uses semver-style ordering on this field — monotonically-increasing values trigger refreshes for your users.
@@ -272,12 +272,34 @@ If a user has imported several of your mods and you remove one upstream, their n
 - **Mod marked STALE after a Project Zomboid update** — the game changed underneath the mod. Click **Update from Game**, then Apply Changes to reinstall your stack. If the mod still won't apply, wait for an updated release.
 - **`resync-pristine` aborts with "files drifted to a different PZ version"** — Steam has rewritten some of your modded files with a newer (or different) PZ version's vanilla. Necroid refuses to silently adopt those bytes as new pristine because that would poison every mod's diff. Two fixes: (a) run Steam "Verify Integrity of Game Files" to get back to a clean known version, then retry; or (b) if you're intentionally moving to the new version, pass `--force-version-drift` to accept Steam's current bytes as new pristine. Every mod will then be flagged STALE and will need re-capture.
 - **`resync-pristine` aborts with "orphan files"** — class files exist under a mod-touched subtree that aren't in Necroid's manifest and aren't vanilla. Usually a prior crash or a manual edit. Run `necroid doctor` to see the list. Fix by running Steam "Verify Integrity of Game Files" (restores vanilla) or deleting the listed files by hand; pass `--force-orphans` to adopt them into pristine (rare).
-- **"install manifest was written by a different Necroid workspace"** — you have two Necroid checkouts pointing at the same PZ install. Pick one to use going forward and pass `--adopt-install` on the first `install` / `resync-pristine` from that one to take ownership.
-- **Wrong Project Zomboid install path detected** — edit `data/.mod-config.json` in the Necroid folder and set `clientPzInstall` to your actual install path.
+- **Wrong Project Zomboid install path detected** — edit `<pz>/necroid/config.json` (inside your Project Zomboid install folder) and set `clientPzInstall` to your actual install path. Or just delete `data/.necroid-pointer.json` and the `<pz>/necroid/` directory and re-run `necroid init`.
 
-## Config file
+## Config + on-disk layout
 
-`data/.mod-config.json` is written by `necroid init` and stores your install paths plus a couple of defaults. You only need to edit it by hand if auto-detection picked the wrong Steam install or you want to change the default destination.
+Necroid keeps almost everything inside your Project Zomboid install at `<pz>/necroid/`. The Necroid checkout itself only carries a small pointer file telling it which PZ install to talk to. That means **two checkouts of Necroid pointing at the same PZ install share one workspace** — no decompiling twice, no fingerprint nonsense.
+
+```
+<repo>/data/                                         # checkout-local
+├── .necroid-pointer.json    # { "pzInstall": "<path>" } — written by `init`
+├── .mod-enter.json          # currently entered mod (per checkout)
+├── .update-cache.json       # binary self-update TTL
+└── tools/                   # Vineflower + auto-fetched JDK / git
+
+<pz>/necroid/                                        # in your PZ install
+├── config.json              # workspace bindings + install paths
+├── workspace/
+│   ├── src-pristine/        # frozen pristine decompile
+│   ├── classes-original/    # verbatim PZ classes
+│   ├── libs/                # PZ jars + classpath-originals
+│   └── build/               # javac output + staging
+├── state-client.json        # local cache of the install-side manifest (client)
+├── state-server.json        # same, server destination
+├── install-manifest.json    # authoritative record of what Necroid installed here
+├── update-cache-mods.json   # last `mod-update --check` results
+└── tmp/                     # ephemeral import / mod-update scratch
+```
+
+`<pz>/necroid/config.json` is the only file you'd ever hand-edit — usually just to fix a wrong install path:
 
 ```json
 {
@@ -288,22 +310,24 @@ If a user has imported several of your mods and you remove one upstream, their n
   "workspaceSource": "client",
   "workspaceMajor": 41,
   "workspaceVersion": "41.78.19",
-  "workspaceFingerprint": "<64-hex — don't hand-edit>"
+  "workspaceLayout": "loose",
+  "javaRelease": 17
 }
 ```
 
 - `clientPzInstall` / `serverPzInstall` — absolute paths to each PZ install. Leave either empty (`""`) if you don't have it. Forward slashes on all OSes. `~`, `$VAR`, `%VAR%`, and `${VAR}` are expanded.
 - `defaultInstallTo` — `client` or `server`. Used when you omit `--to` on `install` / `uninstall` / `verify` / `doctor` / `list` / `status`.
-- `workspaceSource` — `client` or `server`. Which install seeded `data/workspace/`. `resync-pristine` re-hydrates from this unless you pass `--from`.
-- `workspaceMajor` / `workspaceVersion` — PZ major (e.g. `41`) and full version string (`"41.78.19"`) the workspace is bound to. Set by `init`; don't hand-edit unless you really know what you're doing.
-- `workspaceFingerprint` — opaque per-workspace id stamped into `<pz>/.necroid-install.json` so Necroid can tell your workspace apart from any other Necroid checkout pointing at the same PZ install. Minted once at `init`; never regenerate it by hand.
+- `workspaceSource` — `client` or `server`. Which install seeded the workspace. `resync-pristine` re-hydrates from this unless you pass `--from`.
+- `workspaceMajor` / `workspaceVersion` — PZ major (e.g. `41`) and full version string the workspace is bound to. Set by `init`; don't hand-edit unless you really know what you're doing.
+- `workspaceLayout` — `loose` (PZ ≤41, classes as a tree) or `jar` (PZ ≥42, fat `projectzomboid.jar`). Detected by `init`.
+- `javaRelease` — `javac --release N` target. Derived from `workspaceMajor` (41 → 17, 42 → 25).
 - `originalsDir` *(optional)* — override for the verbatim class-copy directory. Leave unset unless you know why you need it.
 
 ---
 
 ## For server operators
 
-Necroid also supports the **Project Zomboid Dedicated Server** (Steam app `380870`, or a local `./pzserver/` install). One shared workspace serves both — install destination is chosen per-install with `--to client|server` (default from `data/.mod-config.json` `defaultInstallTo`).
+Necroid also supports the **Project Zomboid Dedicated Server** (Steam app `380870`, or a local `./pzserver/` install). One shared workspace serves both — install destination is chosen per-install with `--to client|server` (default from `<pz>/necroid/config.json` `defaultInstallTo`).
 
 If you only have the dedicated server, bootstrap the workspace from it:
 
@@ -327,8 +351,11 @@ Mods flagged `clientOnly: true` cannot install to the server — they need the g
 Most people never need this — install mods from the GUI and move on. If you're automating, scripting, or running headless on a dedicated-server box, here's the full surface:
 
 ```bash
+necroid init                         # bootstrap workspace inside <pz>/necroid/, write pointer
+necroid init --from server           # seed from the dedicated server install instead
 necroid list                         # all mods (Client-only? column)
 necroid install <mod1> [mod2 ...]    # compile + install, stacking multiple mods
+necroid install <mod> --replace      # replace the destination's stack with exactly these mods
 necroid uninstall                    # restore everything for the chosen destination
 necroid uninstall <mod>              # remove one from the stack, rebuild the rest
 necroid status                       # working tree vs pristine + installed stacks (client + server)
@@ -336,9 +363,9 @@ necroid status <mod>                 # per-mod patch applicability
 necroid verify                       # manifest reconcile + per-file audit + orphan scan
 necroid doctor                       # read-only diagnosis with remediation hints
 necroid resync-pristine              # after a PZ update: refresh the vanilla baseline
+necroid resync-pristine --force-major-change    # accept a workspace re-bind to a different PZ major
 necroid resync-pristine --force-version-drift   # accept Steam-rewritten files as new pristine (flags every mod STALE)
 necroid resync-pristine --force-orphans         # accept untracked install files as new pristine
-necroid install --adopt-install      # take ownership of an install managed by another workspace
 necroid update                       # check + self-update from GitHub Releases (packaged binary only)
 necroid update --check               # check only, don't download
 necroid update --rollback            # swap back to the previous binary
@@ -351,21 +378,23 @@ necroid mod-update                   # check + update every imported mod from it
 necroid mod-update <mod> [--check]   # one mod (--check = dry-run, populates the GUI cache)
 necroid mod-update <mod> --include-peers   # also refresh siblings sharing the same (repo, ref)
 necroid new <name> -d "..." [--client-only]  # scaffold a new mod
-necroid enter <mod1> [mod2 ...]      # reset working tree, apply a mod stack for editing
+necroid enter <mod>                  # seed src-<mod>/ from pristine + patches for editing
 necroid capture <mod>                # diff working tree vs pristine, rewrite patches
 necroid diff <mod>                   # print a mod's patches to stdout
-necroid reset                        # mirror pristine -> working tree, clear enter state
+necroid reset                        # re-seed the entered mod's src-<mod>/ from pristine + patches
+necroid clean [<mod>]                # delete per-mod src-*/ working trees
+necroid test                         # javac-only compile of the entered tree (no install)
 ```
 
 Per-command flags:
 
-- `init` / `resync-pristine` take `--from {client,server}` (which PZ install seeds the shared workspace).
+- `init` / `resync-pristine` take `--from {client,server}` — which PZ install seeds the workspace. `init` writes `data/.necroid-pointer.json` in the checkout pointing at that install, and bootstraps `<pz>/necroid/`. Refuses to run if a legacy pre-PZ-anchored layout (`data/workspace/`, `data/.mod-config.json`, etc.) is on disk — capture any in-progress edits, delete the legacy paths, then re-init.
 - `install` / `uninstall` / `verify` / `doctor` / `list` / `status` take `--to {client,server}` (install destination).
-- `resync-pristine` additionally takes `--force-major-change`, `--force-version-drift`, `--force-orphans`, `--adopt-install` (see Troubleshooting above for what each handles).
-- `install` takes `--adopt-install` (rare: cloned / moved workspace).
-- `enter` takes `--as {client,server}` (postfix variant to apply when the mod ships per-destination variants — rare).
+- `install` takes `--replace` (exact-replace stack, vs default additive merge).
+- `resync-pristine` additionally takes `--force-major-change`, `--force-version-drift`, `--force-orphans`, `--yes` (see Troubleshooting above for what each handles).
+- `enter` takes `--as {client,server}` (postfix variant to apply when the mod ships per-destination variants — rare) and `--force` (re-seed even if `src-<mod>/` already exists).
 
-Defaults come from `data/.mod-config.json` (`defaultInstallTo`, `workspaceSource`), falling back to `client`.
+Defaults come from `<pz>/necroid/config.json` (`defaultInstallTo`, `workspaceSource`), falling back to `client`. Only one mod can be entered at a time; switching via `enter <other>` preserves the previous `src-<mod>/` tree on disk.
 
 ---
 
@@ -381,26 +410,37 @@ necroid/                              # this repo
 ├── assets/                           # brand assets (logo, derived icons)
 ├── mods/                             # tracked — the portable patch-set library
 │   └── <name>-<major>/{mod.json, patches/}
-├── data/                             # local-only (all generated content)
-│   ├── .mod-config.json              # written by `init`
+├── data/                             # local-only — only the bare minimum lives here
+│   ├── .necroid-pointer.json         # { "pzInstall": "<path>" } — written by `init`
 │   ├── .mod-enter.json               # currently entered mod + install_as
-│   ├── .mod-state-client.json        # local cache of the install-side manifest (client)
-│   ├── .mod-state-server.json        # local cache of the install-side manifest (server)
-│   │                                 # — authoritative copy lives in the PZ install at
-│   │                                 #   <pz_install>/.necroid-install.json (hidden on Windows)
-│   ├── tools/vineflower.jar          # downloaded by `init`
-│   └── workspace/                    # one shared PZ-sourced workspace
-│       ├── src-pristine/             # frozen pristine decompile
-│       ├── classes-original/         # verbatim PZ classes (identical client/server)
-│       ├── libs/                     # PZ jars + classpath-originals/
-│       └── build/                    # javac output + staging
+│   ├── .update-cache.json            # binary self-update TTL
+│   └── tools/                        # Vineflower + auto-fetched JDK / Git
 ├── src-<modname>/                    # local-only, per-mod editable tree (one per entered mod)
 ├── dist/                             # local-only, output of build_dist.py
 ├── CLAUDE.md, README.md
 └── .gitignore
 ```
 
-`mods/` at the repo root is the **only** user-authored tree committed to git — it's the portable patch-set library, and it's the same layout 3rd-party authors use in their own repos. Everything under `data/` is local-only and reconstructed from the user's own Steam install by `necroid init`. Nothing PZ-owned ships through git.
+The heavy state lives **inside the PZ install**, not in the checkout:
+
+```
+<pz>/necroid/                         # workspace home (one PZ install)
+├── config.json                       # workspace bindings + install paths
+├── workspace/
+│   ├── src-pristine/                 # frozen pristine decompile
+│   ├── classes-original/             # verbatim PZ classes
+│   ├── libs/                         # PZ jars + classpath-originals/
+│   └── build/                        # javac output + staging
+├── state-client.json                 # local cache of the install-side manifest
+├── state-server.json                 # same, server destination
+├── install-manifest.json             # authoritative record of what Necroid installed here
+├── update-cache-mods.json            # last `mod-update --check` results
+└── tmp/                              # ephemeral import / mod-update scratch
+```
+
+`mods/` at the repo root is the **only** user-authored tree committed to git — it's the portable patch-set library, and it's the same layout 3rd-party authors use in their own repos. Everything under `<pz>/necroid/` is local-only and reconstructed from the user's own Steam install by `necroid init`. Nothing PZ-owned ships through git.
+
+A side benefit: multiple checkouts of the Necroid source on the same machine pointing at the same PZ install **share one workspace by construction** — no double-decompile, no fingerprint collisions.
 
 ### Dev setup
 
