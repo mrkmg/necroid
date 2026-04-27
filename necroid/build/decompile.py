@@ -8,9 +8,14 @@ from pathlib import Path
 from ..util import logging_util as log
 from ..util import procs
 from ..util.fsops import empty_dir, ensure_dir
-from ..util.tools import resolve
+from ..util.tools import require_java_release
 
 VINEFLOWER_VERSION = "1.11.1"
+# Vineflower 1.11.1 requires Java 11+ to run. Bare PATH `java` may be JDK 8
+# (common via java.com auto-installer), which bombs with no useful output —
+# so version-gate. The well-known-roots scan / auto-fetch path will land on
+# a usable JDK without forcing the user to fix PATH.
+VINEFLOWER_MIN_JAVA = 11
 VINEFLOWER_URL = (
     f"https://github.com/Vineflower/vineflower/releases/download/"
     f"{VINEFLOWER_VERSION}/vineflower-{VINEFLOWER_VERSION}.jar"
@@ -70,17 +75,23 @@ def decompile_subtree(
     tmp_out = out_pristine_dir / (subtree + "-tmp")
     empty_dir(tmp_out)
 
-    java = str(resolve("java"))
-    args = [java, "-jar", str(vineflower_jar), "--silent"]
+    java = str(require_java_release(VINEFLOWER_MIN_JAVA))
+    # -Xmx2g: zombie/ on B41/B42 is large; Vineflower's default heap can OOM.
+    args = [java, "-Xmx2g", "-jar", str(vineflower_jar)]
     for j in libs_jars:
         args.append(f"-e={j}")
     args.append(str(sub_classes))
     args.append(str(tmp_out))
 
     log.info(f"decompiling {subtree}/ (Vineflower)...")
-    proc = procs.run(args)
+    proc = procs.run(args, capture_output=True, text=True)
     if proc.returncode != 0:
-        raise RuntimeError(f"Vineflower failed on {subtree}/ (exit {proc.returncode})")
+        raise RuntimeError(
+            f"Vineflower failed on {subtree}/ (exit {proc.returncode})\n"
+            f"  java: {java}\n"
+            f"--- stdout ---\n{proc.stdout}\n"
+            f"--- stderr ---\n{proc.stderr}"
+        )
 
     tmp_out.rename(out_sub)
     count = sum(1 for _ in out_sub.rglob("*.java"))
