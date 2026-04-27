@@ -21,7 +21,7 @@ from typing import Optional
 
 from ..util import logging_util as log
 from ..core.config import read_config
-from ..errors import ConfigError, ModNotFound, ModUpdateError
+from ..errors import ModNotFound, ModUpdateError
 from ..util.fsops import ensure_dir
 from ..remote._archive import (
     DiscoveredMod,
@@ -62,17 +62,26 @@ class _Target:
 
 def run(args) -> int:
     profile = args.profile
-    cfg = read_config(args.root)
+    # mod-update doesn't actually need the PZ install to be valid — it only
+    # needs the checkout-local mods/ tree and network access. When the
+    # workspace isn't bootstrapped (no pointer, or pointer present but
+    # workspace config.json absent), exit 0 with a friendly notice instead of
+    # erroring. Wrappers / scheduled checkers shouldn't see this as a failure.
+    cfg = read_config(args.root, required=False)
+    json_out = bool(getattr(args, "json", False))
     if not cfg.workspace_major:
-        raise ConfigError(
-            "workspace has no bound major. Run `necroid init` before updating mods."
+        log.info(
+            "workspace not bootstrapped — skipping mod-update "
+            "(run `necroid init` to set up the workspace)."
         )
+        if json_out:
+            print(json.dumps({"results": []}, indent=2))
+        return 0
     ws_major = int(cfg.workspace_major)
 
     check_only = bool(getattr(args, "check_only", False))
     force = bool(getattr(args, "force", False))
     include_peers = bool(getattr(args, "include_peers", False))
-    json_out = bool(getattr(args, "json", False))
     name_arg: Optional[str] = getattr(args, "name", None)
 
     enter_state = read_enter(profile.enter_file)

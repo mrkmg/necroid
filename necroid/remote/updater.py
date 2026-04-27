@@ -487,7 +487,21 @@ def apply_update(
         log.info(f"asset: {release.asset_name}")
         if release.html_url:
             log.info(f"notes: {release.html_url}")
-        answer = input("download and install now? [y/N]: ").strip().lower()
+        # PyInstaller console binaries on Windows sometimes run with a closed
+        # stdin (launched from Explorer, certain terminal emulators, scheduled
+        # tasks, etc.). `input()` then immediately raises EOFError. Refuse to
+        # crash — bail cleanly with a hint to use --yes for non-interactive runs.
+        if not sys.stdin or not sys.stdin.isatty():
+            log.info(
+                "non-interactive stdin — re-run with `necroid update --yes` to "
+                "apply, or `necroid update --check` to just see what's available."
+            )
+            return
+        try:
+            answer = input("download and install now? [y/N]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            log.info("update cancelled")
+            return
         if answer not in ("y", "yes"):
             log.info("update cancelled")
             return
