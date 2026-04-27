@@ -1,5 +1,5 @@
 diff --git a/zombie/Lua/LuaEventManager.java b/zombie/Lua/LuaEventManager.java
-index bbe5b13..6d236f0 100644
+index bbe5b13..2dbe3bc 100644
 --- a/zombie/Lua/LuaEventManager.java
 +++ b/zombie/Lua/LuaEventManager.java
 @@ -1,7 +1,12 @@
@@ -15,7 +15,7 @@ index bbe5b13..6d236f0 100644
  import java.util.HashMap;
  import se.krka.kahlua.vm.JavaFunction;
  import se.krka.kahlua.vm.KahluaTable;
-@@ -9,9 +14,131 @@ import se.krka.kahlua.vm.LuaCallFrame;
+@@ -9,9 +14,177 @@ import se.krka.kahlua.vm.LuaCallFrame;
  import se.krka.kahlua.vm.LuaClosure;
  import se.krka.kahlua.vm.Platform;
  import se.krka.kahlua.vm.Prototype;
@@ -25,7 +25,10 @@ index bbe5b13..6d236f0 100644
  import zombie.debug.DebugLog;
  
  public final class LuaEventManager implements JavaFunction {
-+   private static volatile boolean autoLoginAttempted = false;
++   private static final long MAX_AGE_MS = 600_000L;
++   private static final long POLL_INTERVAL_MS = 1_000L;
++   private static volatile long lastPollMs = 0L;
++   private static volatile boolean autoLoginInFlight = false;
 +
 +   private static void autoLoginTrace(String msg) {
 +      try {
@@ -40,20 +43,63 @@ index bbe5b13..6d236f0 100644
 +      } catch (Throwable ignore) {}
 +   }
 +
-+   private static void tryAutoJoin() {
-+      if (autoLoginAttempted) {
-+         return;
-+      }
-+      autoLoginAttempted = true;
-+
-+      File configFile = new File(
++   private static File autoJoinConfigFile() {
++      return new File(
 +         System.getProperty("user.home") + File.separator + "Zomboid"
 +         + File.separator + "auto-join.txt");
++   }
++
++   private static boolean isOnMainMenu() {
++      try {
++         return zombie.GameWindow.states != null
++             && zombie.GameWindow.states.current instanceof zombie.gameStates.MainScreenState;
++      } catch (Throwable t) {
++         return false;
++      }
++   }
++
++   private static void tryAutoJoin(String source) {
++      if (autoLoginInFlight) {
++         return;
++      }
++      File configFile = autoJoinConfigFile();
 +      if (!configFile.exists()) {
 +         return;
 +      }
++      long age = System.currentTimeMillis() - configFile.lastModified();
++      if (age > MAX_AGE_MS) {
++         autoLoginTrace("stale auto-join.txt (age " + (age / 1000L) + "s > "
++            + (MAX_AGE_MS / 1000L) + "s); deleting");
++         try {
++            if (!configFile.delete()) {
++               autoLoginTrace("WARNING: failed to delete stale " + configFile.getAbsolutePath());
++            }
++         } catch (Throwable t) {
++            autoLoginTrace("delete-stale threw: " + t);
++         }
++         return;
++      }
++      autoLoginInFlight = true;
++      doAutoJoin(configFile, source);
++   }
 +
-+      autoLoginTrace("found " + configFile.getAbsolutePath() + ", parsing");
++   private static void pollAutoJoin() {
++      if (autoLoginInFlight) {
++         return;
++      }
++      long now = System.currentTimeMillis();
++      if (now - lastPollMs < POLL_INTERVAL_MS) {
++         return;
++      }
++      lastPollMs = now;
++      if (!isOnMainMenu()) {
++         return;
++      }
++      tryAutoJoin("poll");
++   }
++
++   private static void doAutoJoin(File configFile, String source) {
++      autoLoginTrace("[" + source + "] found " + configFile.getAbsolutePath() + ", parsing");
 +
 +      HashMap<String, String> kv = new HashMap<>();
 +      try (BufferedReader br = new BufferedReader(new FileReader(configFile))) {
@@ -147,12 +193,15 @@ index bbe5b13..6d236f0 100644
     public static final ArrayList<LuaClosure> OnTickCallbacks = new ArrayList<>();
     static Object[][] a1 = new Object[1][1];
     static Object[][] a2 = new Object[1][2];
-@@ -43,6 +170,9 @@ public final class LuaEventManager implements JavaFunction {
+@@ -43,6 +216,12 @@ public final class LuaEventManager implements JavaFunction {
     }
  
     public static void triggerEvent(String var0) {
 +      if ("OnMainMenuEnter".equals(var0)) {
-+         tryAutoJoin();
++         autoLoginInFlight = false;
++         tryAutoJoin("boot");
++      } else if ("OnPreUIDraw".equals(var0)) {
++         pollAutoJoin();
 +      }
        synchronized (EventMap) {
           Event var2 = checkEvent(var0);
