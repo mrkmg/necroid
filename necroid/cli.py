@@ -100,6 +100,8 @@ def _build_parser() -> argparse.ArgumentParser:
     s.add_argument("--category", "-c", dest="category_filter", default=None,
                    metavar="CAT",
                    help="only show mods in this category")
+    s.add_argument("--json", dest="json_out", action="store_true",
+                   help="emit machine-readable JSON instead of the table")
 
     s = sub.add_parser("status", help="working-tree divergence or per-mod patch applicability")
     s.add_argument("name", nargs="?", default=None)
