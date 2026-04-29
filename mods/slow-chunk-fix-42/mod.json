@@ -1,9 +1,9 @@
 {
   "name": "slow-chunk-fix-42",
   "clientOnly": true,
-  "description": "Raise the connecting-client chunk-download stall timeout from 60s to 10min so slow links finish loading instead of giving up.",
+  "description": "Raise the connecting-client chunk-download stall timeout from 60s to 20min so slow links finish loading instead of giving up.",
   "category": "bugfix",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "expectedVersion": "42.17.0",
   "createdAt": "2026-04-25T04:20:26.046313Z",
   "updatedAt": "2026-04-25T04:22:06.274022Z",

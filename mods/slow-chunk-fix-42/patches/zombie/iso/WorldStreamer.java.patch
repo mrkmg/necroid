@@ -7,7 +7,7 @@ index 1699ee8..dfc9aae 100644
        while (this.isBusy()) {
           long now = System.currentTimeMillis();
 -         if (now - received > 60000L) {
-+         if (now - received > 600000L) {
++         if (now - received > 1200000L) {
              GameLoadingState.mapDownloadFailed = true;
              throw new IOException("map download from server timed out");
           }
