@@ -221,6 +221,9 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="apply even if upstream is older or same version")
     s.add_argument("--include-peers", dest="include_peers", action="store_true",
                    help="when a name is given, also update siblings sharing the same (repo, ref)")
+    s.add_argument("--pull-new", dest="pull_new", action="store_true",
+                   help="also import any NEW mods upstream repos have published "
+                        "(repos already subscribed-to via at least one imported mod)")
     s.add_argument("--json", action="store_true",
                    help="emit machine-readable per-mod result objects to stdout")
 

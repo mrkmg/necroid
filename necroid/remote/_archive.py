@@ -16,7 +16,8 @@ from pathlib import Path
 from typing import Optional
 
 from ..errors import ModImportError
-from ..core.mod import ModJson
+from ..core.mod import ModJson, write_mod_json, write_origin
+from ..core.state import utc_now_iso
 
 
 # --- Shared dataclasses ---------------------------------------------------
@@ -157,3 +158,47 @@ def copy_mod_tree(src: Path, dst: Path) -> None:
 
 def _copy_ignore(_src: str, names: list[str]) -> set[str]:
     return {n for n in names if _is_skip_dir(n)}
+
+
+# --- Per-mod commit (atomic install of a DiscoveredMod) -------------------
+
+def commit_imported_mod(*, dm: DiscoveredMod, mods_dir: Path,
+                        provider: str, host: Optional[str],
+                        repo_full: str, ref: str, sha: str,
+                        archive_url: str) -> None:
+    """Atomically install one discovered mod into ``mods_dir``.
+
+    Strategy: copy upstream tree into ``<target>.new``, rewrite mod.json
+    there (canonical name + origin block), rmtree old target if any, then
+    rename ``.new`` -> target. Each call is its own atomic unit; partial
+    failure across multiple calls leaves earlier successes intact.
+    """
+    target = mods_dir / dm.dirname
+    staging = mods_dir / (dm.dirname + ".new")
+
+    if staging.exists():
+        shutil.rmtree(staging, ignore_errors=True)
+
+    copy_mod_tree(dm.src_path, staging)
+
+    mj = dm.mj
+    mj.name = dm.dirname
+    now = utc_now_iso()
+    write_origin(
+        mj,
+        type=provider,
+        host=host,
+        repo=repo_full,
+        ref=ref,
+        subdir=dm.subdir,
+        commitSha=sha,
+        archiveUrl=archive_url,
+        importedAt=now,
+        upstreamVersion=mj.version,
+    )
+    mj.updated_at = now
+    write_mod_json(staging, mj)
+
+    if target.exists():
+        shutil.rmtree(target)
+    staging.rename(target)

@@ -33,11 +33,11 @@ from ..errors import ConfigError, ModImportError
 from ..util.fsops import ensure_dir
 from ..remote.github import (
     DiscoveredMod,
-    copy_mod_tree,
     discover_mods,
     extract_archive,
     parse_github_ref,
 )
+from ..remote._archive import commit_imported_mod
 from ..remote import github as _gh_mod
 from ..remote import gitlab as _gl_mod
 from ..remote._providers import (
@@ -49,10 +49,7 @@ from ..core.mod import (
     list_mods,
     mod_base_name,
     parse_mod_dirname,
-    write_mod_json,
-    write_origin,
 )
-from ..core.state import utc_now_iso
 
 
 def run(args) -> int:
@@ -413,40 +410,9 @@ def _commit_one(*, dm: DiscoveredMod, profile,
                 provider: str, host: str | None,
                 repo_full: str, ref: str, sha: str,
                 archive_url_str: str) -> None:
-    """Atomically install one discovered mod into profile.mods_dir.
-
-    Strategy: copy upstream tree into <target>.new, rewrite mod.json there,
-    then rmtree old target (if any) and rename .new -> target. Each mod is
-    its own atomic unit; partial failure across multiple mods leaves earlier
-    successes intact.
-    """
-    target = profile.mods_dir / dm.dirname
-    staging = profile.mods_dir / (dm.dirname + ".new")
-
-    if staging.exists():
-        shutil.rmtree(staging, ignore_errors=True)
-
-    copy_mod_tree(dm.src_path, staging)
-
-    # Re-stamp mod.json: canonical name + origin block.
-    mj = dm.mj
-    mj.name = dm.dirname
-    now = utc_now_iso()
-    write_origin(
-        mj,
-        type=provider,
-        host=host,
-        repo=repo_full,
-        ref=ref,
-        subdir=dm.subdir,
-        commitSha=sha,
-        archiveUrl=archive_url_str,
-        importedAt=now,
-        upstreamVersion=mj.version,
+    commit_imported_mod(
+        dm=dm, mods_dir=profile.mods_dir,
+        provider=provider, host=host,
+        repo_full=repo_full, ref=ref, sha=sha,
+        archive_url=archive_url_str,
     )
-    mj.updated_at = now
-    write_mod_json(staging, mj)
-
-    if target.exists():
-        shutil.rmtree(target)
-    staging.rename(target)

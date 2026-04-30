@@ -5,10 +5,16 @@
     necroid mod-update <name> --include-peers   # also any mods sharing (repo, ref)
     necroid mod-update --check             # dry-run, populate update cache
     necroid mod-update --json --check      # machine-readable for the GUI
+    necroid mod-update --pull-new          # also import NEW mods upstream has added
 
 Groups targets by (repo, ref) so a single archive download serves N peer mods.
 On `--check`, persists results to <pz>/necroid/update-cache-mods.json (24h TTL).
 Refuses any mod that is currently entered.
+
+`--pull-new` widens the per-group sweep: after fetching the archive for a
+repo we already have at least one origin-stamped local mod from, any upstream
+mod we don't yet have locally (and whose major matches the workspace) is
+imported via the same atomic-commit path the `import` command uses.
 """
 from __future__ import annotations
 
@@ -25,6 +31,7 @@ from ..errors import ModNotFound, ModUpdateError
 from ..util.fsops import ensure_dir
 from ..remote._archive import (
     DiscoveredMod,
+    commit_imported_mod,
     copy_mod_tree,
     discover_mods,
     extract_archive,
@@ -82,6 +89,7 @@ def run(args) -> int:
     check_only = bool(getattr(args, "check_only", False))
     force = bool(getattr(args, "force", False))
     include_peers = bool(getattr(args, "include_peers", False))
+    pull_new = bool(getattr(args, "pull_new", False))
     name_arg: Optional[str] = getattr(args, "name", None)
 
     enter_state = read_enter(profile.enter_file)
@@ -123,7 +131,7 @@ def run(args) -> int:
                 provider=provider, host=host, repo=repo, ref=ref, group=group,
                 profile=profile, ws_major=ws_major,
                 enter_state=enter_state,
-                check_only=check_only, force=force,
+                check_only=check_only, force=force, pull_new=pull_new,
                 tmp_root=tmp_root,
             ))
     finally:
@@ -205,7 +213,7 @@ def _resolve_named(mods_dir: Path, ws_major: int, name: str) -> str:
 def _process_group(*, provider: str, host: str, repo: str, ref: str,
                    group: list[_Target],
                    profile, ws_major: int, enter_state,
-                   check_only: bool, force: bool,
+                   check_only: bool, force: bool, pull_new: bool,
                    tmp_root: Path) -> list[dict]:
     if not repo or not ref:
         return [_result(t, status="error",
@@ -238,7 +246,9 @@ def _process_group(*, provider: str, host: str, repo: str, ref: str,
     log.info(f"upstream commit {new_sha[:7]}")
 
     # Skip download entirely if every mod is already at this SHA + not --force.
-    all_current = (not force) and all(
+    # --pull-new forces the download regardless: we need the upstream mod list
+    # to spot any new entries.
+    all_current = (not force) and (not pull_new) and all(
         t.origin.get("commitSha") == new_sha for t in group
     )
     if all_current:
@@ -281,6 +291,21 @@ def _process_group(*, provider: str, host: str, repo: str, ref: str,
             repo=repo, ref=ref,
             check_only=check_only, force=force,
         ))
+
+    if pull_new:
+        local_subdirs = {t.origin.get("subdir", "") for t in group}
+        for dm in upstream:
+            if dm.subdir in local_subdirs:
+                continue
+            if dm.mod_major != ws_major:
+                continue
+            results.append(_process_new(
+                dm=dm, profile=profile,
+                provider=provider, host=host, repo=repo, ref=ref,
+                sha=new_sha, archive_url_str=url,
+                check_only=check_only,
+            ))
+
     return results
 
 
@@ -376,6 +401,50 @@ def _process_one(*, t: _Target, by_subdir: dict, profile, ws_major: int,
     return _result(t, status="updated",
                    message=f"updated v{local_v} -> v{new_v}",
                    upstream_version=new_v, upstream_sha=new_sha)
+
+
+def _process_new(*, dm: DiscoveredMod, profile,
+                 provider: str, host: str, repo: str, ref: str,
+                 sha: str, archive_url_str: str,
+                 check_only: bool) -> dict:
+    """Handle an upstream mod that has no local counterpart yet (--pull-new)."""
+    target = profile.mods_dir / dm.dirname
+    base = {
+        "name": dm.dirname,
+        "localVersion": "",
+        "upstreamVersion": dm.mj.version,
+        "upstreamSha": sha,
+        "checkedAt": utc_now_iso(),
+        "repo": repo,
+        "ref": ref,
+        "subdir": dm.subdir,
+    }
+
+    if target.exists():
+        msg = (f"upstream has new mod '{dm.dirname}' but a local dir of that "
+               f"name already exists; remove it or rename the upstream mod")
+        log.warn(f"  {dm.dirname}: {msg}")
+        return {**base, "status": "new-conflict", "message": msg}
+
+    if check_only:
+        log.info(f"  {dm.dirname}: would import v{dm.mj.version} @ {sha[:7]}")
+        return {**base, "status": "new",
+                "message": f"would import v{dm.mj.version}"}
+
+    try:
+        commit_imported_mod(
+            dm=dm, mods_dir=profile.mods_dir,
+            provider=provider, host=host or None,
+            repo_full=repo, ref=ref, sha=sha,
+            archive_url=archive_url_str,
+        )
+    except Exception as e:
+        log.warn(f"  {dm.dirname}: import failed: {e}")
+        return {**base, "status": "error", "message": f"import failed: {e}"}
+
+    log.success(f"  + {dm.dirname}: imported v{dm.mj.version} @ {sha[:7]}")
+    return {**base, "status": "imported-new",
+            "message": f"imported v{dm.mj.version}"}
 
 
 # ---------------------------------------------------------------------------
