@@ -1,7 +1,7 @@
 {
   "name": "admin-xray",
   "clientOnly": true,
-  "description": "Staff toggles: LOS (F9), transparent static objects (Shift+F9).",
+  "description": "Staff only toggles: LOS X-Ray (F9), transparent static objects (Shift+F9).",
   "category": "admin",
   "version": "0.5.0",
   "expectedVersion": "41.78.19",

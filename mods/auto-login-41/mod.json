@@ -1,7 +1,7 @@
 {
   "name": "auto-login-41",
   "clientOnly": true,
-  "description": "Auto-login from a config file at ~/Zomboid/auto-join.txt \u2014 fires at boot OR while sitting on the main menu / server-join popup; rejects stale files older than 10 minutes",
+  "description": "Auto-login system used by Wasteland Launcher.",
   "category": "utility",
   "version": "0.2.0",
   "expectedVersion": "41.78.19",

@@ -1,7 +1,7 @@
 {
   "name": "no-radio-fzzt-42",
   "clientOnly": false,
-  "description": "Disable all radio obfuscation (weather interference + distance falloff + scramble pipeline). Install to client or server.",
+  "description": "Disable all radio obfuscation. Install to client and server.",
   "category": "bugfix",
   "version": "0.1.0",
   "expectedVersion": "42.17.0",

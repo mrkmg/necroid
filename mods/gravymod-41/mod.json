@@ -1,7 +1,7 @@
 {
   "name": "gravymod",
   "clientOnly": false,
-  "description": "Adds various lua utils and commands.",
+  "description": "Server Only: Adds various lua utils and commands.",
   "category": "utility",
   "version": "0.1.0",
   "expectedVersion": "41.78.19",

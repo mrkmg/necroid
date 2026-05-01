@@ -1,7 +1,7 @@
 {
   "name": "staff-priority",
   "clientOnly": false,
-  "description": "Staff (admin/moderator/overseer/gm/observer) enter the preferred login queue and load ahead of VIPs and regular players when the server is full.",
+  "description": "Server only: Staff login first.",
   "category": "admin",
   "version": "0.1.0",
   "expectedVersion": "41.78.19",

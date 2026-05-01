@@ -1,7 +1,7 @@
 {
   "name": "no-zombie-cull-42",
   "clientOnly": false,
-  "description": "Disables 500-zombie client cull. Keeps zombies alive in loaded chunks.",
+  "description": "Disables 500-zombie client cull. Keeps zombies alive in loaded chunks. Install to client and server.",
   "category": "mechanics",
   "version": "0.1.0",
   "expectedVersion": "42.17.0",
