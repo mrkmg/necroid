@@ -58,6 +58,11 @@ def javac_compile(
     log.info(f"compiling {len(abs_files)} file(s) -> {out_dir} (Java {java_release})")
     cmd = [javac, "--release", str(java_release), "-encoding", "UTF-8",
            "-cp", cp, "-d", str(out_dir), *abs_files]
-    proc = procs.run(cmd)
+    proc = procs.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
-        raise BuildError(f"javac failed (exit {proc.returncode})")
+        raise BuildError(
+            f"javac failed (exit {proc.returncode})\n"
+            f"  javac: {javac}\n"
+            f"--- stdout ---\n{proc.stdout}\n"
+            f"--- stderr ---\n{proc.stderr}"
+        )
