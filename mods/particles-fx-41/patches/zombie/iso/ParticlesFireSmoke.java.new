@@ -1,0 +1,99 @@
+package zombie.iso;
+
+import zombie.core.Rand;
+
+public final class ParticlesFireSmoke extends Particles {
+   private static final int    MAX_PARTICLES = 1024;
+   private static final float  LIFETIME      = 3.5F;
+   private static final String SHADER_NAME   = "necroid_firesmoke";
+
+   private static final String VERT_SRC =
+      "#version 330\n" +
+      "uniform mat4 mvpMatrix;\n" +
+      "uniform float currentTime;\n" +
+      "uniform float lifetime;\n" +
+      "layout (location = 0) in vec3 Vertex;\n" +
+      "layout (location = 1) in vec4 Particule;\n" +
+      "layout (location = 2) in vec4 Tint;\n" +
+      "varying vec2 texCoord;\n" +
+      "varying float alpha;\n" +
+      "varying float life;\n" +
+      "varying vec4 vTint;\n" +
+      "void main() {\n" +
+      "   vTint = Tint;\n" +
+      "   float age = currentTime - Particule.z;\n" +
+      "   life = age / lifetime;\n" +
+      "   if (life < 0.0 || life >= 1.0) {\n" +
+      "      gl_Position = vec4(2.0, 2.0, 2.0, 1.0);\n" +
+      "      alpha = 0.0;\n" +
+      "      return;\n" +
+      "   }\n" +
+      "   float size = 22.0 + life * 60.0;\n" +
+      "   float rot = Particule.w * 6.2831853 + life * 0.5;\n" +
+      "   float c = cos(rot); float s = sin(rot);\n" +
+      "   vec2 v = vec2(Vertex.x * c - Vertex.y * s, Vertex.x * s + Vertex.y * c);\n" +
+      "   gl_Position = mvpMatrix * vec4(Particule.x + v.x * size, Particule.y + v.y * size, 0.0, 1.0);\n" +
+      "   texCoord = Vertex.xy * 0.5 + 0.5;\n" +
+      "   float fadeIn = clamp(life * 4.0, 0.0, 1.0);\n" +
+      "   float fadeOut = 1.0 - life;\n" +
+      "   alpha = fadeIn * fadeOut * 0.5;\n" +
+      "}\n";
+
+   private static final String FRAG_SRC =
+      "#version 330\n" +
+      "varying vec2 texCoord;\n" +
+      "varying float alpha;\n" +
+      "varying float life;\n" +
+      "varying vec4 vTint;\n" +
+      "void main() {\n" +
+      "   vec2 d = texCoord - vec2(0.5);\n" +
+      "   float r = dot(d, d) * 4.0;\n" +
+      "   float intensity = max(0.0, 1.0 - r);\n" +
+      "   intensity = pow(intensity, 1.4);\n" +
+      "   float shade = mix(0.18, 0.45, life);\n" +
+      "   vec3 col = vec3(shade) * vTint.rgb;\n" +
+      "   gl_FragColor = vec4(col, intensity * alpha * 0.7 * vTint.a);\n" +
+      "}\n";
+
+   private static ParticlesFireSmoke instance;
+
+   public static synchronized ParticlesFireSmoke getInstance() {
+      if (instance == null) {
+         instance = new ParticlesFireSmoke();
+      }
+      return instance;
+   }
+
+   private ParticlesFireSmoke() {
+      super(new Particles.Config(MAX_PARTICLES, LIFETIME,
+         /*usesTint=*/true, /*blendSrc=*/770, /*blendDst=*/771,
+         SHADER_NAME, VERT_SRC, FRAG_SRC));
+   }
+
+   /** Spawn fire smoke at world tile (worldX, worldY, worldZ). Slow rise + slight horizontal drift. */
+   public void spawn(float worldX, float worldY, float worldZ, int count) {
+      // Dispatch tile = the fire's integer tile (always in MinusFloorCharacters because IsoFire
+      // is a non-floor object on it). Visual position can drift (rise via vz, slight xy jitter)
+      // without losing the dispatch slot.
+      int dispatchTileX = (int)worldX;
+      int dispatchTileY = (int)worldY;
+      float t = this.getShaderTime();
+      for (int i = 0; i < count; i++) {
+         int idx = this.writeIdx;
+         this.writeIdx = (this.writeIdx + 1) % MAX_PARTICLES;
+         this.x[idx] = worldX + Rand.Next(-0.25F, 0.25F);
+         this.y[idx] = worldY + Rand.Next(-0.25F, 0.25F);
+         this.z[idx] = worldZ + Rand.Next(0.0F, 0.3F);
+         this.tileX[idx] = dispatchTileX;
+         this.tileY[idx] = dispatchTileY;
+         this.spawnT[idx] = t + i * 0.01F;
+         this.hash[idx] = Rand.Next(0.0F, 1.0F);
+         this.vx[idx] = Rand.Next(-0.15F, 0.15F);
+         this.vy[idx] = Rand.Next(-0.15F, 0.15F);
+         this.vz[idx] = Rand.Next(0.5F, 0.9F);
+         this.spawnWindAccumX[idx] = NecroidParticleWind.accumX();
+         this.spawnWindAccumY[idx] = NecroidParticleWind.accumY();
+         this.alive[idx] = true;
+      }
+   }
+}

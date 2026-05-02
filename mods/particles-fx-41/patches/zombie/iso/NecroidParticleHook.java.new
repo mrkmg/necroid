@@ -1,0 +1,33 @@
+package zombie.iso;
+
+import zombie.characters.IsoPlayer;
+import zombie.core.SpriteRenderer;
+
+/** Per-frame and per-tile hook glue invoked from IsoCell.performRenderTiles.
+ *  perFrame() advances time + ages out particles (called once per frame).
+ *  enqueueTile(x, y) enqueues a per-tile particle draw via SpriteRenderer's
+ *  texture-draw queue, which guarantees the dispatch runs on the render
+ *  thread in the order it was enqueued — so iso walk order is preserved. */
+public final class NecroidParticleHook {
+   private NecroidParticleHook() {}
+
+   public static void perFrame() {
+      NecroidEmitterRegistry.bootstrap();
+      java.util.List<Particles> all = NecroidEmitterRegistry.emitters();
+      for (int i = 0, n = all.size(); i < n; i++) {
+         Particles p = all.get(i);
+         p.tickFrame();
+         p.ageParticles();
+      }
+      NecroidEmitterRegistry.tickSources();
+      if (!all.isEmpty()) {
+         NecroidParticleWind.update(all.get(0).getShaderTime());
+      }
+   }
+
+   public static void enqueueTile(int worldX, int worldY) {
+      int playerIndex = IsoPlayer.getPlayerIndex();
+      // Encode tile as +1 to disambiguate from vanilla (0,0) calls.
+      SpriteRenderer.instance.drawParticles(playerIndex, worldX + 1, worldY + 1);
+   }
+}

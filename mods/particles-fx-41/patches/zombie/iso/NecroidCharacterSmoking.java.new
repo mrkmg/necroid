@@ -1,0 +1,151 @@
+package zombie.iso;
+
+import org.lwjgl.util.vector.Matrix4f;
+import zombie.GameTime;
+import zombie.characters.IsoGameCharacter;
+import zombie.core.skinnedmodel.animation.AnimationPlayer;
+import zombie.core.skinnedmodel.model.Model;
+import zombie.network.GameServer;
+
+/** Per-character helper that paces cigarette-smoke particles for a character
+ *  performing the smoking timed action.
+ *
+ *  Two distinct emissions:
+ *    1. CIG-TIP WISP — thin vertical column from the lit end of the cigarette
+ *       (left-hand bone). Always running while smoking, but reduced during
+ *       inhale (hand at face). No horizontal motion — heat from the cherry,
+ *       not breath.
+ *    2. EXHALE PLUME — when the hand pulls AWAY from the face, the smoker
+ *       blows out the smoke they just inhaled. Spawn point switches to the
+ *       HEAD bone (mouth) and particles are kicked outward in the character's
+ *       facing direction. Sustained over EXHALE_DURATION_FRAMES so it reads
+ *       as a real plume, not a single burst.
+ *
+ *  Detection: ISEatFoodAction.lua sets the "FoodType" anim variable to the
+ *  item's getEatType(); cigarettes have EatType="Cigarettes".
+ *
+ *  Spawn position uses Model.BoneToWorldCoords — PZ's canonical bone→world
+ *  transform (yaw, X-mirror, Y/Z swap, 1.5×/0.6× per-axis scale), the same
+ *  one drawMuzzleFlash uses. Puff-state detection compares hand-to-head
+ *  distance² in MODEL space (no transform needed for a relative compare).
+ *
+ *  Owner-bound (not tile-anchored): the smoking action permits walking, so
+ *  spawn position must follow the live character every frame. */
+public final class NecroidCharacterSmoking {
+   private static final String CIGARETTE_EAT_TYPE = "Cigarettes";
+   private static final String HAND_BONE          = "Bip01_L_Hand";
+   private static final String HEAD_BONE          = "Bip01_Head";
+   /** Hand-to-head distance² (model units²). Peak puff ≈ 0.016, rest ≈ 0.14. */
+   private static final float  PUFF_DIST_SQ       = 0.025F;
+   /** Idle wisp cadence from the cig tip. ~12 particles/sec at default speed. */
+   private static final float  BASE_RATE          = 0.75F;
+   /** Inhale wisp cadence (hand at face): trickle from the cherry while the
+    *  smoker drags. The mouth side is silent — they're breathing IN. */
+   private static final float  INHALE_RATE        = 0.20F;
+   /** Per-frame cap on wisp emission. */
+   private static final int    MAX_PER_FRAME      = 6;
+
+   /** Exhale plays out over this many ticks. 12 ticks at 60 fps ≈ 0.2s — a
+    *  realistic exhale duration; long enough to read as a flowing plume,
+    *  short enough that a fast second drag doesn't overlap. */
+   private static final int    EXHALE_DURATION    = 12;
+   /** Particles per exhale tick. 4 × 12 = 48 total — dense enough to read as
+    *  a thick mouth cloud against the thin cig wisp. */
+   private static final int    EXHALE_PER_FRAME   = 4;
+
+   /** Small upward bias so cig wisp emerges at the cigarette tip rather than
+    *  the wrist bone origin. World units. */
+   private static final float  CIGARETTE_TIP_LIFT = 0.05F;
+   /** Forward bias from head-bone origin toward where the mouth actually sits
+    *  on the model. The bone is centered in the skull; the mouth is ~10 cm
+    *  forward of that. World units, applied along the facing vector. */
+   private static final float  MOUTH_FORWARD      = 0.08F;
+
+   private final Vector3 scratch         = new Vector3();
+   private float         accum           = 0.0F;
+   private boolean       wasPuffing      = false;
+   private int           exhaleFramesLeft = 0;
+
+   public void tick(IsoGameCharacter c) {
+      if (GameServer.bServer) {
+         this.reset();
+         return;
+      }
+      if (!CIGARETTE_EAT_TYPE.equalsIgnoreCase(c.getVariableString("FoodType"))) {
+         this.reset();
+         return;
+      }
+      AnimationPlayer ap = c.hasAnimationPlayer() ? c.getAnimationPlayer() : null;
+      if (ap == null || ap.modelTransforms == null) {
+         return;
+      }
+      int handIdx = ap.getSkinningBoneIndex(HAND_BONE, -1);
+      int headIdx = ap.getSkinningBoneIndex(HEAD_BONE, -1);
+      if (handIdx < 0 || headIdx < 0
+          || handIdx >= ap.modelTransforms.length
+          || headIdx >= ap.modelTransforms.length) {
+         return;
+      }
+
+      // Puff detection — model-space distance, no transform needed.
+      Matrix4f handMat = ap.modelTransforms[handIdx];
+      Matrix4f headMat = ap.modelTransforms[headIdx];
+      float dxm = handMat.m03 - headMat.m03;
+      float dym = handMat.m13 - headMat.m13;
+      float dzm = handMat.m23 - headMat.m23;
+      boolean isPuffing = (dxm * dxm + dym * dym + dzm * dzm) < PUFF_DIST_SQ;
+
+      // World positions for hand (cig tip) and head (mouth). BoneToWorldCoords
+      // overwrites the scratch each call, so capture hand first.
+      Model.BoneToWorldCoords(c, handIdx, this.scratch);
+      float handX = this.scratch.x;
+      float handY = this.scratch.y;
+      float handZ = this.scratch.z + CIGARETTE_TIP_LIFT;
+
+      Vector2 fwd = c.getForwardDirection();
+      float dirX = fwd.x;
+      float dirY = fwd.y;
+
+      Model.BoneToWorldCoords(c, headIdx, this.scratch);
+      float mouthX = this.scratch.x + dirX * MOUTH_FORWARD;
+      float mouthY = this.scratch.y + dirY * MOUTH_FORWARD;
+      float mouthZ = this.scratch.z;
+
+      // Trigger exhale plume on the puff→idle transition (hand pulling away).
+      if (this.wasPuffing && !isPuffing) {
+         this.exhaleFramesLeft = EXHALE_DURATION;
+      }
+      this.wasPuffing = isPuffing;
+
+      // Exhale plume — staged over multiple frames. progress 0 = first frame
+      // (jet phase, fast/tight), progress 1 = last frame (cloud phase, slow/wide).
+      // Spawning the FIRST frames as a fast jet seeds the leading edge of the
+      // cone; the LAST frames as a slow drift produce the lingering cloud.
+      if (this.exhaleFramesLeft > 0) {
+         int frameIdx = EXHALE_DURATION - this.exhaleFramesLeft;
+         float progress = (EXHALE_DURATION <= 1) ? 0.0F
+                                                 : frameIdx / (float)(EXHALE_DURATION - 1);
+         ParticlesCigaretteSmoke.getInstance().spawnExhale(
+            mouthX, mouthY, mouthZ, EXHALE_PER_FRAME, dirX, dirY, progress);
+         this.exhaleFramesLeft--;
+      }
+
+      // Cig-tip wisp — runs continuously while smoking, reduced during inhale.
+      float rate = isPuffing ? INHALE_RATE : BASE_RATE;
+      this.accum += GameTime.getInstance().getMultiplier() * rate;
+      int wisps = 0;
+      while (this.accum > 1.0F && wisps < MAX_PER_FRAME) {
+         this.accum -= 1.0F;
+         wisps++;
+      }
+      if (wisps > 0) {
+         ParticlesCigaretteSmoke.getInstance().spawnWisp(handX, handY, handZ, wisps);
+      }
+   }
+
+   private void reset() {
+      this.accum = 0.0F;
+      this.wasPuffing = false;
+      this.exhaleFramesLeft = 0;
+   }
+}

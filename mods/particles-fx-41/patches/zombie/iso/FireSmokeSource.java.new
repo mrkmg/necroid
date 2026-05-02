@@ -1,0 +1,66 @@
+package zombie.iso;
+
+import java.lang.ref.WeakReference;
+import zombie.iso.objects.IsoFire;
+
+/** Tile-anchored particle source for an IsoFire. Replaces the per-frame spawn block
+ *  that used to live in IsoFire.update(). Reads current LifeStage / bSmoke from the
+ *  WeakReference each tick — when the IsoFire is GC'd or unloaded, the source
+ *  self-expires and the registry evicts it. */
+public final class FireSmokeSource extends AbstractTileParticleSource {
+   private final WeakReference<IsoFire> ownerRef;
+
+   public FireSmokeSource(IsoFire fire) {
+      super(fire.getSquare().getX(), fire.getSquare().getY(), fire.getSquare().getZ());
+      this.ownerRef = new WeakReference<>(fire);
+   }
+
+   @Override
+   public void tick() {
+      IsoFire fire = this.ownerRef.get();
+      if (fire == null || fire.getSquare() == null) {
+         this.expire();
+         return;
+      }
+
+      // LifeStage drives fire intensity. Vanilla saves (LifeStage - 1) and reloads it
+      // raw, so a freshly-loaded fire's stage is one less than at save (and a freshly
+      // saved-at-stage-0 fire returns as -1). Math.max clamps -1 -> 0 so newly-loaded
+      // fires emit flames immediately on the first frame after chunk load.
+      //   stage 0: ignition       stage 3: peak burn
+      //   stage 1: small          stage 4: dying flames
+      //   stage 2: medium         stage 5+: smoke-only decay
+      int stage = Math.max(0, fire.LifeStage);
+      float flameMul;
+      float flameIntensity;
+      float smokeMul;
+      switch (stage) {
+         case 0:  flameMul = 0.7F; flameIntensity = 0.7F; smokeMul = 0.35F; break;
+         case 1:  flameMul = 1.0F; flameIntensity = 0.9F; smokeMul = 0.50F; break;
+         case 2:  flameMul = 2.5F; flameIntensity = 1.2F; smokeMul = 0.70F; break;
+         case 3:  flameMul = 3.5F; flameIntensity = 1.5F; smokeMul = 1.00F; break;
+         case 4:  flameMul = 1.0F; flameIntensity = 0.8F; smokeMul = 1.10F; break;
+         default: flameMul = 0.0F; flameIntensity = 0.0F; smokeMul = 0.85F; break;
+      }
+      if (fire.bSmoke) flameMul = 0.0F;
+
+      float rate = fire.bSmoke ? 0.3F : 0.6F;
+      this.accum += zombie.GameTime.getInstance().getMultiplier() * rate;
+      int ticks = 0;
+      while (this.accum > 1.0F && ticks < 4) {
+         this.accum -= 1.0F;
+         ticks++;
+      }
+      if (ticks > 0) {
+         float fx = this.tileX + 0.5F;
+         float fy = this.tileY + 0.5F;
+         float fz = this.tileZ + 0.3F;
+         int smokeCount = Math.max(1, Math.round(ticks * smokeMul));
+         ParticlesFireSmoke.getInstance().spawn(fx, fy, fz, smokeCount);
+         if (flameMul > 0.0F) {
+            int flameCount = Math.max(1, Math.round(ticks * 3.0F * flameMul));
+            ParticlesFlame.getInstance().spawn(fx, fy, this.tileZ + 0.05F, flameCount, flameIntensity);
+         }
+      }
+   }
+}

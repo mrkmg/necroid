@@ -1,0 +1,33 @@
+package zombie.iso;
+
+import zombie.GameTime;
+import zombie.characters.IsoGameCharacter;
+import zombie.network.GameServer;
+
+/** Per-character helper that paces burning-flesh flame particles for an OnFire
+ *  IsoGameCharacter. Owner-bound (not a tile-anchored ParticleSource) because
+ *  the character moves while burning — spawn position must follow the live
+ *  character every frame. Stays inert (zero spawns) while !character.isOnFire(). */
+public final class NecroidCharacterBurning {
+   private float accum = 0.0F;
+
+   public void tick(IsoGameCharacter c) {
+      if (GameServer.bServer || !c.isOnFire()) {
+         this.accum = 0.0F;
+         return;
+      }
+      this.accum += GameTime.getInstance().getMultiplier() * 0.7F;
+      int fireTicks = 0;
+      while (this.accum > 1.0F && fireTicks < 4) {
+         this.accum -= 1.0F;
+         fireTicks++;
+      }
+      if (fireTicks > 0) {
+         float cx = c.getX();
+         float cy = c.getY();
+         float czBase = c.getZ();
+         ParticlesFlame.getInstance().spawn(cx, cy, czBase + 0.20F, fireTicks * 2, 0.8F);
+         ParticlesFlame.getInstance().spawn(cx, cy, czBase + 0.30F, fireTicks * 2, 0.7F);
+      }
+   }
+}

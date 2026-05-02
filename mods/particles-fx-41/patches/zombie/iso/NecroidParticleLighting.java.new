@@ -1,0 +1,40 @@
+package zombie.iso;
+
+import zombie.characters.IsoPlayer;
+import zombie.core.textures.ColorInfo;
+import zombie.iso.weather.ClimateManager;
+
+/** Sample per-tile lighting (climate + roof + lamps) for particle tint.
+ *  Falls back to ClimateManager's global day-light strength when the tile is
+ *  null/unloaded. Output packed into the float[] dst at offset {r,g,b,a}. */
+public final class NecroidParticleLighting {
+   private NecroidParticleLighting() {}
+
+   /** Writes 4 floats into dst[off..off+3]: (r, g, b, alphaMul).
+    *  alphaMul is 1.0 here — the tint already encodes brightness, but the slot
+    *  stays reserved for later FOV work to modulate alpha independently. */
+   public static void sampleTint(int tileX, int tileY, int tileZ, float[] dst, int off) {
+      int p = IsoPlayer.getPlayerIndex();
+      IsoCell cell = IsoWorld.instance != null ? IsoWorld.instance.CurrentCell : null;
+      IsoGridSquare sq = cell == null ? null : cell.getGridSquare(tileX, tileY, tileZ);
+      if (sq != null && p >= 0 && p < sq.lighting.length && sq.lighting[p] != null) {
+         ColorInfo li = sq.lighting[p].lightInfo();
+         if (li != null) {
+            dst[off]     = clamp01(li.r);
+            dst[off + 1] = clamp01(li.g);
+            dst[off + 2] = clamp01(li.b);
+            dst[off + 3] = 1.0F;
+            return;
+         }
+      }
+      float g = clamp01(ClimateManager.getInstance().getDayLightStrength());
+      dst[off]     = g;
+      dst[off + 1] = g;
+      dst[off + 2] = g;
+      dst[off + 3] = 1.0F;
+   }
+
+   private static float clamp01(float v) {
+      return v < 0.0F ? 0.0F : (v > 1.0F ? 1.0F : v);
+   }
+}

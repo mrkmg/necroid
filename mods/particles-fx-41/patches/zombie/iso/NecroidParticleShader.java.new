@@ -1,0 +1,27 @@
+package zombie.iso;
+
+import org.lwjgl.opengl.ARBShaderObjects;
+import zombie.core.opengl.Shader;
+import zombie.core.opengl.ShaderProgram;
+
+/** Shared shader wrapper for Necroid particle emitters. Replaces the
+ *  per-emitter *Shader classes that differed only in classname. The three
+ *  uniforms (mvpMatrix, currentTime, lifetime) are the contract every
+ *  Necroid emitter shader satisfies — see ParticlesXxx VERT_SRC files. */
+public final class NecroidParticleShader extends Shader {
+   public int mvpMatrix;
+   public int currentTime;
+   public int lifetime;
+
+   public NecroidParticleShader(String name) {
+      super(name);
+   }
+
+   @Override
+   protected void onCompileSuccess(ShaderProgram p) {
+      int sid = p.getShaderID();
+      this.mvpMatrix = ARBShaderObjects.glGetUniformLocationARB(sid, "mvpMatrix");
+      this.currentTime = ARBShaderObjects.glGetUniformLocationARB(sid, "currentTime");
+      this.lifetime = ARBShaderObjects.glGetUniformLocationARB(sid, "lifetime");
+   }
+}

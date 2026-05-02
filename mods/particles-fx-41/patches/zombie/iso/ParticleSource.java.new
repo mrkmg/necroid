@@ -1,0 +1,20 @@
+package zombie.iso;
+
+/** A tile-anchored stationary particle source. Registered with NecroidEmitterRegistry
+ *  by a vanilla object (IsoFire, IsoFireplace, IsoThumpable...) when it should start
+ *  emitting; expired when it should stop. Per-frame tick decides whether to spawn
+ *  this frame and which emitter to dispatch into.
+ *
+ *  Replaces the old "owner holds *Accum float" pattern — the source carries the
+ *  spawn-pacing state instead of the vanilla object, shrinking the patch surface
+ *  on every patched vanilla class. */
+public interface ParticleSource {
+   /** Per-frame tick. Called once per frame from NecroidParticleHook.perFrame
+    *  AFTER all emitter ticks. Sources MUST NOT do per-tile dispatch — they only
+    *  feed spawn(...) calls to existing Necroid emitters. */
+   void tick();
+
+   /** True once this source should be removed. tick() will not be called again
+    *  after this returns true. The expired source self-evicts from the registry. */
+   boolean isExpired();
+}

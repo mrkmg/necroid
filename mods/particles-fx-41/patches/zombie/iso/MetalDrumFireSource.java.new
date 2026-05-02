@@ -1,0 +1,43 @@
+package zombie.iso;
+
+import java.lang.ref.WeakReference;
+import se.krka.kahlua.vm.KahluaTable;
+import zombie.iso.objects.IsoThumpable;
+
+/** Tile-anchored particle source for a lit MetalDrum. The drum's `isLit` modData
+ *  flag is mutable (player can light/extinguish at will), so the source polls it
+ *  every tick and no-ops when the drum is unlit. Self-expires when the
+ *  WeakReference clears (chunk unload destroys the IsoThumpable). */
+public final class MetalDrumFireSource extends AbstractTileParticleSource {
+   private final WeakReference<IsoThumpable> ownerRef;
+
+   public MetalDrumFireSource(IsoThumpable drum) {
+      super(drum.getSquare().getX(), drum.getSquare().getY(), drum.getSquare().getZ());
+      this.ownerRef = new WeakReference<>(drum);
+   }
+
+   @Override
+   public void tick() {
+      IsoThumpable drum = this.ownerRef.get();
+      if (drum == null || drum.getSquare() == null) {
+         this.expire();
+         return;
+      }
+      KahluaTable md = drum.getModData();
+      if (md == null || !Boolean.TRUE.equals(md.rawget("isLit"))) {
+         return;
+      }
+      this.accum += zombie.GameTime.getInstance().getMultiplier() * 0.6F;
+      int ticks = 0;
+      while (this.accum > 1.0F && ticks < 4) {
+         this.accum -= 1.0F;
+         ticks++;
+      }
+      if (ticks > 0) {
+         float fx = this.tileX + 0.5F;
+         float fy = this.tileY + 0.5F;
+         ParticlesFireSmoke.getInstance().spawn(fx, fy, this.tileZ + 0.55F, ticks);
+         ParticlesFlame.getInstance().spawn(fx, fy, this.tileZ + 0.35F, ticks * 3, 1.0F);
+      }
+   }
+}

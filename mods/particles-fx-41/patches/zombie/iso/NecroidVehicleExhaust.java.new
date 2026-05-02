@@ -1,0 +1,57 @@
+package zombie.iso;
+
+import org.joml.Vector3f;
+import zombie.GameTime;
+import zombie.network.GameServer;
+import zombie.scripting.objects.VehicleScript;
+import zombie.vehicles.BaseVehicle;
+
+/** Per-vehicle helper that paces exhaust puffs and computes the tailpipe world
+ *  position from the vehicle's current pose (extents + COM + forward vector).
+ *  Owned 1-to-1 by BaseVehicle so its update() patch becomes a single delegate
+ *  call — the only state on the vanilla class is one final field reference. */
+public final class NecroidVehicleExhaust {
+   private float accum = 0.0F;
+
+   public void tick(BaseVehicle v) {
+      if (GameServer.bServer) return;
+      if (v.engineState != BaseVehicle.engineStateTypes.Running) {
+         this.accum = 0.0F;
+         return;
+      }
+      // engineSpeed: ~800 idle, ~5000 revving. Rate ~5 Hz idle, ~12 Hz revving.
+      float rate = 4.0F + (float)(v.engineSpeed / 800.0);
+      this.accum += GameTime.getInstance().getMultiplier() * rate * 0.0166F;
+      int spawnCount = 0;
+      while (this.accum > 1.0F && spawnCount < 4) {
+         this.accum -= 1.0F;
+         spawnCount++;
+      }
+      if (spawnCount == 0) return;
+
+      VehicleScript vs = v.getScript();
+      if (vs == null) return;
+      // Vehicle local frame: x = lateral (right is +), y = up, z = longitudinal (front is +).
+      // Tailpipe = rear edge (z = com.z - extents.z/2 - small overhang) + lateral offset
+      // to the passenger side (x = com.x + extents.x * sideFrac).
+      Vector3f ext = vs.getExtents();
+      Vector3f com = vs.getCenterOfMassOffset();
+      if (ext == null || com == null) return;
+      float sideFrac = 0.30F;
+      float rearOverhang = 0.10F;
+      float localX = com.x + ext.x * sideFrac;
+      float localY = 0.0F;
+      float localZ = com.z - ext.z * 0.5F - rearOverhang;
+      Vector3f world = v.getWorldPos(localX, localY, localZ, BaseVehicle.TL_vector3f_pool.get().alloc());
+      float spawnX = world.x;
+      float spawnY = world.y;
+      BaseVehicle.TL_vector3f_pool.get().release(world);
+      Vector3f fwd = v.getForwardVector(BaseVehicle.TL_vector3f_pool.get().alloc());
+      float fx = fwd.x;
+      float fy = fwd.z;
+      BaseVehicle.TL_vector3f_pool.get().release(fwd);
+      float mag = (float)Math.sqrt(fx * fx + fy * fy);
+      if (mag > 1.0E-4F) { fx /= mag; fy /= mag; }
+      ParticlesExhaust.getInstance().spawn(spawnX, spawnY, v.getZ(), -fx, -fy, spawnCount);
+   }
+}

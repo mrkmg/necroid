@@ -1,0 +1,33 @@
+diff --git a/zombie/core/opengl/ShaderUnit.java b/zombie/core/opengl/ShaderUnit.java
+index 207d477..71b2a6d 100644
+--- a/zombie/core/opengl/ShaderUnit.java
++++ b/zombie/core/opengl/ShaderUnit.java
+@@ -38,7 +38,7 @@ public final class ShaderUnit {
+       }
+ 
+       int var1 = getGlType(this.m_unitType);
+-      ArrayList var2 = new ArrayList();
++      ArrayList<String> var2 = new ArrayList<String>();
+       String var3 = this.loadShaderFile(this.m_fileName, var2);
+       if (var3 == null) {
+          return false;
+@@ -155,6 +155,10 @@ public final class ShaderUnit {
+    }
+ 
+    private String preProcessShaderFile(String var1, ArrayList<String> var2) {
++      String inlineSrc = zombie.iso.NecroidShaderRegistry.getOverride(var1);
++      if (inlineSrc != null) {
++         return inlineSrc;
++      }
+       StringBuilder var3 = new StringBuilder();
+ 
+       try (
+@@ -194,7 +198,7 @@ public final class ShaderUnit {
+             return false;
+          } else {
+             String var9 = var7 + "/" + var8;
+-            ArrayList var10 = new ArrayList();
++            ArrayList<String> var10 = new ArrayList<String>();
+ 
+             for (String var14 : var9.split("/")) {
+                if (!var14.equals(".") && !var14.isEmpty()) {

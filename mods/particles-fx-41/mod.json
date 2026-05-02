@@ -1,0 +1,13 @@
+{
+  "name": "particles-fx-41",
+  "clientOnly": true,
+  "description": "Particle effects: muzzle flash, gun smoke, car exhaust, fire smoke, cigarette smoke",
+  "category": "ui",
+  "version": "0.2.0",
+  "expectedVersion": "41.78.19",
+  "createdAt": "2026-05-01T04:12:07.056256Z",
+  "updatedAt": "2026-05-02T19:35:56.201819Z",
+  "pristineSnapshot": "223208bebcbd72d017242be491797d5bd8d8255439fdc189ad02def4b1464c18",
+  "dependencies": [],
+  "incompatibleWith": []
+}

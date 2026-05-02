@@ -1,0 +1,296 @@
+diff --git a/zombie/iso/Particles.java b/zombie/iso/Particles.java
+index ca2c944..491bec8 100644
+--- a/zombie/iso/Particles.java
++++ b/zombie/iso/Particles.java
+@@ -3,6 +3,7 @@ package zombie.iso;
+ import java.nio.ByteBuffer;
+ import java.nio.FloatBuffer;
+ import java.util.ArrayList;
++import java.util.HashSet;
+ import org.lwjgl.opengl.GL;
+ import org.lwjgl.opengl.GL20;
+ import org.lwjgl.opengl.GL31;
+@@ -29,6 +30,55 @@ public abstract class Particles {
+    private Matrix4f mvpMatrix;
+    private FloatBuffer floatBuffer = BufferUtils.createFloatBuffer(16);
+ 
++   /** Configuration for a Necroid emitter. Passed to the Particles(Config) constructor.
++    *  Storage arrays, blend mode, shader registration, and stride are all derived from
++    *  this — the subclass only adds GLSL sources and a spawn(...) method. */
++   public static final class Config {
++      public final int     maxParticles;
++      public final float   lifetime;
++      public final boolean usesTint;
++      public final int     blendSrc;
++      public final int     blendDst;
++      public final String  shaderName;
++      public final String  vertSrc;
++      public final String  fragSrc;
++
++      public Config(int maxParticles, float lifetime, boolean usesTint,
++                    int blendSrc, int blendDst,
++                    String shaderName, String vertSrc, String fragSrc) {
++         this.maxParticles = maxParticles;
++         this.lifetime     = lifetime;
++         this.usesTint     = usesTint;
++         this.blendSrc     = blendSrc;
++         this.blendDst     = blendDst;
++         this.shaderName   = shaderName;
++         this.vertSrc      = vertSrc;
++         this.fragSrc      = fragSrc;
++      }
++   }
++
++   // Storage shared by all Necroid emitters. Vanilla Particles* (no-arg ctor) leaves
++   // these at default null/0; their own arrays + lifecycle methods take over via override.
++   protected int     necroidMaxParticles = 0;
++   protected float   necroidLifetime = 0.0F;
++   protected boolean necroidUsesTint = false;
++   protected int     necroidBlendSrc = 770;
++   protected int     necroidBlendDst = 1;
++   protected int     necroidFloatsPerParticle = 0;
++   protected int     necroidStride = 0;
++   protected String  necroidShaderName = null;
++   protected float[] x, y, z, vx, vy, vz, spawnT, hash;
++   protected float[] spawnWindAccumX, spawnWindAccumY;
++   protected int[]   tileX, tileY;
++   protected boolean[] alive;
++   protected int     writeIdx = 0;
++   protected int     liveCount = 0;
++   protected int     dataBuffer = 0;
++   protected ByteBuffer particleData;
++   protected NecroidParticleShader necroidShader;
++   protected final HashSet<Long> activeTiles = new HashSet<>();
++   protected final float[] tintScratch = new float[4];
++
+    public static synchronized int addParticle(Particles var0) {
+       if (ParticleSystems.size() == ParticleSystemsCount) {
+          ParticleSystems.add(var0);
+@@ -116,8 +166,15 @@ public abstract class Particles {
+       this.destroyParticleBuffers();
+    }
+ 
+-   public abstract void reloadShader();
++   public void reloadShader() {
++      if (this.necroidShaderName != null) {
++         RenderThread.invokeOnRenderContext(() -> {
++            this.necroidShader = new NecroidParticleShader(this.necroidShaderName);
++         });
++      }
++   }
+ 
++   /** Vanilla no-arg path. Necroid emitters use Particles(Config) instead. */
+    public Particles() {
+       RenderThread.invokeOnRenderContext(() -> {
+          init();
+@@ -128,6 +185,42 @@ public abstract class Particles {
+       this.id = addParticle(this);
+    }
+ 
++   /** Necroid emitter path. Allocates storage, registers shader sources, then runs
++    *  the same render-thread setup as the no-arg path. */
++   protected Particles(Config cfg) {
++      this.necroidMaxParticles      = cfg.maxParticles;
++      this.necroidLifetime          = cfg.lifetime;
++      this.necroidUsesTint          = cfg.usesTint;
++      this.necroidBlendSrc          = cfg.blendSrc;
++      this.necroidBlendDst          = cfg.blendDst;
++      this.necroidShaderName        = cfg.shaderName;
++      this.necroidFloatsPerParticle = cfg.usesTint ? 8 : 4;
++      this.necroidStride            = this.necroidFloatsPerParticle * 4;
++      int n = cfg.maxParticles;
++      this.x = new float[n];
++      this.y = new float[n];
++      this.z = new float[n];
++      this.vx = new float[n];
++      this.vy = new float[n];
++      this.vz = new float[n];
++      this.spawnT = new float[n];
++      this.hash = new float[n];
++      this.tileX = new int[n];
++      this.tileY = new int[n];
++      this.spawnWindAccumX = new float[n];
++      this.spawnWindAccumY = new float[n];
++      this.alive = new boolean[n];
++      this.particleData = BufferUtils.createByteBuffer(n * this.necroidStride);
++      NecroidShaderRegistry.register(cfg.shaderName, cfg.vertSrc, cfg.fragSrc);
++      RenderThread.invokeOnRenderContext(() -> {
++         init();
++         this.initBuffers();
++         this.projectionMatrix = new Matrix4f();
++      });
++      this.reloadShader();
++      this.id = addParticle(this);
++   }
++
+    private static Matrix4f orthogonal(float var0, float var1, float var2, float var3, float var4, float var5) {
+       Matrix4f var6 = new Matrix4f();
+       var6.setIdentity();
+@@ -147,6 +240,13 @@ public abstract class Particles {
+       SpriteRenderer.instance.drawParticles(var1, 0, 0);
+    }
+ 
++   public void tickFrame() {
++      if (!zombie.GameTime.isGamePaused()) {
++         this.ParticlesTime = this.ParticlesTime + 0.0166F * zombie.GameTime.getInstance().getMultiplier();
++      }
++      this.updateMVPMatrix();
++   }
++
+    private void updateMVPMatrix() {
+       this.projectionMatrix = orthogonal(
+          IsoCamera.frameState.OffX,
+@@ -203,11 +303,149 @@ public abstract class Particles {
+       return this.ParticlesTime;
+    }
+ 
+-   abstract void createParticleBuffers();
++   void createParticleBuffers() {
++      if (this.necroidMaxParticles > 0) {
++         this.dataBuffer = funcs.glGenBuffers();
++         funcs.glBindBuffer(34962, this.dataBuffer);
++         funcs.glBufferData(34962, this.necroidMaxParticles * this.necroidStride, 35044);
++      }
++   }
+ 
+-   abstract void destroyParticleBuffers();
++   void destroyParticleBuffers() {
++      if (this.necroidMaxParticles > 0) {
++         funcs.glDeleteBuffers(this.dataBuffer);
++      }
++   }
++
++   void updateParticleParams() {
++      if (this.necroidMaxParticles == 0) return;
++      float t = this.getShaderTime();
++      this.particleData.clear();
++      this.liveCount = 0;
++      for (int i = 0; i < this.necroidMaxParticles; i++) {
++         if (!this.alive[i]) continue;
++         float age = t - this.spawnT[i];
++         if (age >= this.necroidLifetime || age < 0.0F) {
++            this.alive[i] = false;
++            continue;
++         }
++         this.writeParticleSlot(i, age);
++         this.liveCount++;
++      }
++      this.particleData.flip();
++
++      funcs.glBindBuffer(34962, this.dataBuffer);
++      funcs.glBufferData(34962, this.particleData, 35040);
++      this.bindAttribPointers();
++   }
++
++   int getParticleCount() {
++      return this.liveCount;
++   }
+ 
+-   abstract void updateParticleParams();
++   /** Per-tile dispatch entry point used by ModelManager.RenderParticles. */
++   public void getGeometryForTile(int tx, int ty) {
++      if (this.necroidMaxParticles == 0) return;
++      float t = this.getShaderTime();
++      this.particleData.clear();
++      int count = 0;
++      for (int i = 0; i < this.necroidMaxParticles; i++) {
++         if (!this.alive[i]) continue;
++         float age = t - this.spawnT[i];
++         if (age >= this.necroidLifetime || age < 0.0F) continue;
++         if (this.tileX[i] != tx || this.tileY[i] != ty) continue;
++         this.writeParticleSlot(i, age);
++         count++;
++      }
++      if (count == 0) return;
++      this.particleData.flip();
++
++      funcs.glBindBuffer(34962, this.dataBuffer);
++      funcs.glBufferData(34962, this.particleData, 35040);
++      this.bindAttribPointers();
++
++      GL20.glEnableVertexAttribArray(0);
++      funcs.glBindBuffer(34962, this.particle_vertex_buffer);
++      GL20.glVertexAttribPointer(0, 3, 5126, false, 0, 0L);
++      GL33.glVertexAttribDivisor(0, 0);
++      GL31.glDrawArraysInstanced(5, 0, 4, count);
++   }
++
++   /** Compute current world position of particle i (with wind drift) and write the
++    *  GPU-instance-data block (4 floats: screenX, screenY, spawnT, hash; +4 if tint). */
++   private void writeParticleSlot(int i, float age) {
++      float wf = this.windFactor(i);
++      float wxNow = this.x[i] + this.vx[i] * age + (NecroidParticleWind.accumX() - this.spawnWindAccumX[i]) * wf;
++      float wyNow = this.y[i] + this.vy[i] * age + (NecroidParticleWind.accumY() - this.spawnWindAccumY[i]) * wf;
++      float wzNow = this.z[i] + this.vz[i] * age;
++      float screenX = IsoUtils.XToScreen(wxNow, wyNow, wzNow, 0);
++      float screenY = IsoUtils.YToScreen(wxNow, wyNow, wzNow, 0);
++      this.particleData.putFloat(screenX);
++      this.particleData.putFloat(screenY);
++      this.particleData.putFloat(this.spawnT[i]);
++      this.particleData.putFloat(this.hash[i]);
++      if (this.necroidUsesTint) {
++         NecroidParticleLighting.sampleTint(this.tileX[i], this.tileY[i], (int)Math.floor(this.z[i]), this.tintScratch, 0);
++         this.particleData.putFloat(this.tintScratch[0]);
++         this.particleData.putFloat(this.tintScratch[1]);
++         this.particleData.putFloat(this.tintScratch[2]);
++         this.particleData.putFloat(this.tintScratch[3]);
++      }
++   }
++
++   private void bindAttribPointers() {
++      GL20.glEnableVertexAttribArray(1);
++      GL20.glVertexAttribPointer(1, 4, 5126, false, this.necroidStride, 0L);
++      GL33.glVertexAttribDivisor(1, 1);
++      if (this.necroidUsesTint) {
++         GL20.glEnableVertexAttribArray(2);
++         GL20.glVertexAttribPointer(2, 4, 5126, false, this.necroidStride, 16L);
++         GL33.glVertexAttribDivisor(2, 1);
++      }
++   }
++
++   /** Per-particle wind multiplier. Default 1.0 (full wind). Muzzle returns 0 (no wind);
++    *  Flame splits 0.22F core / 1.0F spark via hash. */
++   protected float windFactor(int i) {
++      return 1.0F;
++   }
++
++   public void ageParticles() {
++      if (this.necroidMaxParticles == 0) return;
++      float t = this.getShaderTime();
++      this.activeTiles.clear();
++      for (int i = 0; i < this.necroidMaxParticles; i++) {
++         if (!this.alive[i]) continue;
++         float age = t - this.spawnT[i];
++         if (age >= this.necroidLifetime || age < 0.0F) {
++            this.alive[i] = false;
++         } else {
++            this.activeTiles.add(packKey(this.tileX[i], this.tileY[i]));
++         }
++      }
++   }
++
++   protected static long packKey(int tx, int ty) {
++      return ((long)tx << 32) | ((long)ty & 0xFFFFFFFFL);
++   }
++
++   public boolean hasTile(int tx, int ty) {
++      return this.activeTiles.contains(packKey(tx, ty));
++   }
++
++   /** GL11 blend func source factor for this emitter (assigned via Config; default 770). */
++   public int getBlendSrc() { return this.necroidBlendSrc; }
++
++   /** GL11 blend func dst factor (assigned via Config; default 1 = additive). */
++   public int getBlendDst() { return this.necroidBlendDst; }
++
++   /** Necroid shader handle. Vanilla Particles* return null and are skipped by the
++    *  registry-driven render loop in ModelManager.RenderParticles. */
++   public NecroidParticleShader getShader() { return this.necroidShader; }
++
++   public int getShaderID() {
++      return this.necroidShader == null ? 0 : this.necroidShader.getID();
++   }
+ 
+-   abstract int getParticleCount();
++   public float getLifetime() { return this.necroidLifetime; }
+ }

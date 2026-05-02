@@ -1,0 +1,68 @@
+diff --git a/zombie/iso/objects/IsoFireplace.java b/zombie/iso/objects/IsoFireplace.java
+index e64ef49..7fe598a 100644
+--- a/zombie/iso/objects/IsoFireplace.java
++++ b/zombie/iso/objects/IsoFireplace.java
+@@ -31,6 +31,7 @@ public class IsoFireplace extends IsoObject {
+    protected float LastUpdateTime = -1.0F;
+    protected float MinuteAccumulator = 0.0F;
+    protected int MinutesSinceExtinguished = -1;
++   private zombie.iso.ParticleSource necroidSource;
+    protected IsoSprite FuelSprite = null;
+    protected int FuelSpriteIndex = -1;
+    protected int FireSpriteIndex = -1;
+@@ -178,43 +179,7 @@ public class IsoFireplace extends IsoObject {
+    private void updateFireSprite() {
+       if (this.container == null || !"woodstove".equals(this.container.getType())) {
+          if (this.isLit()) {
+-            if (this.FireSpriteIndex == -1) {
+-               DebugLog.log(DebugType.Fireplace, "fireplace: added fire sprite");
+-               this.FireSpriteIndex = this.AttachedAnimSprite != null ? this.AttachedAnimSprite.size() : 0;
+-               if (this.getProperties() != null && this.getProperties().Is(IsoFlagType.collideW)) {
+-                  this.AttachAnim(
+-                     "Fire",
+-                     "01",
+-                     4,
+-                     IsoFireManager.FireAnimDelay,
+-                     -11 * Core.TileScale,
+-                     -84 * Core.TileScale,
+-                     true,
+-                     0,
+-                     false,
+-                     0.7F,
+-                     IsoFireManager.FireTintMod
+-                  );
+-               } else {
+-                  this.AttachAnim(
+-                     "Fire",
+-                     "01",
+-                     4,
+-                     IsoFireManager.FireAnimDelay,
+-                     -35 * Core.TileScale,
+-                     -84 * Core.TileScale,
+-                     true,
+-                     0,
+-                     false,
+-                     0.7F,
+-                     IsoFireManager.FireTintMod
+-                  );
+-               }
+-
+-               if (Core.TileScale == 1) {
+-                  this.AttachedAnimSprite.get(this.FireSpriteIndex).setScale(0.5F, 0.5F);
+-               }
+-            }
++            // Particles replace the vanilla "Fire" sprite — leave FireSpriteIndex at -1.
+          } else if (this.FireSpriteIndex != -1) {
+             DebugLog.log(DebugType.Fireplace, "fireplace: removed fire sprite");
+             this.AttachedAnimSprite.remove(this.FireSpriteIndex);
+@@ -340,6 +305,10 @@ public class IsoFireplace extends IsoObject {
+       this.updateLightSource();
+       this.updateHeatSource();
+       this.updateSound();
++      if (!GameServer.bServer && this.square != null && this.necroidSource == null) {
++         this.necroidSource = new zombie.iso.FireplaceFlameSource(this);
++         zombie.iso.NecroidEmitterRegistry.registerSource(this.necroidSource);
++      }
+       if (this.AttachedAnimSprite != null && !this.AttachedAnimSprite.isEmpty()) {
+          int var7 = this.AttachedAnimSprite.size();
+ 

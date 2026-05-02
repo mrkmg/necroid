@@ -1,0 +1,133 @@
+diff --git a/zombie/characters/IsoGameCharacter.java b/zombie/characters/IsoGameCharacter.java
+index 6358056..7e0643e 100644
+--- a/zombie/characters/IsoGameCharacter.java
++++ b/zombie/characters/IsoGameCharacter.java
+@@ -425,6 +425,8 @@ public abstract class IsoGameCharacter
+    protected InventoryItem leftHandItem;
+    private int NextWander = 200;
+    private boolean OnFire = false;
++   private final zombie.iso.NecroidCharacterBurning necroidBurning = new zombie.iso.NecroidCharacterBurning();
++   private final zombie.iso.NecroidCharacterSmoking necroidSmoking = new zombie.iso.NecroidCharacterSmoking();
+    private int pathIndex = 0;
+    protected InventoryItem rightHandItem;
+    protected Color SpeakColour = new Color(1.0F, 1.0F, 1.0F, 1.0F);
+@@ -6758,31 +6760,12 @@ public abstract class IsoGameCharacter
+    public void SetOnFire() {
+       if (!this.OnFire) {
+          this.setOnFire(true);
+-         float var1 = Core.TileScale;
+-         this.AttachAnim(
+-            "Fire",
+-            "01",
+-            4,
+-            IsoFireManager.FireAnimDelay,
+-            (int)(-(this.offsetX + 1.0F * var1)) + (8 - Rand.Next(16)),
+-            (int)(-(this.offsetY + -89.0F * var1)) + (int)((10 + Rand.Next(20)) * var1),
+-            true,
+-            0,
+-            false,
+-            0.7F,
+-            IsoFireManager.FireTintMod
+-         );
+          IsoFireManager.AddBurningCharacter(this);
+          int var2 = Rand.Next(BodyPartType.ToIndex(BodyPartType.Hand_L), BodyPartType.ToIndex(BodyPartType.MAX));
+          if (this instanceof IsoPlayer) {
+             this.getBodyDamage().getBodyParts().get(var2).setBurned();
+          }
+ 
+-         if (var1 == 2.0F) {
+-            int var3 = this.AttachedAnimSprite.size() - 1;
+-            this.AttachedAnimSprite.get(var3).setScale(var1, var1);
+-         }
+-
+          if (!this.getEmitter().isPlaying("BurningFlesh")) {
+             this.getEmitter().playSoundImpl("BurningFlesh", this);
+          }
+@@ -7319,6 +7302,9 @@ public abstract class IsoGameCharacter
+                this.setRecoilDelay(this.getRecoilDelay() - 0.625F * zombie.GameTime.getInstance().getMultiplier());
+             }
+ 
++            this.necroidBurning.tick(this);
++            this.necroidSmoking.tick(this);
++
+             this.sx = 0.0F;
+             this.sy = 0.0F;
+             if (this.current.getRoom() != null && this.current.getRoom().building.def.bAlarmed && (!this.isZombie() || Core.bTutorial) && !GameClient.bClient) {
+@@ -8898,10 +8884,10 @@ public abstract class IsoGameCharacter
+                var3.put((byte)(Boolean.TRUE.equals(var8) ? 1 : 0));
+             }
+          } else if (!"wakeUp".equals(var1) && "mechanicActionDone".equals(var1) && var2 != null) {
+-            var3.put((byte)(var2.rawget("success") ? 1 : 0));
++            var3.put((byte)(Boolean.TRUE.equals(var2.rawget("success")) ? 1 : 0));
+             var3.putInt(((Double)var2.rawget("vehicleId")).intValue());
+             zombie.GameWindow.WriteString(var3, (String)var2.rawget("partId"));
+-            var3.put((byte)(var2.rawget("installing") ? 1 : 0));
++            var3.put((byte)(Boolean.TRUE.equals(var2.rawget("installing")) ? 1 : 0));
+             var3.putLong(((Double)var2.rawget("itemId")).longValue());
+          }
+       }
+@@ -9551,7 +9537,7 @@ public abstract class IsoGameCharacter
+ 
+    public void applyTraits(ArrayList<String> var1) {
+       if (var1 != null) {
+-         HashMap var2 = new HashMap();
++         HashMap<PerkFactory.Perk, Integer> var2 = new HashMap<PerkFactory.Perk, Integer>();
+          var2.put(PerkFactory.Perks.Fitness, 5);
+          var2.put(PerkFactory.Perks.Strength, 5);
+ 
+@@ -9564,9 +9550,9 @@ public abstract class IsoGameCharacter
+                      this.getTraits().add(var4);
+                   }
+ 
+-                  HashMap var6 = var5.getXPBoostMap();
++                  HashMap<PerkFactory.Perk, Integer> var6 = var5.getXPBoostMap();
+                   if (var6 != null) {
+-                     for (Entry var8 : var6.entrySet()) {
++                     for (Entry<PerkFactory.Perk, Integer> var8 : var6.entrySet()) {
+                         PerkFactory.Perk var9 = (PerkFactory.Perk)var8.getKey();
+                         int var10 = (Integer)var8.getValue();
+                         if (var2.containsKey(var9)) {
+@@ -9584,9 +9570,9 @@ public abstract class IsoGameCharacter
+             ((IsoPlayer)this).getNutrition().applyWeightFromTraits();
+          }
+ 
+-         HashMap var11 = this.getDescriptor().getXPBoostMap();
++         HashMap<PerkFactory.Perk, Integer> var11 = this.getDescriptor().getXPBoostMap();
+ 
+-         for (Entry var14 : var11.entrySet()) {
++         for (Entry<PerkFactory.Perk, Integer> var14 : var11.entrySet()) {
+             PerkFactory.Perk var16 = (PerkFactory.Perk)var14.getKey();
+             int var18 = (Integer)var14.getValue();
+             if (var2.containsKey(var16)) {
+@@ -9596,9 +9582,9 @@ public abstract class IsoGameCharacter
+             var2.put(var16, var18);
+          }
+ 
+-         for (Entry var15 : var2.entrySet()) {
+-            PerkFactory.Perk var17 = (PerkFactory.Perk)var15.getKey();
+-            int var19 = (Integer)var15.getValue();
++         for (Entry<PerkFactory.Perk, Integer> var15 : var2.entrySet()) {
++            PerkFactory.Perk var17 = var15.getKey();
++            int var19 = var15.getValue();
+             var19 = Math.max(0, var19);
+             var19 = Math.min(10, var19);
+             this.getDescriptor().getXPBoostMap().put(var17, Math.min(3, var19));
+@@ -11223,6 +11209,9 @@ public abstract class IsoGameCharacter
+       IsoLightSource var2 = new IsoLightSource((int)this.getX(), (int)this.getY(), (int)this.getZ(), 0.8F * var1, 0.8F * var1, 0.6F * var1, 18, 6);
+       IsoWorld.instance.CurrentCell.getLamppostPositions().add(var2);
+       this.m_muzzleFlash = System.currentTimeMillis();
++      Vector2 fwd = this.getForwardDirection();
++      zombie.iso.ParticlesMuzzle.getInstance().spawn(this.getX(), this.getY(), this.getZ() + 0.5F, fwd.x, fwd.y, 5);
++      zombie.iso.ParticlesGunSmoke.getInstance().spawn(this.getX(), this.getY(), this.getZ() + 0.5F, fwd.x, fwd.y, 8);
+    }
+ 
+    public boolean isMuzzleFlash() {
+@@ -12000,7 +11989,7 @@ public abstract class IsoGameCharacter
+       if (this.getActionContext() != null && this.getAnimationPlayer() != null && this.getAdvancedAnimator() != null) {
+          ActionState var1 = this.getActionContext().getNextState();
+          if (var1 != null && !StringUtils.isNullOrEmpty(var1.getName())) {
+-            ArrayList var2 = new ArrayList();
++            ArrayList<AnimNode> var2 = new ArrayList<AnimNode>();
+             this.getAdvancedAnimator().animSet.GetState(var1.getName()).getAnimNodes(this, var2);
+ 
+             for (AnimNode var4 : var2) {

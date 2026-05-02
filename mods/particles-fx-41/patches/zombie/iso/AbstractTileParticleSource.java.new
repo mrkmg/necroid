@@ -1,0 +1,30 @@
+package zombie.iso;
+
+/** Base for tile-anchored particle sources. Carries the dt accumulator that paces
+ *  spawns at fixed per-second rates, and tracks a one-shot expired flag.
+ *  Subclasses (FireSmokeSource, FireplaceFlameSource, MetalDrumFireSource) hold
+ *  a WeakReference to the vanilla owner object so the source self-expires if the
+ *  owner is unloaded without explicitly calling expire(). */
+public abstract class AbstractTileParticleSource implements ParticleSource {
+   protected final int tileX;
+   protected final int tileY;
+   protected final int tileZ;
+   /** Per-second spawn-rate accumulator. Add dt each tick(); when >= 1.0/rate, emit. */
+   protected float accum;
+   private boolean expired;
+
+   protected AbstractTileParticleSource(int tileX, int tileY, int tileZ) {
+      this.tileX = tileX;
+      this.tileY = tileY;
+      this.tileZ = tileZ;
+   }
+
+   public final void expire() {
+      this.expired = true;
+   }
+
+   @Override
+   public final boolean isExpired() {
+      return this.expired;
+   }
+}

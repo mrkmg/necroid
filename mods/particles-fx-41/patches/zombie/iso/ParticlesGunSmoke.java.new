@@ -1,0 +1,106 @@
+package zombie.iso;
+
+import zombie.core.Rand;
+
+public final class ParticlesGunSmoke extends Particles {
+   private static final int    MAX_PARTICLES = 256;
+   private static final float  LIFETIME      = 1.5F;
+   private static final String SHADER_NAME   = "necroid_gunsmoke";
+
+   private static final String VERT_SRC =
+      "#version 330\n" +
+      "uniform mat4 mvpMatrix;\n" +
+      "uniform float currentTime;\n" +
+      "uniform float lifetime;\n" +
+      "layout (location = 0) in vec3 Vertex;\n" +
+      "layout (location = 1) in vec4 Particule;\n" +
+      "layout (location = 2) in vec4 Tint;\n" +
+      "varying vec2 texCoord;\n" +
+      "varying float alpha;\n" +
+      "varying float life;\n" +
+      "varying vec4 vTint;\n" +
+      "void main() {\n" +
+      "   vTint = Tint;\n" +
+      "   float age = currentTime - Particule.z;\n" +
+      "   life = age / lifetime;\n" +
+      "   if (life < 0.0 || life >= 1.0) {\n" +
+      "      gl_Position = vec4(2.0, 2.0, 2.0, 1.0);\n" +
+      "      alpha = 0.0;\n" +
+      "      return;\n" +
+      "   }\n" +
+      "   float size = 14.0 + life * 26.0;\n" +
+      "   float rot = Particule.w * 6.2831853 + life * 0.8;\n" +
+      "   float c = cos(rot); float s = sin(rot);\n" +
+      "   vec2 v = vec2(Vertex.x * c - Vertex.y * s, Vertex.x * s + Vertex.y * c);\n" +
+      "   gl_Position = mvpMatrix * vec4(Particule.x + v.x * size, Particule.y + v.y * size, 0.0, 1.0);\n" +
+      "   texCoord = Vertex.xy * 0.5 + 0.5;\n" +
+      "   float fadeIn = clamp(life * 6.0, 0.0, 1.0);\n" +
+      "   float fadeOut = 1.0 - life;\n" +
+      "   alpha = fadeIn * fadeOut * fadeOut;\n" +
+      "}\n";
+
+   private static final String FRAG_SRC =
+      "#version 330\n" +
+      "varying vec2 texCoord;\n" +
+      "varying float alpha;\n" +
+      "varying float life;\n" +
+      "varying vec4 vTint;\n" +
+      "void main() {\n" +
+      "   vec2 d = texCoord - vec2(0.5);\n" +
+      "   float r = dot(d, d) * 4.0;\n" +
+      "   float intensity = max(0.0, 1.0 - r);\n" +
+      "   intensity = pow(intensity, 1.5);\n" +
+      "   float shade = 0.55 - life * 0.25;\n" +
+      "   vec3 col = vec3(shade) * vTint.rgb;\n" +
+      "   gl_FragColor = vec4(col, intensity * alpha * 0.55 * vTint.a);\n" +
+      "}\n";
+
+   private static ParticlesGunSmoke instance;
+
+   public static synchronized ParticlesGunSmoke getInstance() {
+      if (instance == null) {
+         instance = new ParticlesGunSmoke();
+      }
+      return instance;
+   }
+
+   private ParticlesGunSmoke() {
+      super(new Particles.Config(MAX_PARTICLES, LIFETIME,
+         /*usesTint=*/true, /*blendSrc=*/770, /*blendDst=*/771,
+         SHADER_NAME, VERT_SRC, FRAG_SRC));
+   }
+
+   /** Spawn a smoke puff burst near (worldX + dirX*forward, worldY + dirY*forward, worldZ).
+    *  Drifts slowly outward + slight upward via z-velocity faked into y. */
+   public void spawn(float worldX, float worldY, float worldZ, float dirX, float dirY, int count) {
+      // Dispatch tile = player's integer tile (always in MinusFloorCharacters). Visual position
+      // is offset forward to gun tip; visual drift is decoupled from dispatch routing.
+      int dispatchTileX = (int)worldX;
+      int dispatchTileY = (int)worldY;
+      float forward = 0.55F;
+      float wx = worldX + dirX * forward;
+      float wy = worldY + dirY * forward;
+      float t = this.getShaderTime();
+      // ~1 tile/sec outward = ~1.5 tile drift over 1.5s lifetime
+      float speed = 1.0F;
+      for (int i = 0; i < count; i++) {
+         int idx = this.writeIdx;
+         this.writeIdx = (this.writeIdx + 1) % MAX_PARTICLES;
+         this.x[idx] = wx + Rand.Next(-0.08F, 0.08F);
+         this.y[idx] = wy + Rand.Next(-0.08F, 0.08F);
+         this.z[idx] = worldZ;
+         this.tileX[idx] = dispatchTileX;
+         this.tileY[idx] = dispatchTileY;
+         this.spawnT[idx] = t + i * 0.02F;
+         this.hash[idx] = Rand.Next(0.0F, 1.0F);
+         float jx = Rand.Next(-0.5F, 0.5F);
+         float jy = Rand.Next(-0.5F, 0.5F);
+         this.vx[idx] = (dirX * 0.6F + jx) * speed;
+         this.vy[idx] = (dirY * 0.6F + jy) * speed;
+         this.vz[idx] = Rand.Next(0.6F, 1.0F); // smoke rises in world Z
+         this.spawnWindAccumX[idx] = NecroidParticleWind.accumX();
+         this.spawnWindAccumY[idx] = NecroidParticleWind.accumY();
+         this.alive[idx] = true;
+      }
+   }
+}

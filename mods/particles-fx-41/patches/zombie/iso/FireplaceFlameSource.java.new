@@ -1,0 +1,55 @@
+package zombie.iso;
+
+import java.lang.ref.WeakReference;
+import zombie.iso.SpriteDetails.IsoFlagType;
+import zombie.iso.objects.IsoFireplace;
+
+/** Tile-anchored particle source for an IsoFireplace. The fireplace's mount
+ *  orientation (collideN vs collideW wall) determines flame offset and is fixed
+ *  for the object's lifetime — resolved once at construction. Per-tick reads
+ *  isLit() / getFuelAmount() from the WeakReference; self-expires when the
+ *  fireplace is GC'd or its square is gone. */
+public final class FireplaceFlameSource extends AbstractTileParticleSource {
+   private final WeakReference<IsoFireplace> ownerRef;
+   private final float offsetX;
+   private final float offsetY;
+
+   public FireplaceFlameSource(IsoFireplace fp) {
+      super(fp.getSquare().getX(), fp.getSquare().getY(), fp.getSquare().getZ());
+      // collideN = fireplace mounted on north wall of tile -> fire sits against north edge.
+      // else (collideW)  = fireplace mounted on west wall  -> fire sits against west edge.
+      if (fp.getProperties() != null && fp.getProperties().Is(IsoFlagType.collideN)) {
+         this.offsetX = 0.5F;
+         this.offsetY = 0.25F;
+      } else {
+         this.offsetX = 0.25F;
+         this.offsetY = 0.5F;
+      }
+      this.ownerRef = new WeakReference<>(fp);
+   }
+
+   @Override
+   public void tick() {
+      IsoFireplace fp = this.ownerRef.get();
+      if (fp == null || fp.getSquare() == null) {
+         this.expire();
+         return;
+      }
+      if (!fp.isLit()) {
+         return;
+      }
+      this.accum += zombie.GameTime.getInstance().getMultiplier() * 0.5F;
+      int flameTicks = 0;
+      while (this.accum > 1.0F && flameTicks < 4) {
+         this.accum -= 1.0F;
+         flameTicks++;
+      }
+      if (flameTicks > 0) {
+         float fx = this.tileX + this.offsetX;
+         float fy = this.tileY + this.offsetY;
+         float fz = this.tileZ + 0.05F;
+         float intensity = 0.4F + 0.25F * Math.min(1.0F, fp.getFuelAmount() / 60.0F);
+         ParticlesFlame.getInstance().spawn(fx, fy, fz, flameTicks, intensity);
+      }
+   }
+}

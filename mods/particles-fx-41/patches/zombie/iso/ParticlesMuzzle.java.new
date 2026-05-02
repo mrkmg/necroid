@@ -1,0 +1,98 @@
+package zombie.iso;
+
+import zombie.core.Rand;
+
+public final class ParticlesMuzzle extends Particles {
+   private static final int   MAX_PARTICLES = 64;
+   private static final float LIFETIME      = 0.10F;
+   private static final String SHADER_NAME  = "necroid_muzzle";
+
+   private static final String VERT_SRC =
+      "#version 330\n" +
+      "uniform mat4 mvpMatrix;\n" +
+      "uniform float currentTime;\n" +
+      "uniform float lifetime;\n" +
+      "layout (location = 0) in vec3 Vertex;\n" +
+      "layout (location = 1) in vec4 Particule;\n" +
+      "varying vec2 texCoord;\n" +
+      "varying float alpha;\n" +
+      "void main() {\n" +
+      "   float age = currentTime - Particule.z;\n" +
+      "   float life = age / lifetime;\n" +
+      "   if (life < 0.0 || life >= 1.0) {\n" +
+      "      gl_Position = vec4(2.0, 2.0, 2.0, 1.0);\n" +
+      "      alpha = 0.0;\n" +
+      "      return;\n" +
+      "   }\n" +
+      "   float size = 18.0 * (1.0 - life * 0.4);\n" +
+      "   float rot = Particule.w * 6.2831853;\n" +
+      "   float c = cos(rot); float s = sin(rot);\n" +
+      "   vec2 v = vec2(Vertex.x * c - Vertex.y * s, Vertex.x * s + Vertex.y * c);\n" +
+      "   gl_Position = mvpMatrix * vec4(Particule.x + v.x * size, Particule.y + v.y * size, 0.0, 1.0);\n" +
+      "   texCoord = Vertex.xy * 0.5 + 0.5;\n" +
+      "   alpha = (1.0 - life);\n" +
+      "}\n";
+
+   private static final String FRAG_SRC =
+      "#version 330\n" +
+      "varying vec2 texCoord;\n" +
+      "varying float alpha;\n" +
+      "void main() {\n" +
+      "   vec2 d = texCoord - vec2(0.5);\n" +
+      "   float r = dot(d, d) * 4.0;\n" +
+      "   float intensity = max(0.0, 1.0 - r);\n" +
+      "   intensity = pow(intensity, 2.0);\n" +
+      "   gl_FragColor = vec4(1.0, 0.92, 0.55, 1.0) * intensity * alpha;\n" +
+      "}\n";
+
+   private static ParticlesMuzzle instance;
+
+   public static synchronized ParticlesMuzzle getInstance() {
+      if (instance == null) {
+         instance = new ParticlesMuzzle();
+      }
+      return instance;
+   }
+
+   private ParticlesMuzzle() {
+      super(new Particles.Config(MAX_PARTICLES, LIFETIME,
+         /*usesTint=*/false, /*blendSrc=*/770, /*blendDst=*/1,
+         SHADER_NAME, VERT_SRC, FRAG_SRC));
+   }
+
+   /** Muzzle flash ignores wind (lifetime is 0.1s — wind drift would be invisible). */
+   @Override
+   protected float windFactor(int i) { return 0.0F; }
+
+   /** Spawn a burst near world (worldX + dirX*forward, worldY + dirY*forward, worldZ).
+    *  Stores world tile coords; updateParticleParams() converts to current camera screen space each frame. */
+   public void spawn(float worldX, float worldY, float worldZ, float dirX, float dirY, int count) {
+      // Dispatch tile is the caller's INTEGER tile (player's tile, always in MinusFloorCharacters
+      // because the player is a moving object on it). Visual position is offset forward to the
+      // gun tip — visual and dispatch are independent.
+      int dispatchTileX = (int)worldX;
+      int dispatchTileY = (int)worldY;
+      float forward = 0.55F;
+      float wx = worldX + dirX * forward;
+      float wy = worldY + dirY * forward;
+      float t = this.getShaderTime();
+      // Trail speed in world tiles/sec. Lifetime ~0.1s so 8.0 tiles/sec → ~0.8 tile drift over life.
+      float speed = 8.0F;
+      for (int i = 0; i < count; i++) {
+         int idx = this.writeIdx;
+         this.writeIdx = (this.writeIdx + 1) % MAX_PARTICLES;
+         this.x[idx] = wx + Rand.Next(-0.05F, 0.05F);
+         this.y[idx] = wy + Rand.Next(-0.05F, 0.05F);
+         this.z[idx] = worldZ;
+         this.tileX[idx] = dispatchTileX;
+         this.tileY[idx] = dispatchTileY;
+         this.spawnT[idx] = t + i * 0.004F;
+         this.hash[idx] = Rand.Next(0.0F, 1.0F);
+         float jx = Rand.Next(-0.3F, 0.3F);
+         float jy = Rand.Next(-0.3F, 0.3F);
+         this.vx[idx] = (dirX + jx) * speed;
+         this.vy[idx] = (dirY + jy) * speed;
+         this.alive[idx] = true;
+      }
+   }
+}

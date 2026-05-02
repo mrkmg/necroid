@@ -1,0 +1,170 @@
+package zombie.iso;
+
+import zombie.core.Rand;
+
+public final class ParticlesCigaretteSmoke extends Particles {
+   private static final int    MAX_PARTICLES = 1024;
+   private static final float  LIFETIME      = 2.6F;
+   private static final String SHADER_NAME   = "necroid_cigsmoke";
+
+   private static final String VERT_SRC =
+      "#version 330\n" +
+      "uniform mat4 mvpMatrix;\n" +
+      "uniform float currentTime;\n" +
+      "uniform float lifetime;\n" +
+      "layout (location = 0) in vec3 Vertex;\n" +
+      "layout (location = 1) in vec4 Particule;\n" +
+      "layout (location = 2) in vec4 Tint;\n" +
+      "varying vec2 texCoord;\n" +
+      "varying float alpha;\n" +
+      "varying float life;\n" +
+      "varying float life_isExhale;\n" +
+      "varying vec4 vTint;\n" +
+      "void main() {\n" +
+      "   vTint = Tint;\n" +
+      "   float age = currentTime - Particule.z;\n" +
+      "   life = age / lifetime;\n" +
+      "   if (life < 0.0 || life >= 1.0) {\n" +
+      "      gl_Position = vec4(2.0, 2.0, 2.0, 1.0);\n" +
+      "      alpha = 0.0;\n" +
+      "      return;\n" +
+      "   }\n" +
+      // hash >= 0.5 marks an EXHALE-mode particle (spawned by spawnExhale).
+      // Wisp particles get a thin column read; exhale particles get a much
+      // larger soft puff so neighbors overlap into a single cloud.
+      "   float isExhale = step(0.5, Particule.w);\n" +
+      "   float wispSize   = 1.2 + life * 3.5;\n" +
+      "   float exhaleSize = 6.0 + life * 18.0;\n" +
+      "   float size = mix(wispSize, exhaleSize, isExhale);\n" +
+      "   float rot = fract(Particule.w * 2.0) * 6.2831853 + life * 0.8;\n" +
+      "   float c = cos(rot); float s = sin(rot);\n" +
+      "   vec2 v = vec2(Vertex.x * c - Vertex.y * s, Vertex.x * s + Vertex.y * c);\n" +
+      "   gl_Position = mvpMatrix * vec4(Particule.x + v.x * size, Particule.y + v.y * size, 0.0, 1.0);\n" +
+      "   texCoord = Vertex.xy * 0.5 + 0.5;\n" +
+      "   float fadeIn = clamp(life * 8.0, 0.0, 1.0);\n" +
+      "   float fadeOut = 1.0 - life;\n" +
+      "   float baseAlpha = mix(0.55, 0.32, isExhale);\n" +
+      "   alpha = fadeIn * fadeOut * baseAlpha;\n" +
+      "   life_isExhale = isExhale;\n" +
+      "}\n";
+
+   private static final String FRAG_SRC =
+      "#version 330\n" +
+      "varying vec2 texCoord;\n" +
+      "varying float alpha;\n" +
+      "varying float life;\n" +
+      "varying float life_isExhale;\n" +
+      "varying vec4 vTint;\n" +
+      "void main() {\n" +
+      "   vec2 d = texCoord - vec2(0.5);\n" +
+      "   float r = dot(d, d) * 4.0;\n" +
+      "   float intensity = max(0.0, 1.0 - r);\n" +
+      // Wisp uses a tighter falloff (pow 1.6) → reads as a small dense dot.
+      // Exhale uses a much softer falloff (pow 0.7) → reads as a fluffy cloud
+      // edge so neighbors blend into one continuous puff.
+      "   float power = mix(1.6, 0.7, life_isExhale);\n" +
+      "   intensity = pow(intensity, power);\n" +
+      "   float shade = mix(0.55, 0.78, life);\n" +
+      "   vec3 col = vec3(shade) * vTint.rgb;\n" +
+      "   gl_FragColor = vec4(col, intensity * alpha * vTint.a);\n" +
+      "}\n";
+
+   private static ParticlesCigaretteSmoke instance;
+
+   public static synchronized ParticlesCigaretteSmoke getInstance() {
+      if (instance == null) {
+         instance = new ParticlesCigaretteSmoke();
+      }
+      return instance;
+   }
+
+   private ParticlesCigaretteSmoke() {
+      super(new Particles.Config(MAX_PARTICLES, LIFETIME,
+         /*usesTint=*/true, /*blendSrc=*/770, /*blendDst=*/771,
+         SHADER_NAME, VERT_SRC, FRAG_SRC));
+   }
+
+   /** Cigarette-tip wisp: thin column rising from the lit end of the cigarette.
+    *  No horizontal motion (the cherry isn't blowing it anywhere). Hash is
+    *  written in [0, 0.5) so the shader picks the small/tight wisp branch. */
+   public void spawnWisp(float worldX, float worldY, float worldZ, int count) {
+      int dispatchTileX = (int)worldX;
+      int dispatchTileY = (int)worldY;
+      float t = this.getShaderTime();
+      for (int i = 0; i < count; i++) {
+         int idx = this.writeIdx;
+         this.writeIdx = (this.writeIdx + 1) % MAX_PARTICLES;
+         this.x[idx] = worldX + Rand.Next(-0.02F, 0.02F);
+         this.y[idx] = worldY + Rand.Next(-0.02F, 0.02F);
+         this.z[idx] = worldZ + Rand.Next(0.0F, 0.04F);
+         this.tileX[idx] = dispatchTileX;
+         this.tileY[idx] = dispatchTileY;
+         this.spawnT[idx] = t + i * 0.01F;
+         this.hash[idx] = Rand.Next(0.0F, 0.499F);
+         this.vx[idx] = 0.0F;
+         this.vy[idx] = 0.0F;
+         this.vz[idx] = Rand.Next(0.22F, 0.34F);
+         this.spawnWindAccumX[idx] = NecroidParticleWind.accumX();
+         this.spawnWindAccumY[idx] = NecroidParticleWind.accumY();
+         this.alive[idx] = true;
+      }
+   }
+
+   /** Exhaled mouth plume — staged spawn. Hash is written in [0.5, 1.0) so the
+    *  shader picks the large/soft cloud branch.
+    *
+    *  `progress` is the burst's phase, 0..1: 0 = first frame of the exhale
+    *  (just left the mouth), 1 = last frame (drag is done, smoke is settling).
+    *  Particle motion is purely linear (Particles.writeParticleSlot does no
+    *  drag), so a single particle can't decelerate. The illusion is faked by
+    *  staggering spawn parameters across the burst:
+    *
+    *    progress 0 (jet phase) — tight cluster, fast forward velocity, low rise.
+    *      These become the leading edge of the cloud, fanning forward.
+    *    progress 1 (cloud phase) — wider lateral spread, slow forward, more
+    *      vertical rise. These hang near the mouth and drift up.
+    *
+    *  Combined over the burst, the visual reads as one cone that emerges fast,
+    *  widens with distance, and lifts at the trailing edge. */
+   public void spawnExhale(float worldX, float worldY, float worldZ, int count,
+                           float dirX, float dirY, float progress) {
+      int dispatchTileX = (int)worldX;
+      int dispatchTileY = (int)worldY;
+      float t = this.getShaderTime();
+      float perpX =  dirY;
+      float perpY = -dirX;
+
+      // Per-stage parameter ramps — jet phase → cloud phase.
+      float fwdLo      = lerp(0.55F, 0.10F, progress);
+      float fwdHi      = lerp(0.90F, 0.22F, progress);
+      float fanRange   = lerp(0.03F, 0.18F, progress);
+      float lateralAmp = lerp(0.02F, 0.10F, progress);
+      float vzLo       = lerp(0.02F, 0.16F, progress);
+      float vzHi       = lerp(0.08F, 0.30F, progress);
+
+      for (int i = 0; i < count; i++) {
+         int idx = this.writeIdx;
+         this.writeIdx = (this.writeIdx + 1) % MAX_PARTICLES;
+         float lateral = Rand.Next(-lateralAmp, lateralAmp);
+         this.x[idx] = worldX + perpX * lateral;
+         this.y[idx] = worldY + perpY * lateral;
+         this.z[idx] = worldZ + Rand.Next(-0.02F, 0.02F);
+         this.tileX[idx] = dispatchTileX;
+         this.tileY[idx] = dispatchTileY;
+         this.spawnT[idx] = t + i * 0.01F;
+         this.hash[idx] = Rand.Next(0.5F, 1.0F);
+         float forwardSpeed = Rand.Next(fwdLo, fwdHi);
+         float fan = Rand.Next(-fanRange, fanRange);
+         this.vx[idx] = dirX * forwardSpeed + perpX * fan;
+         this.vy[idx] = dirY * forwardSpeed + perpY * fan;
+         this.vz[idx] = Rand.Next(vzLo, vzHi);
+         this.spawnWindAccumX[idx] = NecroidParticleWind.accumX();
+         this.spawnWindAccumY[idx] = NecroidParticleWind.accumY();
+         this.alive[idx] = true;
+      }
+   }
+
+   private static float lerp(float a, float b, float t) {
+      return a + (b - a) * t;
+   }
+}

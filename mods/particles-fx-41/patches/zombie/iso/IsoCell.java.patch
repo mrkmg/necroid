@@ -1,0 +1,34 @@
+diff --git a/zombie/iso/IsoCell.java b/zombie/iso/IsoCell.java
+index ba4d3e3..edee84b 100644
+--- a/zombie/iso/IsoCell.java
++++ b/zombie/iso/IsoCell.java
+@@ -761,6 +761,8 @@ public final class IsoCell {
+          var9 = m_wallRenderShader;
+       }
+ 
++      NecroidParticleHook.perFrame();
++
+       for (int var10 = 0; var10 < var2 + 1; var10++) {
+          IsoCell.s_performance.renderTiles.PperformRenderTilesLayer var11 = IsoCell.s_performance.renderTiles.performRenderTilesLayers.start(var10);
+          GridStack = var6.Squares.get(var10);
+@@ -826,6 +828,12 @@ public final class IsoCell {
+                   var14 |= 4;
+                }
+ 
++               // Promote tiles that host live exhaust particles, so the dispatch fires
++               // even after the spawning vehicle has driven off the tile.
++               if (ParticlesExhaust.getInstance().hasTile(var13.x, var13.y)) {
++                  var14 |= 4;
++               }
++
+                if ((var14 & 1) != 0) {
+                   SolidFloor.add(var13);
+                }
+@@ -920,6 +928,7 @@ public final class IsoCell {
+                boolean var19 = var23.renderMinusFloor(this.maxZ, false, false, var28, var29, var30, var9);
+                var23.renderDeferredCharacters(this.maxZ);
+                var23.renderCharacters(this.maxZ, false, true);
++               NecroidParticleHook.enqueueTile(var23.x, var23.y);
+                if (var23.hasFlies()) {
+                   CorpseFlies.render(var23.x, var23.y, var23.z);
+                }

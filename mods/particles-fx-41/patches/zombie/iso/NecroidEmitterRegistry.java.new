@@ -1,0 +1,73 @@
+package zombie.iso;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+
+/** Registry of Necroid particle emitters. The bootstrap() method below is the
+ *  single place that enumerates known emitters by name — adding a new emitter
+ *  is a one-line edit there.
+ *
+ *  Iteration order = registration order, which is also the per-tile rendering
+ *  order. Today: muzzle, gun smoke, fire smoke, exhaust, flame. Don't reorder
+ *  without a visual regression check (additive vs alpha blend mixing depends
+ *  on this). */
+public final class NecroidEmitterRegistry {
+   private static final List<Particles> emitters = new ArrayList<>();
+   private static final List<Particles> emittersView = Collections.unmodifiableList(emitters);
+   private static final List<ParticleSource> sources = new ArrayList<>();
+   private static volatile boolean booted = false;
+
+   private NecroidEmitterRegistry() {}
+
+   public static void registerEmitter(Particles p) {
+      if (p != null && !emitters.contains(p)) {
+         emitters.add(p);
+      }
+   }
+
+   public static List<Particles> emitters() {
+      return emittersView;
+   }
+
+   /** Register a tile-anchored particle source. Sources are ticked each frame
+    *  by NecroidParticleHook.perFrame after all emitter ticks; expired sources
+    *  self-evict on the next tick pass. */
+   public static synchronized void registerSource(ParticleSource s) {
+      if (s != null) {
+         sources.add(s);
+      }
+   }
+
+   /** Tick all live sources. Removes expired sources in-place. Called from
+    *  NecroidParticleHook.perFrame; not part of the public API of this class. */
+   static synchronized void tickSources() {
+      for (Iterator<ParticleSource> it = sources.iterator(); it.hasNext(); ) {
+         ParticleSource s = it.next();
+         if (s.isExpired()) {
+            it.remove();
+            continue;
+         }
+         s.tick();
+      }
+   }
+
+   public static synchronized int sourceCount() {
+      return sources.size();
+   }
+
+   /** Idempotent. First call instantiates each Necroid emitter (triggering
+    *  shader source registration via their static initializers) and adds it
+    *  to the registry. Safe to call from perFrame on every tick. */
+   public static synchronized void bootstrap() {
+      if (booted) return;
+      registerEmitter(ParticlesMuzzle.getInstance());
+      registerEmitter(ParticlesGunSmoke.getInstance());
+      registerEmitter(ParticlesFireSmoke.getInstance());
+      registerEmitter(ParticlesExhaust.getInstance());
+      registerEmitter(ParticlesFlame.getInstance());
+      registerEmitter(ParticlesCigaretteSmoke.getInstance());
+      booted = true;
+   }
+}

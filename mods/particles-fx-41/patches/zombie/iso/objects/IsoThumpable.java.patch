@@ -1,0 +1,25 @@
+diff --git a/zombie/iso/objects/IsoThumpable.java b/zombie/iso/objects/IsoThumpable.java
+index f3311f3..b475551 100644
+--- a/zombie/iso/objects/IsoThumpable.java
++++ b/zombie/iso/objects/IsoThumpable.java
+@@ -88,6 +88,7 @@ public class IsoThumpable extends IsoObject implements BarricadeAble, Thumpable
+    private boolean haveFuel = false;
+    private float updateAccumulator = 0.0F;
+    private float lastUpdateHours = -1.0F;
++   private zombie.iso.ParticleSource necroidSource;
+    public int keyId = -1;
+    private boolean lockedByKey = false;
+    public boolean lockedByPadlock = false;
+@@ -1328,6 +1329,12 @@ public class IsoThumpable extends IsoObject implements BarricadeAble, Thumpable
+    @Override
+    public void update() {
+       if (this.getObjectIndex() != -1) {
++         if (!GameServer.bServer && this.square != null && this.necroidSource == null
++               && "MetalDrum".equals(this.getName())) {
++            this.necroidSource = new zombie.iso.MetalDrumFireSource(this);
++            zombie.iso.NecroidEmitterRegistry.registerSource(this.necroidSource);
++         }
++
+          if (!GameServer.bServer) {
+             if (this.lightSource != null && !this.lightSource.isInBounds()) {
+                this.lightSource = null;

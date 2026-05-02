@@ -1,0 +1,19 @@
+package zombie.iso;
+
+import java.util.HashMap;
+import java.util.Map;
+
+public final class NecroidShaderRegistry {
+   private static final Map<String, String> sources = new HashMap<>();
+
+   private NecroidShaderRegistry() {}
+
+   public static void register(String name, String vertSource, String fragSource) {
+      sources.put("media/shaders/" + name + ".vert", vertSource);
+      sources.put("media/shaders/" + name + ".frag", fragSource);
+   }
+
+   public static String getOverride(String fileName) {
+      return sources.get(fileName);
+   }
+}

@@ -1,0 +1,94 @@
+package zombie.iso;
+
+import zombie.iso.weather.ClimateManager;
+
+/** Per-frame integrator for the world wind drift on smoke particles.
+ *  Direction convention matches ImprovedFog (climateManager-side wind drift).
+ *
+ *  Each frame the instantaneous drift vector (climate base + gust envelope)
+ *  is integrated into a global accumulator (accumX, accumY). Smoke classes
+ *  snapshot the accumulator at spawn time and read the difference per frame
+ *  for cumulative displacement — this means a particle never moves *back*
+ *  when a gust subsides; it just stops drifting (or drifts slower / in the
+ *  current direction).
+ *
+ *  Time source is the post-tick shader time, which advances with GameTime's
+ *  multiplier — wind freezes when the game is paused, matching smoke aging.
+ *
+ *  Direction is taken from {@code ClimateManager.getWindAngleIntensity()},
+ *  which is a circular angle parameter ∈ [-1, +1] (matches the rest of the
+ *  weather simulation):
+ *    θ =  0    → screen down       (0, +1)
+ *    θ =  0.5  → screen right      (+1, 0)
+ *    θ =  1    → screen up         (0, -1)
+ *    θ = -0.5  → screen left       (-1, 0)
+ *  The screen-space direction is (sin(θπ), cos(θπ)) in (sx, sy) where +sy is
+ *  screen down. We back-project that through the iso transform — IsoUtils
+ *  gives ΔscreenX = 32k·(ΔwX − ΔwY), ΔscreenY = 16k·(ΔwX + ΔwY) — so a unit
+ *  +screenX is the world dir (0.5, -0.5) and a unit +screenY is the world dir
+ *  (1, 1). The 2:1 ratio compensates for the iso aspect ratio so that smoke
+ *  drifting "up/down" on screen visually moves at the same rate as smoke
+ *  drifting "left/right".
+ *
+ *  Gust envelope: a sum of three incommensurate sines modulates the base
+ *  intensity in [GUST_MIN_MULT, GUST_MAX_MULT]. Periods don't repeat. */
+public final class NecroidParticleWind {
+   private NecroidParticleWind() {}
+
+   /** Tile/sec drift at full wind intensity, before gust modulation. */
+   private static final float DRIFT_SCALE = 1.0F;
+   private static final float GUST_MIN_MULT = 1.0F;
+   private static final float GUST_MAX_MULT = 3.00F;
+
+   private static double accumX = 0.0;
+   private static double accumY = 0.0;
+   private static float lastShaderTime = Float.NaN;
+
+   /** Called once per frame from NecroidParticleHook.perFrame() AFTER the
+    *  per-system tickFrame() calls, so {@code now} is the post-tick shader
+    *  time (game-time-scaled, pause-aware). */
+   public static void update(float now) {
+      ClimateManager cm = ClimateManager.getInstance();
+      float driftX = 0.0F;
+      float driftY = 0.0F;
+
+      if (cm != null) {
+         // Gust intensity envelope: three sines, periods ~5.2s / ~2.1s / ~1.0s.
+         float g = 0.55F * (float)Math.sin(now * 1.20F)
+                 + 0.30F * (float)Math.sin(now * 3.00F + 1.7F)
+                 + 0.15F * (float)Math.sin(now * 6.00F + 0.5F);
+         float mid = (GUST_MAX_MULT + GUST_MIN_MULT) * 0.5F;
+         float halfRange = (GUST_MAX_MULT - GUST_MIN_MULT) * 0.5F;
+         float gustMult = mid + g * halfRange;
+         if (gustMult < 0.0F) gustMult = 0.0F;
+
+         // Screen-direction unit vector (sx, sy) for this θ, +sy = screen down.
+         float angleAxis = cm.getWindAngleIntensity();
+         float sx = (float)Math.sin(angleAxis * Math.PI);
+         float sy = (float)Math.cos(angleAxis * Math.PI);
+         float speed = cm.getWindIntensity() * gustMult * DRIFT_SCALE;
+         // Back-project to world: +screenX = world (0.5, -0.5),
+         //                        +screenY = world (1.0, +1.0).
+         driftX = (sx * 0.5F + sy * 1.0F) * speed;
+         driftY = (sx * -0.5F + sy * 1.0F) * speed;
+      }
+
+      // Integrate. Skip the first frame (no prior timestamp) and any frame
+      // with a non-positive or implausibly large dt (paused frame, time
+      // glitch, save load) so we never inject a step backwards or a giant
+      // jolt.
+      if (!Float.isNaN(lastShaderTime)) {
+         float dt = now - lastShaderTime;
+         if (dt > 0.0F && dt < 0.5F) {
+            accumX += (double)driftX * dt;
+            accumY += (double)driftY * dt;
+         }
+      }
+      lastShaderTime = now;
+   }
+
+   /** Cumulative wind displacement (tile units) since the accumulator was
+    *  initialised. Smoke takes (accumNow - accumAtSpawn) for its drift. */
+   public static float accumX() { return (float)accumX; }
+   public static float accumY() { return (float)accumY; }
+}
