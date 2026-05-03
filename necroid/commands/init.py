@@ -305,9 +305,10 @@ def run(args) -> int:
         force=args.force,
     )
 
-    log.step("step 9/9: scaffold mods/ + default .gitignore")
+    log.step("step 9/9: scaffold mods/ + default .gitignore + pre-commit hook")
     ensure_dir(profile.mods_dir)
     _ensure_default_gitignore(root)
+    _ensure_pre_commit_hook(root)
 
     log.success(
         f"init [from={source}] complete. "
@@ -326,7 +327,9 @@ DEFAULT_GITIGNORE = """\
 # -----------------------------------------------------------------------------
 
 # Per-mod editable working trees — `necroid enter <mod>` seeds one at /src-<mod>/.
-/src-*/
+# NOT gitignored: IDE language servers (Pylance, etc.) skip gitignored paths,
+# which breaks code intel under src-*/. .githooks/pre-commit blocks commits
+# instead. Run once: `git config core.hooksPath .githooks`.
 
 # Downloaded tooling. tools/ dir itself is tracked via .gitkeep; contents are not.
 /data/tools/*
@@ -363,6 +366,85 @@ def _ensure_default_gitignore(root: Path) -> None:
         return
     gi.write_text(DEFAULT_GITIGNORE, encoding="utf-8")
     log.info(f"wrote {gi}")
+
+
+PRE_COMMIT_HOOK = """\
+#!/bin/sh
+# Block commits that include per-mod editable working trees (src-*/).
+# These are reproducible from `necroid enter <mod>` + the mod's patches/
+# under mods/<mod>-<major>/. Ship edits via `necroid capture <mod>`, not
+# as raw source files.
+staged=$(git diff --cached --name-only --diff-filter=AM | grep -E '^src-[^/]+/' || true)
+if [ -n "$staged" ]; then
+    echo "error: pre-commit hook rejected staged files under src-*/:" >&2
+    echo "$staged" | sed 's/^/  /' >&2
+    echo "" >&2
+    echo "Per-mod working trees aren't committed. Run:" >&2
+    echo "  necroid capture <mod>" >&2
+    echo "to fold your edits into mods/<mod>-<major>/patches/, then commit those." >&2
+    echo "" >&2
+    echo "To bypass once (not recommended): git commit --no-verify" >&2
+    exit 1
+fi
+"""
+
+
+def _ensure_pre_commit_hook(root: Path) -> None:
+    """Install `.githooks/pre-commit` and point `core.hooksPath` at it.
+
+    The hook rejects commits that touch `src-*/` (per-mod editable trees).
+    Those trees are NOT gitignored (so IDE language servers see them), so
+    without the hook a `git add .` would happily stage thousands of files.
+
+    No-op when:
+    - the checkout isn't a git repo (no `.git/`)
+    - `core.hooksPath` already points somewhere other than `.githooks`
+      (don't trample husky / pre-commit-framework setups)
+    """
+    if not (root / ".git").exists():
+        return
+
+    hooks_dir = root / ".githooks"
+    hook_path = hooks_dir / "pre-commit"
+    ensure_dir(hooks_dir)
+    if not hook_path.exists():
+        hook_path.write_text(PRE_COMMIT_HOOK, encoding="utf-8", newline="\n")
+        try:
+            hook_path.chmod(0o755)
+        except OSError:
+            pass
+        log.info(f"wrote {hook_path}")
+
+    try:
+        existing = procs.run(
+            ["git", "config", "--get", "core.hooksPath"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        )
+        current = (existing.stdout or "").strip() if existing.returncode == 0 else ""
+    except (OSError, FileNotFoundError):
+        return
+
+    if current and current != ".githooks":
+        log.info(
+            f"core.hooksPath already set to {current!r}; leaving it alone "
+            "(install .githooks/pre-commit into your existing hook framework)"
+        )
+        return
+
+    if current == ".githooks":
+        return
+
+    try:
+        procs.run(
+            ["git", "config", "core.hooksPath", ".githooks"],
+            cwd=root,
+            check=True,
+        )
+        log.info("set git config core.hooksPath = .githooks")
+    except (OSError, FileNotFoundError):
+        pass
 
 
 def _choose_workspace_major(detected_major: int, args) -> int:

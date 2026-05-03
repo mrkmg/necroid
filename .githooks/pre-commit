@@ -1,0 +1,17 @@
+#!/bin/sh
+# Block commits that include per-mod editable working trees (src-*/).
+# These are reproducible from `necroid enter <mod>` + the mod's patches/
+# under mods/<mod>-<major>/. Ship edits via `necroid capture <mod>`, not
+# as raw source files.
+staged=$(git diff --cached --name-only --diff-filter=AM | grep -E '^src-[^/]+/' || true)
+if [ -n "$staged" ]; then
+    echo "error: pre-commit hook rejected staged files under src-*/:" >&2
+    echo "$staged" | sed 's/^/  /' >&2
+    echo "" >&2
+    echo "Per-mod working trees aren't committed. Run:" >&2
+    echo "  necroid capture <mod>" >&2
+    echo "to fold your edits into mods/<mod>-<major>/patches/, then commit those." >&2
+    echo "" >&2
+    echo "To bypass once (not recommended): git commit --no-verify" >&2
+    exit 1
+fi

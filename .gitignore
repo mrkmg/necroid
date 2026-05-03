@@ -6,7 +6,9 @@
 
 # Per-mod editable working trees — `necroid enter <mod>` seeds one at
 # `/src-<mod>/`. Ephemeral; user-local. `necroid clean` removes them.
-/src-*/
+# NOT gitignored on purpose: many IDE language servers (Pylance, etc.) skip
+# gitignored paths, which breaks code intel under src-*/. Commits are blocked
+# by .githooks/pre-commit instead. Run once: `git config core.hooksPath .githooks`.
 
 # Downloaded tooling. The tools/ dir itself is tracked via .gitkeep; contents are not.
 /data/tools/*
