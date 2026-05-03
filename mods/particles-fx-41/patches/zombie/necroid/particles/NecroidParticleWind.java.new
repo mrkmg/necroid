@@ -1,4 +1,4 @@
-package zombie.iso;
+package zombie.necroid.particles;
 
 import zombie.iso.weather.ClimateManager;
 

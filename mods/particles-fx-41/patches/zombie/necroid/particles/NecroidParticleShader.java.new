@@ -1,4 +1,4 @@
-package zombie.iso;
+package zombie.necroid.particles;
 
 import org.lwjgl.opengl.ARBShaderObjects;
 import zombie.core.opengl.Shader;

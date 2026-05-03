@@ -1,4 +1,6 @@
-package zombie.iso;
+package zombie.necroid.particles;
+
+import zombie.iso.Particles;
 
 import zombie.core.Rand;
 
@@ -52,7 +54,7 @@ public final class ParticlesFireSmoke extends Particles {
       "   intensity = pow(intensity, 1.4);\n" +
       "   float shade = mix(0.18, 0.45, life);\n" +
       "   vec3 col = vec3(shade) * vTint.rgb;\n" +
-      "   gl_FragColor = vec4(col, intensity * alpha * 0.7 * vTint.a);\n" +
+      "   gl_FragColor = vec4(col, intensity * alpha * 0.3 * vTint.a);\n" +
       "}\n";
 
    private static ParticlesFireSmoke instance;

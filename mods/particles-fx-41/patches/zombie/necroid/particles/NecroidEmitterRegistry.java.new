@@ -1,4 +1,6 @@
-package zombie.iso;
+package zombie.necroid.particles;
+
+import zombie.iso.Particles;
 
 import java.util.ArrayList;
 import java.util.Collections;

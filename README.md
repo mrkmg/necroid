@@ -100,6 +100,7 @@ Each mod ships with its own README — click through for behaviour notes, in-gam
 |---|---|---|
 | [more-zoom](mods/more-zoom-41/README.md) | yes | Adds one extra zoom-out (300%) and one extra zoom-in (25%) level. |
 | [notifications](mods/notifications-41/README.md) | yes | Utility / API mod. Shared toast-notification surface other mods call into. |
+| [particles-fx](mods/particles-fx-41/README.md) | yes | GPU-instanced particle FX: fire smoke + flames, muzzle flash, gun smoke, vehicle exhaust (gas-pedal gated), burning characters, cigarette smoke. |
 
 ### Utility
 

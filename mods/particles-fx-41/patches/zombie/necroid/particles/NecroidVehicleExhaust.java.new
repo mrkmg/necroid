@@ -1,10 +1,12 @@
-package zombie.iso;
+package zombie.necroid.particles;
 
 import org.joml.Vector3f;
 import zombie.GameTime;
+import zombie.core.physics.CarController;
 import zombie.network.GameServer;
 import zombie.scripting.objects.VehicleScript;
 import zombie.vehicles.BaseVehicle;
+
 
 /** Per-vehicle helper that paces exhaust puffs and computes the tailpipe world
  *  position from the vehicle's current pose (extents + COM + forward vector).
@@ -19,11 +21,15 @@ public final class NecroidVehicleExhaust {
          this.accum = 0.0F;
          return;
       }
-      // engineSpeed: ~800 idle, ~5000 revving. Rate ~5 Hz idle, ~12 Hz revving.
-      float rate = 4.0F + (float)(v.engineSpeed / 800.0);
+      // PZ is keyboard-driven: gas is binary (down or not). Skip the analog engineSpeed
+      // ramp — split into two regimes. Accelerating: dense plume. Cruising/idle: thin trail.
+      CarController cc = v.getController();
+      boolean accelerating = cc != null && cc.isGasPedalPressed();
+      float rate = accelerating ? 18.0F : 5.0F;
+      int cap = accelerating ? 6 : 3;
       this.accum += GameTime.getInstance().getMultiplier() * rate * 0.0166F;
       int spawnCount = 0;
-      while (this.accum > 1.0F && spawnCount < 4) {
+      while (this.accum > 1.0F && spawnCount < cap) {
          this.accum -= 1.0F;
          spawnCount++;
       }

@@ -1,4 +1,4 @@
-package zombie.iso;
+package zombie.necroid.particles;
 
 import java.util.HashMap;
 import java.util.Map;

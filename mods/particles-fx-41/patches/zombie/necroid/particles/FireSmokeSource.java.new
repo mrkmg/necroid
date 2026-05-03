@@ -1,4 +1,4 @@
-package zombie.iso;
+package zombie.necroid.particles;
 
 import java.lang.ref.WeakReference;
 import zombie.iso.objects.IsoFire;
@@ -18,7 +18,7 @@ public final class FireSmokeSource extends AbstractTileParticleSource {
    @Override
    public void tick() {
       IsoFire fire = this.ownerRef.get();
-      if (fire == null || fire.getSquare() == null) {
+      if (fire == null || fire.getSquare() == null || fire.getObjectIndex() == -1) {
          this.expire();
          return;
       }

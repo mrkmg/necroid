@@ -9,7 +9,7 @@ GPU-instanced particle effects for fire, gunfire, and vehicle exhaust. Replaces 
 - **Lit metal drums** (`IsoThumpable` with `isLit=true` modData) — flame + smoke column above the drum.
 - **Burning characters** — flame trail follows the moving zombie/player. Two stacked layers at slightly different heights for depth.
 - **Gunfire** — short golden muzzle flash + grey alpha-blended smoke puff at the gun tip, drifting outward and upward.
-- **Vehicle exhaust** — grey puff at the rear-corner tailpipe; pulse rate scales with engine RPM (~5 Hz idle, ~12 Hz revving). Particles stay locked to the spawn tile after the vehicle drives off, so the puff doesn't snap with the car.
+- **Vehicle exhaust** — grey puff at the rear-corner tailpipe. Gated on the gas pedal: pressing accelerates → dense plume (~18 Hz, cap 6/tick); cruising or idling → thin trail (~5 Hz, cap 3/tick). PZ's input is binary (gas down or not), so the analog engine-RPM ramp would only ever produce two visible regimes anyway. Engine off → no exhaust. Particles stay locked to the spawn tile after the vehicle drives off, so the puff doesn't snap with the car.
 - **Smoking** — thin grey wisp drifts up from a character's face while smoking a cigarette; pulses with the in-game timed action.
 
 All particles are tinted by sampling the surrounding `IsoGridSquare.lighting[playerIndex]` so they look correct under interior darkness, dusk, lit interiors, and overcast weather. Wind drift comes from a deterministic gust simulator (three incommensurate sines) so smoke and sparks sway with the same rhythm as the world.
@@ -67,6 +67,6 @@ When the spawn position has to be recomputed every frame from the live owner sta
 3. Light a fireplace mounted on a north wall, then one on a west wall — flame parks against the correct edge each time.
 4. Light a metal drum (right-click → Light, with fuel) — flame + smoke above the drum; extinguish — particles stop cleanly.
 5. Set a zombie on fire (Molotov) — flame trails the moving zombie's position frame-perfectly.
-6. Drive a vehicle in idle, then rev — exhaust pulse rate visibly increases. Drive past a tile mid-puff — the abandoned puff finishes dissipating in place instead of snapping with the car.
+6. Drive a vehicle: hold the gas — dense exhaust plume; release the gas while still moving — visibly thinner trail; stop and idle — same thin trail; turn the engine off — no particles. Drive past a tile mid-puff — the abandoned puff finishes dissipating in place instead of snapping with the car.
 7. Fire any gun — gold muzzle flash + grey smoke puff at the gun tip, drifting forward and dispersing.
 8. Walk far enough to chunk-unload an active fire/fireplace/drum, then walk back — fresh source auto-registers, particles resume.

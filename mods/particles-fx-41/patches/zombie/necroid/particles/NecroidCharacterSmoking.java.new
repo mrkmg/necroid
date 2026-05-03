@@ -1,4 +1,8 @@
-package zombie.iso;
+package zombie.necroid.particles;
+
+import zombie.iso.Particles;
+import zombie.iso.Vector2;
+import zombie.iso.Vector3;
 
 import org.lwjgl.util.vector.Matrix4f;
 import zombie.GameTime;
