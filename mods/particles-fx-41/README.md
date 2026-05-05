@@ -6,13 +6,14 @@ GPU-instanced particle effects for fire, gunfire, and vehicle exhaust. Replaces 
 
 - **Burning fires** (campfires, structure fires, fire-on-ground tiles) — flame core (peak-and-shrink) plus rare fast-rise sparks; intensity tracks `IsoFire.LifeStage` from ignition through peak burn to smoke-only decay.
 - **Lit fireplaces** — flame parked at the correct edge of the tile (north-mounted vs west-mounted resolved from the fireplace's wall-collide flag); intensity scales with current fuel.
+- **Lit woodstoves** (e.g. Antique Stove) — no flame override (vanilla swaps to a lit-state tile texture for the firebox); instead a thin smoke trickle puffs from the top of the stove pipe (one tile back from the stove, at z+1), throttled by current fuel.
 - **Lit metal drums** (`IsoThumpable` with `isLit=true` modData) — flame + smoke column above the drum.
 - **Burning characters** — flame trail follows the moving zombie/player. Two stacked layers at slightly different heights for depth.
 - **Gunfire** — short golden muzzle flash + grey alpha-blended smoke puff at the gun tip, drifting outward and upward.
 - **Vehicle exhaust** — grey puff at the rear-corner tailpipe. Gated on the gas pedal: pressing accelerates → dense plume (~18 Hz, cap 6/tick); cruising or idling → thin trail (~5 Hz, cap 3/tick). PZ's input is binary (gas down or not), so the analog engine-RPM ramp would only ever produce two visible regimes anyway. Engine off → no exhaust. Particles stay locked to the spawn tile after the vehicle drives off, so the puff doesn't snap with the car.
 - **Smoking** — thin grey wisp drifts up from a character's face while smoking a cigarette; pulses with the in-game timed action.
 
-All particles are tinted by sampling the surrounding `IsoGridSquare.lighting[playerIndex]` so they look correct under interior darkness, dusk, lit interiors, and overcast weather. Wind drift comes from a deterministic gust simulator (three incommensurate sines) so smoke and sparks sway with the same rhythm as the world.
+All particles are tinted by sampling the surrounding `IsoGridSquare.lighting[playerIndex]` so they look correct under interior darkness, dusk, lit interiors, and overcast weather. Wind drift comes from a deterministic gust simulator (three incommensurate sines) so smoke and sparks sway with the same rhythm as the world. Particles spawned on an interior tile (`!IsoGridSquare.isOutside()`) skip the wind drift entirely — indoor smoke rises straight up regardless of the weather wind.
 
 ## What it changes
 

@@ -3,11 +3,11 @@
   "clientOnly": true,
   "description": "Particle effects: muzzle flash, gun smoke, car exhaust, fire smoke, cigarette smoke",
   "category": "ui",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "expectedVersion": "41.78.19",
   "createdAt": "2026-05-01T04:12:07.056256Z",
-  "updatedAt": "2026-05-03T04:38:01.657527Z",
-  "pristineSnapshot": "d4de8e4444fef986d17d3e0368a387f57a07f84e433b0808705594ec46d99e71",
+  "updatedAt": "2026-05-04T12:50:15.308630Z",
+  "pristineSnapshot": "a28826bcbd07aa918da63ec3970dc96f3528e88dacd8f72371ec9cf291f24db5",
   "dependencies": [],
   "incompatibleWith": []
 }

@@ -1,5 +1,8 @@
 package zombie.necroid.particles;
 
+import zombie.iso.IsoCell;
+import zombie.iso.IsoGridSquare;
+import zombie.iso.IsoWorld;
 import zombie.iso.weather.ClimateManager;
 
 /** Per-frame integrator for the world wind drift on smoke particles.
@@ -91,4 +94,15 @@ public final class NecroidParticleWind {
     *  initialised. Smoke takes (accumNow - accumAtSpawn) for its drift. */
    public static float accumX() { return (float)accumX; }
    public static float accumY() { return (float)accumY; }
+
+   /** 0.0F if the spawn tile is interior/roofed (kill wind drift), 1.0F if
+    *  outside. Conservative — returns 1.0F when the cell or tile cannot be
+    *  resolved so we never silently swallow wind on an unloaded chunk. */
+   public static float indoorWindMultiplier(int tileX, int tileY, int tileZ) {
+      IsoCell cell = IsoWorld.instance != null ? IsoWorld.instance.CurrentCell : null;
+      if (cell == null) return 1.0F;
+      IsoGridSquare sq = cell.getGridSquare(tileX, tileY, tileZ);
+      if (sq == null) return 1.0F;
+      return sq.isOutside() ? 1.0F : 0.0F;
+   }
 }

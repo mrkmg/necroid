@@ -1,0 +1,74 @@
+package zombie.necroid.particles;
+
+import java.lang.ref.WeakReference;
+import zombie.iso.objects.IsoFireplace;
+
+/** Tile-anchored smoke source for a lit woodstove (Antique Stove etc.). The
+ *  stove sprite includes a pipe extending up the wall behind it; smoke puffs
+ *  from the top of that pipe.
+ *
+ *  Moveable woodstove tiles do NOT set the collideN/collideW flags (verified
+ *  in-game), so we cannot rely on the same wall-mount detection that
+ *  IsoFireplace's vanilla sprite path uses for masonry fireplaces. Instead we
+ *  read the sprite name's trailing index — PZ tile sheets pair adjacent
+ *  indices for the two valid wall mounts of a moveable. For the antique stove:
+ *    appliances_cooking_01_16 = south-facing (back to north wall)
+ *    appliances_cooking_01_17 = east-facing  (back to west wall)
+ *  Even index -> north-mount, odd index -> west-mount. */
+public final class WoodstovePipeSmokeSource extends AbstractTileParticleSource {
+   private final WeakReference<IsoFireplace> ownerRef;
+   private final float offsetX;
+   private final float offsetY;
+
+   public WoodstovePipeSmokeSource(IsoFireplace fp) {
+      super(fp.getSquare().getX(), fp.getSquare().getY(), fp.getSquare().getZ());
+      boolean westMount = isWestMount(fp);
+      if (westMount) {
+         this.offsetX = -0.4F;
+         this.offsetY = 0.5F;
+      } else {
+         this.offsetX = 0.5F;
+         this.offsetY = -0.4F;
+      }
+      this.ownerRef = new WeakReference<>(fp);
+   }
+
+   private static boolean isWestMount(IsoFireplace fp) {
+      String name = fp.getSprite() != null ? fp.getSprite().getName() : null;
+      if (name == null) return false;
+      int u = name.lastIndexOf('_');
+      if (u < 0 || u >= name.length() - 1) return false;
+      try {
+         return (Integer.parseInt(name.substring(u + 1)) & 1) == 0;
+      } catch (NumberFormatException e) {
+         return false;
+      }
+   }
+
+   @Override
+   public void tick() {
+      IsoFireplace fp = this.ownerRef.get();
+      if (fp == null || fp.getSquare() == null) {
+         this.expire();
+         return;
+      }
+      if (!fp.isLit()) {
+         return;
+      }
+      // Slow chimney trickle. Fuel level scales the count modestly.
+      this.accum += zombie.GameTime.getInstance().getMultiplier() * 0.25F;
+      int ticks = 0;
+      while (this.accum > 1.0F && ticks < 2) {
+         this.accum -= 1.0F;
+         ticks++;
+      }
+      if (ticks > 0) {
+         float sx = this.tileX + this.offsetX;
+         float sy = this.tileY + this.offsetY;
+         float sz = this.tileZ + 1.0F;
+         float fuelMul = 0.5F + 0.5F * Math.min(1.0F, fp.getFuelAmount() / 60.0F);
+         int count = Math.max(1, Math.round(ticks * fuelMul));
+         ParticlesFireSmoke.getInstance().spawn(sx, sy, sz, count);
+      }
+   }
+}
