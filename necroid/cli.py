@@ -27,6 +27,7 @@ from .core.profile import find_root, load_profile, resolve_install_to, resolve_s
 from .commands import (
     capture as capture_cmd,
     clean as clean_cmd,
+    config as config_cmd,
     deps_cmd,
     diff as diff_cmd,
     doctor as doctor_cmd,
@@ -76,6 +77,17 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="accept the detected PZ major and auto-migrate legacy mod dirs without prompting")
     s.add_argument("--major", type=int, default=None,
                    help="override the detected workspace major (advanced; normally leave unset)")
+
+    s = sub.add_parser("config", help="show or update workspace config (PZ install paths, defaults)")
+    cfg_sub = s.add_subparsers(dest="config_action", metavar="<action>", required=True)
+    cfg_sub.add_parser("show", help="print the current workspace config")
+    cs = cfg_sub.add_parser("set", help="set a config field")
+    cs.add_argument("field", choices=("client-pz-install", "server-pz-install", "default-install-to"),
+                    help="field name")
+    cs.add_argument("value", help="new value (path for *-pz-install; client|server for default-install-to)")
+    cu = cfg_sub.add_parser("unset", help="clear a config field")
+    cu.add_argument("field", choices=("client-pz-install", "server-pz-install"),
+                    help="field name")
 
     s = sub.add_parser("new", help="create a new mod")
     s.add_argument("name")
@@ -260,6 +272,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 _HANDLERS = {
     "init": init_cmd.run,
+    "config": config_cmd.run,
     "new": new_cmd.run,
     "list": list_cmd.run,
     "status": status_cmd.run,
@@ -328,7 +341,7 @@ def main(argv: list[str] | None = None) -> int:
     # init + update don't require a fully-loaded Profile. `init` is writing
     # the config; `update` only touches the sibling binary + the update cache,
     # and should work from a fresh install that hasn't been initialized yet.
-    if args.command not in ("init", "update", "jdk-install"):
+    if args.command not in ("init", "update", "jdk-install", "config"):
         try:
             args.profile = load_profile(root, cfg=cfg) if cfg is not None else load_profile(root)
         except PzModderError as e:

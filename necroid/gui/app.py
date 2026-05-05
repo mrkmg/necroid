@@ -66,6 +66,7 @@ from ..core.state import read_state
 from .cli_runner import CliRunner, classify_log_line, cmd_busy_headline
 from .constants import CMD_FAILURE_TITLE, InstallTo, PALETTE, STEP_FRIENDLY
 from .import_dialog import ImportDialog
+from .install_picker import InstallPicker
 from .progress import STEP_RE as _STEP_RE, parse_step_line
 from .theme import apply_theme
 from .tooltip import Tooltip
@@ -166,35 +167,51 @@ class ModderApp:
         ttk.Label(title_col, textvariable=self.pz_label_var,
                   style="Tagline.TLabel").pack(anchor="w", pady=(2, 0))
 
-        # Install-to toggle on the right.
+        # Right-hand controls. Two rows so all buttons fit on narrow windows:
+        # row 1 = Install-to + primary actions (Set Up, Change install location);
+        # row 2 = secondary actions (Check Updates, Import).
         right = ttk.Frame(hdr)
         right.pack(side=tk.RIGHT)
 
-        ttk.Label(right, text="Install to:", style="Tagline.TLabel").pack(
+        row1 = ttk.Frame(right)
+        row1.pack(side=tk.TOP, anchor="e")
+        row2 = ttk.Frame(right)
+        row2.pack(side=tk.TOP, anchor="e", pady=(6, 0))
+
+        ttk.Label(row1, text="Install to:", style="Tagline.TLabel").pack(
             side=tk.LEFT, padx=(0, 6))
         self.install_to_var = tk.StringVar(value=self.install_to)
         self.install_to_combo = ttk.Combobox(
-            right, textvariable=self.install_to_var,
+            row1, textvariable=self.install_to_var,
             values=("client", "server"), width=8, state="readonly",
         )
         self.install_to_combo.pack(side=tk.LEFT, padx=(0, 10))
         self.install_to_combo.bind("<<ComboboxSelected>>", self._on_install_to_changed)
 
-        self.btn_init = ttk.Button(right, text="Set Up", style="Primary.TButton",
+        self.btn_init = ttk.Button(row1, text="Set Up", style="Primary.TButton",
                                    command=self.on_init)
         self.btn_init.pack(side=tk.LEFT)
         Tooltip(self.btn_init,
                  "First-time setup copies game files into this folder so mods\n"
                  "can be built. After setup, this re-syncs when the game updates.")
 
-        self.btn_check_updates = ttk.Button(right, text="Check Updates",
+        self.btn_change_install = ttk.Button(
+            row1, text="Change install location…",
+            command=self.on_change_install_location,
+        )
+        self.btn_change_install.pack(side=tk.LEFT, padx=(8, 0))
+        Tooltip(self.btn_change_install,
+                 "Pick a different Project Zomboid install folder.\n"
+                 "Use this if Necroid auto-detected the wrong one.")
+
+        self.btn_check_updates = ttk.Button(row2, text="Check Updates",
                                             command=self.on_check_updates)
-        self.btn_check_updates.pack(side=tk.LEFT, padx=(8, 0))
+        self.btn_check_updates.pack(side=tk.LEFT)
         Tooltip(self.btn_check_updates,
                  "Query upstream (GitHub or GitLab) for newer versions of every\n"
                  "imported mod. Results decorate the Version column with ⬆ badges.")
 
-        self.btn_import = ttk.Button(right, text="Import…",
+        self.btn_import = ttk.Button(row2, text="Import…",
                                      command=self.on_import_clicked)
         self.btn_import.pack(side=tk.LEFT, padx=(8, 0))
         Tooltip(self.btn_import,
@@ -1262,7 +1279,7 @@ class ModderApp:
     def _set_buttons(self, enabled: bool) -> None:
         state = tk.NORMAL if enabled else tk.DISABLED
         widgets = [self.btn_init, self.btn_apply, self.btn_revert]
-        for opt in ("btn_import", "btn_check_updates", "btn_outdated"):
+        for opt in ("btn_import", "btn_check_updates", "btn_outdated", "btn_change_install"):
             w = getattr(self, opt, None)
             if w is not None:
                 widgets.append(w)
@@ -1290,8 +1307,38 @@ class ModderApp:
             ):
                 return
             self._run_cli(["resync-pristine", "--to", self.install_to])
-        else:
-            self._run_cli(["init", "--from", self.install_to, "--yes"])
+            return
+
+        # Pre-init: pick the install path. If auto-detect finds exactly one
+        # valid candidate, proceed silently (no extra click). Otherwise open
+        # the picker so the user can confirm or override.
+        from ..pz.steam_discovery import discover_client_install_candidates
+        candidates = discover_client_install_candidates() if self.install_to == "client" else []
+        ok = [c for c in candidates if c.fingerprint_ok]
+        chosen: Optional[Path] = None
+        if self.install_to == "client" and len(ok) != 1:
+            picker = InstallPicker(self, current=None)
+            chosen = picker.show()
+            if chosen is None:
+                return  # user cancelled
+        cmd = ["init", "--from", self.install_to, "--yes"]
+        if chosen is not None:
+            cmd.extend(["--pz-install", str(chosen)])
+        self._run_cli(cmd)
+
+    def on_change_install_location(self) -> None:
+        try:
+            cfg = read_config(self.root, required=False)
+        except Exception:
+            cfg = None
+        current = cfg.client_pz_install if cfg is not None else None
+        picker = InstallPicker(self, current=current)
+        chosen = picker.show()
+        if chosen is None:
+            return
+        if current is not None and chosen == current:
+            return
+        self._run_cli(["config", "set", "client-pz-install", str(chosen)])
 
     def on_revert(self) -> None:
         if not self._has_pending_changes():

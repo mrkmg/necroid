@@ -135,6 +135,7 @@ External requirements on PATH: `git`, `java` (17+), `javac` (17+), `jar` (ships 
 
 Per-command flags:
 
+- `config`: `show` prints the workspace config; `set <field> <value>` and `unset <field>` edit `<pz>/necroid/config.json` in place. Path fields (`client-pz-install`, `server-pz-install`) are validated to exist and to fingerprint as a real PZ install (presence of `projectzomboid.jar`, a launcher, or a `zombie/` subtree) before being saved. Use this when auto-detection picked the wrong path or after moving a PZ install.
 - `init`: `--from {client,server}` picks the PZ install to seed from. Default comes from `config.workspaceSource`, then falls back to whichever install is configured, then `client`. Writes the pointer file at `<repo>/data/.necroid-pointer.json` and bootstraps `<pz>/necroid/`. `--yes` auto-confirms the detected workspace major. `--major N` overrides the detected major (advanced). Refuses to run if a legacy on-disk layout (old `data/workspace/` etc.) is present — capture any in-progress edits first, then delete the legacy paths and re-init.
 - `resync-pristine`: `--from` as for `init`; `--force-major-change` authorises a workspace re-bind when the source install has moved to a new PZ major; `--force-version-drift` proceeds when Steam has rewritten some installed files with a different PZ version's vanilla (skips restore for drifted files, adopts Steam's current bytes as new pristine, flags every mod as needing re-capture); `--force-orphans` proceeds when the install has `.class` files under mod-touched subtrees that are in neither the manifest nor `classes-original/` (adopted into new pristine); `--yes` skips prompts.
 - `install` / `uninstall` / `verify` / `doctor` / `list` / `status`: `--to {client,server}` chooses the install destination / state file / counting lens. Default from `config.defaultInstallTo`.
@@ -256,6 +257,10 @@ python packaging/build_dist.py
 ```
 
 Produces `dist/necroid(.exe)` + `dist/mods/` + `dist/README.txt`. PyInstaller does not cross-compile; build on each target OS you need. Vineflower is bundled into the binary and self-extracts on first run. The derived PNG assets (`necroid-mark-256.png`, `necroid-icon-256.png`) are bundled via `--add-data` and resolved at runtime via `necroid/assets.py` (which handles both dev and `sys._MEIPASS` frozen mode). On Windows, `necroid-icon.ico` is also baked into the `.exe` via PyInstaller's `--icon` flag.
+
+## PZ install detection
+
+`init` and the GUI's "Set Up" / "Change install location…" surfaces auto-detect the PZ install via `necroid/pz/steam_discovery.py`. The detector is appmanifest-driven: for each Steam root (registry / well-known paths) and each library declared in `steamapps/libraryfolders.vdf`, it reads `appmanifest_<appid>.acf` (108600 client, 380870 server) to find Steam's authoritative `installdir`. If no manifest is present in any library, it falls back to a directory probe (`<lib>/steamapps/common/<conventional-name>`). Every candidate is fingerprinted (presence of `projectzomboid.jar`, a launcher, or a `zombie/` subtree) — stale post-move directories fail this check. Candidates rank: appmanifest > directory-probe; fingerprint-ok > not; lastPlayed desc; path string. All candidates are logged so a wrong pick is easy to diagnose. Users override via `--pz-install '<path>'` on `init`/`resync-pristine`, the `necroid config set client-pz-install '<path>'` command, or the GUI install picker.
 
 ## Things that look like bugs but aren't
 
