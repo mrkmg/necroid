@@ -1,0 +1,13 @@
+{
+  "name": "performance-tweaks-41",
+  "clientOnly": false,
+  "description": "Performance optimizations ported from ZBBetterFPS: IsoMovingObject.separate, IndieGL alpha-func cache, SpriteRenderer RingBuffer (larger buffers + state-change merging).",
+  "category": "utility",
+  "version": "0.1.0",
+  "expectedVersion": "41.78.19",
+  "createdAt": "2026-05-05T14:48:52.185621Z",
+  "updatedAt": "2026-05-05T14:51:36.415581Z",
+  "pristineSnapshot": "9c12aa70f8018af1a110768d33dbe5622513626315a13676ce8ddbcf941e302f",
+  "dependencies": [],
+  "incompatibleWith": []
+}

@@ -1,0 +1,25 @@
+diff --git a/zombie/IndieGL.java b/zombie/IndieGL.java
+index 6449ee2..39e5327 100644
+--- a/zombie/IndieGL.java
++++ b/zombie/IndieGL.java
+@@ -23,6 +23,8 @@ public final class IndieGL {
+    private static final GLState.C4BooleansValue temp4Booleans = new GLState.C4BooleansValue();
+    private static final GLState.CIntFloatValue tempIntFloat = new GLState.CIntFloatValue();
+    private static final Stack<zombie.ShaderStackEntry> m_shaderStack = new Stack<>();
++   private static int s_lastAlphaFunc = Integer.MIN_VALUE;
++   private static float s_lastAlphaRef = Float.NaN;
+ 
+    public static void glBlendFunc(int var0, int var1) {
+       if (SpriteRenderer.instance != null && SpriteRenderer.GL_BLENDFUNC_ENABLED) {
+@@ -236,6 +238,11 @@ public final class IndieGL {
+    }
+ 
+    public static void glAlphaFunc(int var0, float var1) {
++      if (var0 == s_lastAlphaFunc && var1 == s_lastAlphaRef) {
++         return;
++      }
++      s_lastAlphaFunc = var0;
++      s_lastAlphaRef = var1;
+       GLState.AlphaFunc.set(tempIntFloat.set(var0, var1));
+    }
+ 
