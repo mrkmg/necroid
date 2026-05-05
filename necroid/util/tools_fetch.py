@@ -86,6 +86,33 @@ def bundled_jdk_dir(tools_dir: Path) -> Path:
     return tools_dir / _BUNDLED_DIRNAME
 
 
+def bundled_jdk_download_info() -> dict:
+    """Adoptium URLs + filename hint for the pinned JDK on this OS/arch.
+
+    Used by the GUI's manual-install recovery flow when auto-fetch fails
+    (corp proxy, AV interception, offline laptop). Raises RuntimeError on
+    unsupported architecture — the auto-fetch path raises ToolMissing for
+    the same case, so callers should be prepared to surface either."""
+    os_name = _adoptium_os()
+    arch = _adoptium_arch()
+    ext = _adoptium_archive_ext()
+    quoted_release = urllib.parse.quote(BUNDLED_JDK_RELEASE, safe="")
+    return {
+        "release": BUNDLED_JDK_RELEASE,
+        "os": os_name,
+        "arch": arch,
+        "ext": ext,
+        "binary_url": (
+            f"https://api.adoptium.net/v3/binary/version/{quoted_release}/"
+            f"{os_name}/{arch}/jdk/hotspot/normal/eclipse"
+        ),
+        "checksum_url": (
+            f"https://api.adoptium.net/v3/checksum/version/{quoted_release}/"
+            f"{os_name}/{arch}/jdk/hotspot/normal/eclipse"
+        ),
+    }
+
+
 def _read_pin_marker(jdk_home: Path) -> str:
     try:
         return (jdk_home / _PIN_MARKER_NAME).read_text(encoding="utf-8").strip()
@@ -171,21 +198,17 @@ def ensure_bundled_jdk(tools_dir: Path) -> Path:
         if expected_sha:
             actual = _sha256(tmp_archive)
             if actual != expected_sha:
+                size = tmp_archive.stat().st_size
                 raise RuntimeError(
-                    f"JDK download SHA mismatch: got {actual}, expected {expected_sha}"
+                    f"JDK download SHA mismatch (archive bytes are valid but "
+                    f"do not match Adoptium's published checksum — likely a "
+                    f"proxy/AV rewriting the download, or Adoptium endpoint drift).\n"
+                    f"    got:      {actual}\n"
+                    f"    expected: {expected_sha}\n"
+                    f"    size:     {size} bytes\n"
+                    f"    url:      {binary_url}"
                 )
-        log.info(f"extracting -> {target}")
-        tmp_extract.mkdir(parents=True, exist_ok=True)
-        if ext == "zip":
-            with zipfile.ZipFile(tmp_archive) as zf:
-                zf.extractall(tmp_extract)
-        else:
-            with tarfile.open(tmp_archive, "r:gz") as tf:
-                _safe_tar_extract(tf, tmp_extract)
-        if target.exists():
-            shutil.rmtree(target)
-        tmp_extract.replace(target)
-        (target / _PIN_MARKER_NAME).write_text(BUNDLED_JDK_RELEASE, encoding="utf-8")
+        _extract_jdk_archive(tmp_archive, target, tmp_extract, kind=ext)
     except (urllib.error.URLError, OSError, RuntimeError) as e:
         if tmp_extract.exists():
             shutil.rmtree(tmp_extract, ignore_errors=True)
@@ -198,6 +221,86 @@ def ensure_bundled_jdk(tools_dir: Path) -> Path:
                 pass
 
     return target
+
+
+def install_from_archive(archive: Path, tools_dir: Path,
+                          *, verify: bool = True) -> Path:
+    """Install the pinned JDK from a user-supplied archive.
+
+    Recovery path for the auto-fetch flow when network/proxy/AV blocks the
+    Adoptium download. The archive must be the canonical Temurin distribution
+    for the pinned `BUNDLED_JDK_RELEASE` on this OS/arch — sniffed for a
+    valid zip/gzip header and (when `verify=True` and Adoptium reachable)
+    SHA256-checked against the published checksum.
+    """
+    if not archive.is_file():
+        raise FileNotFoundError(f"archive not found: {archive}")
+    _sniff_archive(archive, str(archive), "manual install")
+    if verify:
+        try:
+            info = bundled_jdk_download_info()
+        except RuntimeError as e:
+            raise RuntimeError(f"unsupported platform for bundled JDK: {e}")
+        expected_sha = _fetch_checksum(info["checksum_url"])
+        if expected_sha:
+            actual = _sha256(archive)
+            if actual != expected_sha:
+                raise RuntimeError(
+                    f"archive SHA256 does not match Adoptium's published "
+                    f"checksum for {BUNDLED_JDK_RELEASE} ({info['os']}/{info['arch']}).\n"
+                    f"    got:      {actual}\n"
+                    f"    expected: {expected_sha}\n"
+                    f"    archive:  {archive}"
+                )
+        else:
+            log.warn("could not fetch Adoptium checksum — skipping SHA verify")
+    tools_dir.mkdir(parents=True, exist_ok=True)
+    _cleanup_legacy_caches(tools_dir)
+    target = bundled_jdk_dir(tools_dir)
+    tmp_extract = tools_dir / f"{_BUNDLED_DIRNAME}.extract.tmp"
+    if tmp_extract.exists():
+        shutil.rmtree(tmp_extract)
+    log.info(f"extracting -> {target}")
+    try:
+        _extract_jdk_archive(archive, target, tmp_extract)
+    except Exception:
+        if tmp_extract.exists():
+            shutil.rmtree(tmp_extract, ignore_errors=True)
+        raise
+    return target
+
+
+def _extract_jdk_archive(archive: Path, target: Path, tmp_extract: Path,
+                          *, kind: str | None = None) -> None:
+    """Extract `archive` (zip or .tar.gz) into `tmp_extract`, then atomically
+    swap it into `target` and stamp the pin marker. Caller cleans up
+    `tmp_extract` on exception. `kind` forces the format ("zip" / "tar.gz");
+    when omitted, the suffix decides — required for the auto-fetch path
+    where the on-disk name ends in `.tmp`."""
+    tmp_extract.mkdir(parents=True, exist_ok=True)
+    if kind is None:
+        suffixes = "".join(archive.suffixes[-2:]).lower()
+        if archive.suffix.lower() == ".zip":
+            kind = "zip"
+        elif suffixes.endswith((".tar.gz", ".tgz")):
+            kind = "tar.gz"
+        else:
+            raise RuntimeError(
+                f"unrecognized archive type for {archive.name} — "
+                f"expected .zip, .tar.gz, or .tgz"
+            )
+    if kind == "zip":
+        with zipfile.ZipFile(archive) as zf:
+            zf.extractall(tmp_extract)
+    elif kind == "tar.gz":
+        with tarfile.open(archive, "r:gz") as tf:
+            _safe_tar_extract(tf, tmp_extract)
+    else:
+        raise RuntimeError(f"unsupported archive kind: {kind!r}")
+    if target.exists():
+        shutil.rmtree(target)
+    tmp_extract.replace(target)
+    (target / _PIN_MARKER_NAME).write_text(BUNDLED_JDK_RELEASE, encoding="utf-8")
 
 
 # ----- Git (Windows) -----------------------------------------------------
@@ -254,8 +357,62 @@ def ensure_portable_git(tools_dir: Path) -> Path | None:
 
 def _download(url: str, dest: Path) -> None:
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    with urllib.request.urlopen(req) as resp, dest.open("wb") as fp:
-        shutil.copyfileobj(resp, fp)
+    with urllib.request.urlopen(req) as resp:
+        final_url = resp.geturl()
+        content_type = resp.headers.get("Content-Type", "?")
+        content_length_hdr = resp.headers.get("Content-Length")
+        try:
+            expected_len = int(content_length_hdr) if content_length_hdr else None
+        except ValueError:
+            expected_len = None
+        if final_url != url:
+            log.info(f"  redirected -> {final_url}")
+        log.info(
+            f"  Content-Type: {content_type}"
+            + (f", Content-Length: {expected_len}" if expected_len is not None else "")
+        )
+        written = 0
+        with dest.open("wb") as fp:
+            while True:
+                chunk = resp.read(1 << 20)
+                if not chunk:
+                    break
+                fp.write(chunk)
+                written += len(chunk)
+    if expected_len is not None and written != expected_len:
+        raise RuntimeError(
+            f"download truncated: got {written} bytes, expected {expected_len} "
+            f"(url={final_url}, content-type={content_type})"
+        )
+    _sniff_archive(dest, final_url, content_type)
+
+
+_ZIP_MAGIC = b"PK\x03\x04"
+_ZIP_EMPTY = b"PK\x05\x06"
+_GZIP_MAGIC = b"\x1f\x8b"
+
+
+def _sniff_archive(path: Path, url: str, content_type: str) -> None:
+    """Sanity-check the downloaded bytes look like an archive, not an HTML
+    error page or JSON error body. Catches proxy/AV interception and
+    redirect-to-error-page failures with a clearer message than 'SHA mismatch'."""
+    try:
+        with path.open("rb") as fp:
+            head = fp.read(8)
+    except OSError:
+        return
+    if head.startswith(_ZIP_MAGIC) or head.startswith(_ZIP_EMPTY):
+        return
+    if head.startswith(_GZIP_MAGIC):
+        return
+    preview = head[:64].decode("ascii", errors="replace")
+    raise RuntimeError(
+        f"downloaded file is not a zip/gzip archive — likely a proxy/AV "
+        f"intercept or an error page served as the binary.\n"
+        f"    url: {url}\n"
+        f"    content-type: {content_type}\n"
+        f"    first bytes: {preview!r}"
+    )
 
 
 def _fetch_checksum(url: str) -> str | None:

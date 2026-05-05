@@ -22,7 +22,7 @@ from pathlib import Path
 from . import __version__
 from .util import logging_util as log
 from .core.config import read_config
-from .errors import ConfigError, PzModderError
+from .errors import ConfigError, PzModderError, ToolMissing
 from .core.profile import find_root, load_profile, resolve_install_to, resolve_source
 from .commands import (
     capture as capture_cmd,
@@ -34,6 +34,7 @@ from .commands import (
     import_cmd,
     init as init_cmd,
     install_cmd,
+    jdk_install as jdk_install_cmd,
     list_cmd,
     mod_update as mod_update_cmd,
     new as new_cmd,
@@ -246,6 +247,14 @@ def _build_parser() -> argparse.ArgumentParser:
     s.add_argument("--yes", "-y", action="store_true",
                    help="skip confirmation prompts")
 
+    s = sub.add_parser("jdk-install",
+                       help="install the pinned bundled JDK from a local archive (manual recovery)")
+    s.add_argument("--archive", required=True,
+                   help="path to a Temurin JDK archive (.zip on Windows; .tar.gz on macOS/Linux) "
+                        "matching the pinned release")
+    s.add_argument("--no-verify", action="store_true",
+                   help="skip the SHA256 check against Adoptium's checksum endpoint")
+
     return p
 
 
@@ -269,6 +278,7 @@ _HANDLERS = {
     "update": update_cmd.run,
     "import": import_cmd.run,
     "mod-update": mod_update_cmd.run,
+    "jdk-install": jdk_install_cmd.run,
 }
 
 
@@ -318,7 +328,7 @@ def main(argv: list[str] | None = None) -> int:
     # init + update don't require a fully-loaded Profile. `init` is writing
     # the config; `update` only touches the sibling binary + the update cache,
     # and should work from a fresh install that hasn't been initialized yet.
-    if args.command not in ("init", "update"):
+    if args.command not in ("init", "update", "jdk-install"):
         try:
             args.profile = load_profile(root, cfg=cfg) if cfg is not None else load_profile(root)
         except PzModderError as e:
@@ -330,6 +340,11 @@ def main(argv: list[str] | None = None) -> int:
     handler = _HANDLERS[args.command]
     try:
         code = int(handler(args) or 0)
+    except ToolMissing as e:
+        # Structured marker for the GUI: lets the recovery dialog pinpoint
+        # *which* tool is missing without screen-scraping the prose hint.
+        log.error(f"TOOL_MISSING:{e.name}: {e}")
+        return 1
     except PzModderError as e:
         log.error(str(e))
         return 1

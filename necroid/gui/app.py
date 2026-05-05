@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Optional
 
 import tkinter as tk
-from tkinter import font as tkfont, messagebox, ttk
+from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 from .. import __version__
 from ..remote import updater
@@ -48,6 +48,7 @@ from ..errors import (
     ModDependencyMissing,
     ModIncompatibility,
     PzVersionDetectError,
+    ToolMissing,
 )
 from ..core.mod import (
     has_origin,
@@ -99,6 +100,12 @@ class ModderApp:
         self._warnings: list[str] = []
         self._log_expanded = False
         self._pz_mismatch_reason: Optional[str] = None
+        # Recovery-dialog gating. `_pending_jdk_recovery` is set by in-process
+        # java callers (e.g. refresh's `detect_pz_version`) and drained on the
+        # Tk loop. `_jdk_recovery_shown` keeps us from re-prompting every
+        # refresh while the JDK is still missing.
+        self._pending_jdk_recovery: Optional[str] = None
+        self._jdk_recovery_shown = False
 
         self._build_header()
         self._build_update_banner()
@@ -530,6 +537,18 @@ class ModderApp:
                         )
                 except PzVersionDetectError as e:
                     mismatch_reason = f"cannot read {self.install_to} install's PZ version: {e}"
+                except ToolMissing as e:
+                    # In-process java probe (refresh runs `detect_pz_version`
+                    # directly, not via subprocess). Defer the recovery dialog
+                    # until after refresh finishes laying out widgets.
+                    if e.name == "java":
+                        self._pending_jdk_recovery = str(e)
+                        mismatch_reason = (
+                            f"cannot read {self.install_to} install's PZ version: "
+                            f"bundled JDK unavailable"
+                        )
+                    else:
+                        raise
         self._pz_mismatch_reason = mismatch_reason
 
         # Filter mods to workspace major (or everything if workspace unbound — legacy).
@@ -649,6 +668,11 @@ class ModderApp:
         self._update_primary_button()
         self._update_apply_button_state()
         self._update_outdated_label()
+        if self._pending_jdk_recovery and not self._jdk_recovery_shown:
+            msg = self._pending_jdk_recovery
+            self._pending_jdk_recovery = None
+            self._jdk_recovery_shown = True
+            self.tk.after_idle(lambda m=msg: self._show_jdk_recovery_dialog(m))
 
     def _rebuild_relation_maps(self, mods_dir: Path, candidates: list[str]) -> None:
         """Compute per-mod dep closure, incompat set, effective clientOnly.
@@ -1009,6 +1033,8 @@ class ModderApp:
             self._set_status("error", "Failed — see details below.", progress=None)
             if not self._log_expanded:
                 self._toggle_log()
+            if self._maybe_show_tool_missing_dialog():
+                return
             self._show_failure_dialog(code)
 
     def _show_failure_dialog(self, code: int) -> None:
@@ -1040,6 +1066,198 @@ class ModderApp:
         px = self.tk.winfo_rootx() + (self.tk.winfo_width() - dlg.winfo_width()) // 2
         py = self.tk.winfo_rooty() + (self.tk.winfo_height() - dlg.winfo_height()) // 3
         dlg.geometry(f"+{max(px, 0)}+{max(py, 0)}")
+
+    # --- structured-error recovery dialogs ---
+
+    _TOOL_MISSING_PREFIX = "TOOL_MISSING:"
+
+    def _maybe_show_tool_missing_dialog(self) -> bool:
+        """When a CLI run failed with `ERROR: TOOL_MISSING:<name>: ...`,
+        show the matching recovery dialog and return True. Currently only
+        the JDK path is handled — git/javac fall through to the generic
+        failure dialog."""
+        err = self._last_error or ""
+        if not err.startswith(self._TOOL_MISSING_PREFIX):
+            return False
+        rest = err[len(self._TOOL_MISSING_PREFIX):]
+        head, _, tail = rest.partition(":")
+        tool_name = head.strip()
+        message = tail.strip()
+        if tool_name == "java":
+            self._show_jdk_recovery_dialog(message)
+            return True
+        return False
+
+    def _show_jdk_recovery_dialog(self, original_message: str) -> None:
+        """Walk the user through manually downloading the pinned Temurin JDK
+        (corp proxy / AV / offline laptop bypass) and hand the archive off to
+        `necroid jdk-install --archive <path>` for verification + extraction."""
+        from ..util import tools_fetch
+
+        try:
+            info = tools_fetch.bundled_jdk_download_info()
+        except RuntimeError as e:
+            messagebox.showerror(
+                "Couldn't compute download URL",
+                f"This OS/arch isn't supported by Adoptium's prebuilt JDKs.\n\n{e}\n\n"
+                f"Original error:\n{original_message}",
+            )
+            return
+
+        dlg = tk.Toplevel(self.tk)
+        dlg.title("JDK download failed — manual install")
+        dlg.transient(self.tk)
+        dlg.configure(bg=PALETTE["char_900"])
+        dlg.grab_set()
+
+        ttk.Label(dlg, text="JDK download failed",
+                  style="Brand.TLabel").pack(anchor="w", padx=16, pady=(14, 4))
+        body = (
+            f"Necroid couldn't auto-download the pinned JDK "
+            f"({info['release']}, {info['os']}/{info['arch']}). "
+            f"This is usually a corporate proxy, antivirus, or offline machine.\n\n"
+            f"To recover, download the archive yourself in a browser, then point "
+            f"Necroid at the file — it'll verify and extract it into place."
+        )
+        tk.Message(dlg, text=body, width=520,
+                   bg=PALETTE["char_900"], fg=PALETTE["bone"],
+                   font=("Segoe UI", 10)).pack(anchor="w", padx=16, pady=(0, 10))
+
+        url_frame = ttk.Frame(dlg)
+        url_frame.pack(fill=tk.X, padx=16, pady=(0, 10))
+        ttk.Label(url_frame, text="Download URL:",
+                  style="Tagline.TLabel").pack(anchor="w")
+        url_entry = tk.Entry(url_frame,
+                             bg=PALETTE["char_700"], fg=PALETTE["bone"],
+                             font=("Consolas", 9), borderwidth=0,
+                             insertbackground=PALETTE["bone"],
+                             readonlybackground=PALETTE["char_700"])
+        url_entry.insert(0, info["binary_url"])
+        url_entry.configure(state="readonly")
+        url_entry.pack(fill=tk.X, pady=(2, 0))
+
+        downloads = self._guess_downloads_dir()
+        scanned = self._scan_for_jdk_archive(downloads, info["ext"])
+        scan_var = tk.StringVar(value=(
+            f"Found in Downloads: {scanned.name}" if scanned
+            else f"No matching .{info['ext']} found in {downloads}"
+            if downloads else "Downloads folder not detected."
+        ))
+        ttk.Label(dlg, textvariable=scan_var,
+                  style="Tagline.TLabel").pack(anchor="w", padx=16, pady=(0, 10))
+
+        # Buttons row 1: open URL / open Downloads.
+        row1 = ttk.Frame(dlg)
+        row1.pack(fill=tk.X, padx=12, pady=(0, 6))
+
+        def _open_url() -> None:
+            import webbrowser
+            try:
+                webbrowser.open(info["binary_url"])
+            except Exception:
+                pass
+
+        def _open_downloads() -> None:
+            if not downloads or not downloads.is_dir():
+                messagebox.showinfo("No Downloads folder",
+                                    "Couldn't locate a Downloads folder.")
+                return
+            self._open_in_file_browser(downloads)
+
+        ttk.Button(row1, text="Open download URL",
+                   command=_open_url).pack(side=tk.LEFT)
+        ttk.Button(row1, text="Open Downloads folder",
+                   command=_open_downloads).pack(side=tk.LEFT, padx=(8, 0))
+
+        # Buttons row 2: pick archive / cancel.
+        row2 = ttk.Frame(dlg)
+        row2.pack(fill=tk.X, padx=12, pady=(6, 12))
+
+        def _install(path: Path) -> None:
+            dlg.destroy()
+            self._run_cli(["jdk-install", "--archive", str(path)])
+
+        def _use_scanned() -> None:
+            if scanned:
+                _install(scanned)
+
+        def _browse() -> None:
+            initial = str(downloads) if downloads and downloads.is_dir() else None
+            ext = info["ext"]
+            if ext == "zip":
+                filetypes = [("Zip archives", "*.zip"), ("All files", "*.*")]
+            else:
+                filetypes = [("Tar gzip archives", "*.tar.gz *.tgz"),
+                             ("All files", "*.*")]
+            picked = filedialog.askopenfilename(
+                parent=dlg, title="Select Temurin JDK archive",
+                initialdir=initial, filetypes=filetypes,
+            )
+            if not picked:
+                return
+            _install(Path(picked))
+
+        if scanned:
+            ttk.Button(row2, text=f"Install {scanned.name}",
+                       style="Primary.TButton",
+                       command=_use_scanned).pack(side=tk.LEFT)
+            ttk.Button(row2, text="Choose different archive…",
+                       command=_browse).pack(side=tk.LEFT, padx=(8, 0))
+        else:
+            ttk.Button(row2, text="Choose archive…",
+                       style="Primary.TButton",
+                       command=_browse).pack(side=tk.LEFT)
+        ttk.Button(row2, text="Cancel",
+                   command=dlg.destroy).pack(side=tk.RIGHT)
+
+        dlg.update_idletasks()
+        px = self.tk.winfo_rootx() + (self.tk.winfo_width() - dlg.winfo_width()) // 2
+        py = self.tk.winfo_rooty() + (self.tk.winfo_height() - dlg.winfo_height()) // 3
+        dlg.geometry(f"+{max(px, 0)}+{max(py, 0)}")
+
+    @staticmethod
+    def _guess_downloads_dir() -> Optional[Path]:
+        cand = Path.home() / "Downloads"
+        return cand if cand.is_dir() else None
+
+    @staticmethod
+    def _scan_for_jdk_archive(downloads: Optional[Path],
+                              ext: str) -> Optional[Path]:
+        """Best-effort: pick the most recently modified Temurin-looking
+        archive in Downloads. We don't validate here — `jdk-install` will
+        sniff the bytes and SHA-check it."""
+        if not downloads or not downloads.is_dir():
+            return None
+        if ext == "zip":
+            patterns = ("OpenJDK*-jdk_*windows*.zip", "*jdk*.zip")
+        else:
+            patterns = ("OpenJDK*-jdk_*.tar.gz", "*jdk*.tar.gz", "*jdk*.tgz")
+        seen: set[Path] = set()
+        candidates: list[Path] = []
+        for pat in patterns:
+            for p in downloads.glob(pat):
+                if p in seen or not p.is_file():
+                    continue
+                seen.add(p)
+                candidates.append(p)
+        if not candidates:
+            return None
+        candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        return candidates[0]
+
+    @staticmethod
+    def _open_in_file_browser(path: Path) -> None:
+        if sys.platform == "win32":
+            try:
+                os.startfile(str(path))  # type: ignore[attr-defined]
+            except OSError:
+                pass
+            return
+        opener = "open" if sys.platform == "darwin" else "xdg-open"
+        try:
+            subprocess.Popen([opener, str(path)])
+        except OSError:
+            pass
 
     def _set_buttons(self, enabled: bool) -> None:
         state = tk.NORMAL if enabled else tk.DISABLED
