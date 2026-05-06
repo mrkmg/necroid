@@ -1,0 +1,13 @@
+{
+  "name": "instant-zoom-41",
+  "clientOnly": true,
+  "description": "Instantly snap to zoom levels",
+  "category": "utilites",
+  "version": "0.1.0",
+  "expectedVersion": "41.78.19",
+  "createdAt": "2026-05-05T17:47:32.856877Z",
+  "updatedAt": "2026-05-05T17:51:02.178933Z",
+  "pristineSnapshot": "c3993b519a362832bc1df6a3fa92b9fe5da3b200d5cc258c2150a5d8a37b84c0",
+  "dependencies": [],
+  "incompatibleWith": []
+}

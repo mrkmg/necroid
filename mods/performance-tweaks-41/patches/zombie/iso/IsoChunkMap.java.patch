@@ -1,0 +1,17 @@
+diff --git a/zombie/iso/IsoChunkMap.java b/zombie/iso/IsoChunkMap.java
+index d792358..b64ad5d 100644
+--- a/zombie/iso/IsoChunkMap.java
++++ b/zombie/iso/IsoChunkMap.java
+@@ -71,6 +71,12 @@ public final class IsoChunkMap {
+    }
+ 
+    public static void CalcChunkWidth() {
++      int override = zombie.perftweaks.PerfTweaksLua.readChunkGridOverride();
++      if (override > 0) {
++         ChunkGridWidth = override;
++         ChunkWidthInTiles = ChunkGridWidth * 10;
++         return;
++      }
+       if (DebugOptions.instance.WorldChunkMap5x5.getValue()) {
+          ChunkGridWidth = 5;
+          ChunkWidthInTiles = ChunkGridWidth * 10;

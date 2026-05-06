@@ -529,7 +529,7 @@ class ModderApp:
             self._update_apply_button_state()
             return
         installed_stack: list[str] = []
-        if profile:
+        if profile and profile.pz_necroid_dir is not None:
             state = read_state(profile.state_file(self.install_to))
             installed_stack = list(state.stack)
         self.installed_stack = installed_stack

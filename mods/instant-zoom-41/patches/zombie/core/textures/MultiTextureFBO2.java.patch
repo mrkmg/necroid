@@ -1,0 +1,43 @@
+diff --git a/zombie/core/textures/MultiTextureFBO2.java b/zombie/core/textures/MultiTextureFBO2.java
+index fb6aa3c..2740433 100644
+--- a/zombie/core/textures/MultiTextureFBO2.java
++++ b/zombie/core/textures/MultiTextureFBO2.java
+@@ -90,7 +90,7 @@ public final class MultiTextureFBO2 {
+                var3.add(100);
+             }
+ 
+-            var3.sort((var0, var1x) -> var1x - var0);
++            var3.sort((var0, var1x) -> (Integer)var1x - (Integer)var0);
+             this.zoomLevels = new float[var3.size()];
+ 
+             for (int var14 = 0; var14 < var3.size(); var14++) {
+@@ -157,27 +157,9 @@ public final class MultiTextureFBO2 {
+          this.setTargetZoom(var1, var4);
+       }
+ 
+-      float var5 = 0.004F * zombie.GameTime.instance.getMultiplier() / zombie.GameTime.instance.getTrueMultiplier() * (Core.TileScale == 2 ? 1.5F : 1.5F);
+-      if (!this.bAutoZoom[var1]) {
+-         var5 *= 5.0F;
+-      } else if (this.targetZoom[var1] > this.zoom[var1]) {
+-         var5 *= 1.0F;
+-      }
+-
+-      if (this.targetZoom[var1] > this.zoom[var1]) {
+-         this.zoom[var1] = this.zoom[var1] + var5;
++      if (this.zoom[var1] != this.targetZoom[var1]) {
++         this.zoom[var1] = this.targetZoom[var1];
+          IsoPlayer.players[var1].dirtyRecalcGridStackTime = 2.0F;
+-         if (this.zoom[var1] > this.targetZoom[var1] || Math.abs(this.zoom[var1] - this.targetZoom[var1]) < 0.001F) {
+-            this.zoom[var1] = this.targetZoom[var1];
+-         }
+-      }
+-
+-      if (this.targetZoom[var1] < this.zoom[var1]) {
+-         this.zoom[var1] = this.zoom[var1] - var5;
+-         IsoPlayer.players[var1].dirtyRecalcGridStackTime = 2.0F;
+-         if (this.zoom[var1] < this.targetZoom[var1] || Math.abs(this.zoom[var1] - this.targetZoom[var1]) < 0.001F) {
+-            this.zoom[var1] = this.targetZoom[var1];
+-         }
+       }
+ 
+       this.setCameraToCentre();

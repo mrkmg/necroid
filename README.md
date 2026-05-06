@@ -98,6 +98,7 @@ Each mod ships with its own README — click through for behaviour notes, in-gam
 
 | Mod | Client-only? | What it does |
 |---|---|---|
+| [instant-zoom](mods/instant-zoom-41/README.md) | yes | Removes smooth zoom interpolation — mouse-wheel and auto-zoom snap instantly between levels. |
 | [more-zoom](mods/more-zoom-41/README.md) | yes | Adds one extra zoom-out (300%) and one extra zoom-in (25%) level. |
 | [notifications](mods/notifications-41/README.md) | yes | Utility / API mod. Shared toast-notification surface other mods call into. |
 | [particles-fx](mods/particles-fx-41/README.md) | yes | GPU-instanced particle FX: fire smoke + flames, muzzle flash, gun smoke, vehicle exhaust (gas-pedal gated), burning characters, cigarette smoke. |

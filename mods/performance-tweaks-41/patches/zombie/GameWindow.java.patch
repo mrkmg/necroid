@@ -1,0 +1,103 @@
+diff --git a/zombie/GameWindow.java b/zombie/GameWindow.java
+index 9d4695d..87fad53 100644
+--- a/zombie/GameWindow.java
++++ b/zombie/GameWindow.java
+@@ -133,6 +133,10 @@ public final class GameWindow {
+    public static volatile boolean closeRequested;
+    public static float averageFPS = PerformanceSettings.getLockFPS();
+    private static boolean doRenderEvent = false;
++   private static int s_updateRateLastMode = -1;
++   private static int s_updateRateFramesCovered = 1;
++   private static int s_updateRateAdaptiveInterval = 1;
++   private static int s_updateRateAdaptiveCheckFrame = 0;
+    public static boolean bLuaDebuggerKeyDown = false;
+    public static FileSystem fileSystem = new FileSystemImpl();
+    public static AssetManagers assetManagers = new AssetManagers(fileSystem);
+@@ -307,6 +311,70 @@ public final class GameWindow {
+       renderInternal();
+    }
+ 
++   private static void logicWithUpdateRateMode() {
++      if (GameServer.bServer) {
++         zombie.GameWindow.s_performance.logic.invokeAndMeasure(zombie.GameWindow::logic);
++         return;
++      }
++
++      int var0 = zombie.perftweaks.PerfTweaksLua.getUpdateRateMode();
++      if (var0 != s_updateRateLastMode) {
++         s_updateRateLastMode = var0;
++         s_updateRateFramesCovered = 1;
++         s_updateRateAdaptiveInterval = 1;
++         s_updateRateAdaptiveCheckFrame = 0;
++      }
++
++      int var1 = getUpdateRateInterval(var0);
++      if (var1 <= 1) {
++         s_updateRateFramesCovered = 1;
++         zombie.GameWindow.s_performance.logic.invokeAndMeasure(zombie.GameWindow::logic);
++      } else if (s_updateRateFramesCovered < var1) {
++         s_updateRateFramesCovered++;
++      } else {
++         int var2 = s_updateRateFramesCovered;
++         s_updateRateFramesCovered = 1;
++         float var3 = zombie.GameTime.instance.FPSMultiplier;
++         try {
++            zombie.GameTime.instance.FPSMultiplier = var3 * var2;
++            zombie.GameWindow.s_performance.logic.invokeAndMeasure(zombie.GameWindow::logic);
++         } finally {
++            zombie.GameTime.instance.FPSMultiplier = var3;
++         }
++      }
++   }
++
++   private static int getUpdateRateInterval(int var0) {
++      if (var0 == zombie.perftweaks.PerfTweaksLua.UPDATE_RATE_HALF) {
++         return 2;
++      } else if (var0 == zombie.perftweaks.PerfTweaksLua.UPDATE_RATE_ADAPTIVE) {
++         updateAdaptiveInterval();
++         return s_updateRateAdaptiveInterval;
++      } else {
++         return 1;
++      }
++   }
++
++   private static void updateAdaptiveInterval() {
++      s_updateRateAdaptiveCheckFrame++;
++      if (s_updateRateAdaptiveCheckFrame < 30) {
++         return;
++      }
++
++      s_updateRateAdaptiveCheckFrame = 0;
++      int var0 = PerformanceSettings.getLockFPS();
++      if (PerformanceSettings.isUncappedFPS()) {
++         var0 = Math.max(var0, (int)averageFPS);
++      }
++
++      int var1 = Math.max(1, var0 / 10);
++      if (averageFPS < 20.0F && s_updateRateAdaptiveInterval < var1) {
++         s_updateRateAdaptiveInterval++;
++      } else if (averageFPS > 24.0F && s_updateRateAdaptiveInterval > 1) {
++         s_updateRateAdaptiveInterval--;
++      }
++   }
++
+    protected static void renderInternal() {
+       if (!PerformanceSettings.LightingThread && LightingJNI.init && !LightingJNI.WaitingForMain()) {
+          LightingJNI.DoLightingUpdateNew(System.nanoTime());
+@@ -592,7 +660,7 @@ public final class GameWindow {
+          IsoCamera.frameState.frameCount++;
+          zombie.GameWindow.s_performance.frameStep.start();
+          s_fpsTracking.frameStep();
+-         zombie.GameWindow.s_performance.logic.invokeAndMeasure(zombie.GameWindow::logic);
++         logicWithUpdateRateMode();
+          Core.getInstance().setScreenSize(RenderThread.getDisplayWidth(), RenderThread.getDisplayHeight());
+          renderInternal();
+          if (doRenderEvent) {
+@@ -939,6 +1007,7 @@ public final class GameWindow {
+       CustomSandboxOptions.instance.init();
+       CustomSandboxOptions.instance.initInstance(zombie.SandboxOptions.instance);
+       LuaManager.LoadDirBase();
++      zombie.perftweaks.PerfTweaksLua.boot();
+       zombie.ZomboidGlobals.Load();
+       LuaEventManager.triggerEvent("OnLoadSoundBanks");
+    }

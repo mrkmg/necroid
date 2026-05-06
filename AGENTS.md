@@ -33,8 +33,10 @@ Mods are unified diffs against a frozen decompile of PZ. Live at `mods/<base>-<m
 
 ### Create a new mod
 
+When being asked to plan a new mod, you should first run the `new mod-name` and `enter mod-name` commands, **before any research**, so you can get a src-my-mod folder you can use to do your research.
+
 ```bash
-necroid new my-mod --description "..." [--client-only] [--category utility]
+necroid new my-mod --description "..." [--client-only] [--category utility] [--depends-on dep1]
 necroid enter my-mod                # seeds src-my-mod/ from pristine
 # edit files under src-my-mod/zombie/...
 necroid test                        # javac-only, fast feedback loop

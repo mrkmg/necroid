@@ -1,0 +1,213 @@
+package zombie.perftweaks;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import se.krka.kahlua.integration.LuaReturn;
+import se.krka.kahlua.integration.annotations.LuaMethod;
+import se.krka.kahlua.luaj.compiler.LuaCompiler;
+import se.krka.kahlua.vm.LuaClosure;
+import zombie.Lua.LuaManager;
+import zombie.core.logger.ExceptionLogger;
+import zombie.debug.DebugLog;
+import zombie.notifications.NotificationAPI;
+
+public final class PerfTweaksLua {
+    private static volatile boolean booted = false;
+    public static final int UPDATE_RATE_NORMAL = 0;
+    public static final int UPDATE_RATE_HALF = 1;
+    public static final int UPDATE_RATE_ADAPTIVE = 2;
+    private static volatile int updateRateMode = UPDATE_RATE_NORMAL;
+
+    public PerfTweaksLua() {}
+
+    public static File configFile() {
+        return new File(System.getProperty("user.home") + File.separator + "Zomboid"
+            + File.separator + "perftweaks.txt");
+    }
+
+    private static final class Config {
+        int chunkGrid = 0;
+        int updateRateMode = UPDATE_RATE_NORMAL;
+    }
+
+    private static Config readConfig() {
+        Config config = new Config();
+        File f = configFile();
+        if (!f.exists()) return config;
+        try (BufferedReader br = new BufferedReader(new FileReader(f))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty() || line.startsWith("#")) continue;
+                int eq = line.indexOf('=');
+                if (eq <= 0) continue;
+                String k = line.substring(0, eq).trim().toLowerCase();
+                String v = line.substring(eq + 1).trim();
+                if (k.equals("chunkgrid")) {
+                    try {
+                        int n = Integer.parseInt(v);
+                        if (isValidChunkGrid(n)) config.chunkGrid = n;
+                    } catch (NumberFormatException ignore) {}
+                } else if (k.equals("updateratemode")) {
+                    config.updateRateMode = parseUpdateRateMode(v);
+                }
+            }
+        } catch (Exception ex) {
+            DebugLog.log("perftweaks: read failed: " + ex);
+        }
+        updateRateMode = config.updateRateMode;
+        return config;
+    }
+
+    public static int readChunkGridOverride() {
+        return readConfig().chunkGrid;
+    }
+
+    private static boolean isValidChunkGrid(int n) {
+        return n == 5 || n == 7 || n == 9 || n == 11 || n == 13;
+    }
+
+    public static int getUpdateRateMode() {
+        return updateRateMode;
+    }
+
+    private static int parseUpdateRateMode(String value) {
+        if ("half".equalsIgnoreCase(value)) return UPDATE_RATE_HALF;
+        if ("adaptive".equalsIgnoreCase(value) || "drop-as-needed".equalsIgnoreCase(value)) return UPDATE_RATE_ADAPTIVE;
+        return UPDATE_RATE_NORMAL;
+    }
+
+    private static String updateRateModeName(int mode) {
+        if (mode == UPDATE_RATE_HALF) return "half";
+        if (mode == UPDATE_RATE_ADAPTIVE) return "adaptive";
+        return "normal";
+    }
+
+    private static String updateRateModeLabel(int mode) {
+        if (mode == UPDATE_RATE_HALF) return "Half";
+        if (mode == UPDATE_RATE_ADAPTIVE) return "Drop As Needed";
+        return "Normal";
+    }
+
+    private static void writeConfig(Config config) {
+        File f = configFile();
+        try {
+            File parent = f.getParentFile();
+            if (parent != null && !parent.exists()) parent.mkdirs();
+            try (FileWriter fw = new FileWriter(f, false)) {
+                fw.write("# perftweaks config (managed by Performance Tweaks mod)\n");
+                fw.write("# chunkGrid: 0=Auto, valid: 5,7,9,11,13. Applies on next world load.\n");
+                fw.write("# updateRateMode: normal, half, adaptive. Applies immediately.\n");
+                fw.write("chunkGrid=" + config.chunkGrid + "\n");
+                fw.write("updateRateMode=" + updateRateModeName(config.updateRateMode) + "\n");
+            }
+        } catch (Exception ex) {
+            DebugLog.log("perftweaks: write failed: " + ex);
+        }
+        updateRateMode = config.updateRateMode;
+    }
+
+    @LuaMethod(name = "perftweaksWriteChunkGrid", global = true)
+    public static void writeChunkGrid(int n) {
+        Config config = readConfig();
+        config.chunkGrid = isValidChunkGrid(n) ? n : 0;
+        writeConfig(config);
+        try {
+            NotificationAPI.show("Render distance set to "
+                + (config.chunkGrid == 0 ? "Auto" : (config.chunkGrid + "x" + config.chunkGrid))
+                + " - applies on next world load");
+        } catch (Throwable ignore) {}
+    }
+
+    @LuaMethod(name = "perftweaksWriteUpdateRateMode", global = true)
+    public static void writeUpdateRateMode(String mode) {
+        Config config = readConfig();
+        config.updateRateMode = parseUpdateRateMode(mode);
+        writeConfig(config);
+        try {
+            NotificationAPI.show("Update rate mode set to " + updateRateModeLabel(config.updateRateMode));
+        } catch (Throwable ignore) {}
+    }
+
+    public static void boot() {
+        booted = true;
+        try {
+            LuaManager.exposer.exposeGlobalFunctions(new PerfTweaksLua());
+        } catch (Throwable ex) {
+            DebugLog.log("perftweaks: expose failed: " + ex);
+        }
+        injectLua();
+    }
+
+    private static String luaSnippet() {
+        Config config = readConfig();
+        return ""
+            + "do\n"
+            + "  if MainOptions == nil or MainOptions.create == nil then return end\n"
+            + "  if MainOptions._perftweaksWrapped then return end\n"
+            + "  MainOptions._perftweaksWrapped = true\n"
+            + ""
+            + "  local opts   = {0, 5, 7, 9, 11, 13}\n"
+            + "  local labels = {\"Auto (vanilla)\", \"5x5 (~25 chunks)\", \"7x7 (~49 chunks)\", \"9x9 (~81 chunks)\", \"11x11 (~121 chunks)\", \"13x13 (~169 chunks)\"}\n"
+            + "  local current = " + config.chunkGrid + "\n"
+            + "  local modeValues = {\"normal\", \"half\", \"adaptive\"}\n"
+            + "  local modeLabels = {\"Normal\", \"Half (experimental)\", \"Drop As Needed (experimental)\"}\n"
+            + "  local currentMode = " + (config.updateRateMode + 1) + "\n"
+            + "  local function findIdx(v)\n"
+            + "    for i,o in ipairs(opts) do if o == v then return i end end\n"
+            + "    return 1\n"
+            + "  end\n"
+            + "  local function addTab(self)\n"
+            + "    if self._perftweaksTabAdded then return end\n"
+            + "    self._perftweaksTabAdded = true\n"
+            + "    local prevAddY = self.addY\n"
+            + "    self:addPage(\"Performance Tweaks\")\n"
+            + "    self.addY = 0\n"
+            + "    local y = 16\n"
+            + "    self:addHorizontalLine(y, \"Render distance\")\n"
+            + "    local splitpoint = self:getWidth() / 3\n"
+            + "    local comboWidth = 300\n"
+            + "    local function onChunkGridChange(target, combo)\n"
+            + "      local idx = combo.selected\n"
+            + "      local val = opts[idx] or 0\n"
+            + "      perftweaksWriteChunkGrid(val)\n"
+            + "    end\n"
+            + "    self:addCombo(splitpoint, y, comboWidth, 20, \"Chunk grid width\", labels, findIdx(current), self, onChunkGridChange)\n"
+            + "    y = y + 48\n"
+            + "    self:addHorizontalLine(y, \"Update rate\")\n"
+            + "    local function onUpdateRateChange(target, combo)\n"
+            + "      local idx = combo.selected\n"
+            + "      perftweaksWriteUpdateRateMode(modeValues[idx] or \"normal\")\n"
+            + "    end\n"
+            + "    self:addCombo(splitpoint, y, comboWidth, 20, \"Update rate mode\", modeLabels, currentMode, self, onUpdateRateChange)\n"
+            + "    self.addY = prevAddY\n"
+            + "  end\n"
+            + "  local origCreate = MainOptions.create\n"
+            + "  function MainOptions:create()\n"
+            + "    origCreate(self)\n"
+            + "    local ok, err = pcall(function() addTab(self) end)\n"
+            + "    if not ok then print(\"perftweaks: tab inject failed: \" .. tostring(err)) end\n"
+            + "  end\n"
+            + "  if MainOptions.instance ~= nil then\n"
+            + "    local ok, err = pcall(function() addTab(MainOptions.instance) end)\n"
+            + "    if not ok then print(\"perftweaks: live tab inject failed: \" .. tostring(err)) end\n"
+            + "  end\n"
+            + "end\n";
+    }
+
+    private static void injectLua() {
+        String snippet = luaSnippet();
+        try {
+            LuaClosure cl = LuaCompiler.loadstring(snippet, "perftweaks-options", LuaManager.env);
+            LuaReturn ret = LuaManager.caller.protectedCall(LuaManager.thread, cl);
+            if (!ret.isSuccess()) {
+                DebugLog.log("perftweaks: Lua eval failed: " + ret.getErrorString());
+            }
+        } catch (Exception ex) {
+            DebugLog.log("perftweaks: Lua inject threw: " + ex);
+            ExceptionLogger.logException(ex);
+        }
+    }
+}

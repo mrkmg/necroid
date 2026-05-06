@@ -1,0 +1,21 @@
+diff --git a/zombie/gameStates/MainScreenState.java b/zombie/gameStates/MainScreenState.java
+index a0c15d9..d8b0949 100644
+--- a/zombie/gameStates/MainScreenState.java
++++ b/zombie/gameStates/MainScreenState.java
+@@ -240,6 +240,7 @@ public final class MainScreenState extends GameState {
+       this.Elements.add(var2);
+       TextureID.UseFiltering = false;
+       LuaEventManager.triggerEvent("OnMainMenuEnter");
++      zombie.perftweaks.PerfTweaksLua.boot();
+       instance = this;
+       float var3 = TextureID.totalMemUsed / 1024.0F;
+       float var4 = var3 / 1024.0F;
+@@ -521,7 +522,7 @@ public final class MainScreenState extends GameState {
+ 
+    public static ByteBuffer convertToByteBuffer(BufferedImage var0) {
+       byte[] var1 = new byte[var0.getWidth() * var0.getHeight() * 4];
+-      byte var2 = 0;
++      int var2 = 0;
+ 
+       for (int var3 = 0; var3 < var0.getHeight(); var3++) {
+          for (int var4 = 0; var4 < var0.getWidth(); var4++) {

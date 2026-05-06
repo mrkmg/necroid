@@ -1,0 +1,12 @@
+diff --git a/zombie/gameStates/IngameState.java b/zombie/gameStates/IngameState.java
+index 260b410..649013e 100644
+--- a/zombie/gameStates/IngameState.java
++++ b/zombie/gameStates/IngameState.java
+@@ -827,6 +827,7 @@ public final class IngameState extends GameState {
+             try {
+                TextManager.instance.Init();
+                LuaManager.LoadDirBase();
++               zombie.perftweaks.PerfTweaksLua.boot();
+             } catch (Exception var8) {
+                ExceptionLogger.logException(var8);
+             }
