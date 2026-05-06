@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-Guidance for Claude Code working in this repo. Two flows live here: working on Necroid (the tool) and working on Necroid mods.
+Two flows live here: working on Necroid (the tool) and working on Necroid mods.
 
 For deep context (install layouts, manifest schema, reconciliation matrix, Steam asymmetry, build constraints, directory roles, what-looks-like-bugs-but-isn't) → [`docs/architecture.md`](docs/architecture.md). Read it before touching install/uninstall/resync internals or anything that writes to the PZ install.
 
