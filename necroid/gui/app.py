@@ -841,9 +841,14 @@ class ModderApp:
             self.btn_revert.configure(
                 state=tk.NORMAL if self._has_pending_changes() else tk.DISABLED)
             return
-        state = tk.NORMAL if self._has_pending_changes() else tk.DISABLED
-        self.btn_apply.configure(state=state)
-        self.btn_revert.configure(state=state)
+        pending = self._has_pending_changes()
+        # Apply enabled when there are pending changes OR when the current stack
+        # is non-empty (reapply — useful to fix a drifted install or refresh
+        # after a mod update).
+        can_apply = pending or bool(self._compute_desired())
+        self.btn_apply.configure(state=tk.NORMAL if can_apply else tk.DISABLED)
+        self.btn_apply.configure(text="Apply Changes" if pending else "Reapply")
+        self.btn_revert.configure(state=tk.NORMAL if pending else tk.DISABLED)
 
     def _update_primary_button(self) -> None:
         try:
@@ -1352,7 +1357,10 @@ class ModderApp:
         desired = self._compute_desired()
         added = [m for m in desired if m not in self.installed_stack]
         removed = [m for m in self.installed_stack if m not in set(desired)]
-        if not added and not removed:
+        # No diff + empty stack → nothing to do. No diff + non-empty stack →
+        # reapply (rebuild the install in place; useful for fixing drift or
+        # refreshing after a mod update).
+        if not added and not removed and not desired:
             return
 
         # Preflight — defence-in-depth. Blocked rows already drop out on flip,
@@ -1407,6 +1415,13 @@ class ModderApp:
                 f"Removing: {', '.join(removed)}\n\nContinue?"
             )
             return messagebox.askyesno("Uninstall all", prompt)
+        if not added and not removed:
+            prompt = (
+                f"Reapply the current stack on {self.install_to}?\n\n"
+                f"Stack: {', '.join(desired)}\n\n"
+                f"Useful to fix a drifted install or refresh after a mod update."
+            )
+            return messagebox.askyesno("Reapply", prompt)
         lines = [f"Apply changes to {self.install_to}?\n"]
         if added:
             lines.append("Install:")
