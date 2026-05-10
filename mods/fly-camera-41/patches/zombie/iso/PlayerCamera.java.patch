@@ -1,0 +1,197 @@
+diff --git a/zombie/iso/PlayerCamera.java b/zombie/iso/PlayerCamera.java
+index 80f0a73..13adb36 100644
+--- a/zombie/iso/PlayerCamera.java
++++ b/zombie/iso/PlayerCamera.java
+@@ -37,6 +37,23 @@ public final class PlayerCamera {
+    private static float PAN_SPEED = 1.0F;
+    private long panTime = -1L;
+    private final Vector3f m_lastVehicleForwardDirection = new Vector3f();
++   private static final float FLY_RETURN_LERP = 0.08F;
++   private static final float FLY_KEEP_ON_SCREEN_LERP = 0.15F;
++   private static final float FLY_SCREEN_BUFFER = 0.7F;
++   private static final float FLY_DEAD_ZONE = 4.0F;
++   private boolean flyActive;
++   private boolean flyDragging;
++   private float flyAnchorX;
++   private float flyAnchorY;
++   private float flyMouseAnchorX;
++   private float flyMouseAnchorY;
++   private float flyAnchorBaseWX;
++   private float flyAnchorBaseWY;
++   private boolean flyDraggedPastDeadzone;
++   private boolean flyAutoReturning;
++   private boolean flyWasInVehicle;
++   private float flyCamX;
++   private float flyCamY;
+ 
+    public PlayerCamera(int var1) {
+       this.playerIndex = var1;
+@@ -71,6 +88,10 @@ public final class PlayerCamera {
+          this.lastOffY = this.OffY;
+       }
+ 
++      if (this.updateFlyCamera()) {
++         return;
++      }
++
+       long var3 = System.currentTimeMillis();
+       PAN_SPEED = 110.0F;
+       float var5 = this.panTime < 0L ? 1.0F : (float)(var3 - this.panTime) / 1000.0F * PAN_SPEED;
+@@ -224,6 +245,112 @@ public final class PlayerCamera {
+       this.zoom = Core.getInstance().getZoom(this.playerIndex);
+    }
+ 
++   private boolean updateFlyCamera() {
++      if (this.playerIndex != 0) {
++         return false;
++      }
++      IsoPlayer p = IsoPlayer.players[0];
++      float zoom = Core.getInstance().getZoom(0);
++
++      if (Mouse.isMiddlePressed() && p != null) {
++         if (!this.flyActive) {
++            this.flyAnchorX = p.x;
++            this.flyAnchorY = p.y;
++         }
++         this.flyAnchorBaseWX = this.flyAnchorX;
++         this.flyAnchorBaseWY = this.flyAnchorY;
++         this.flyMouseAnchorX = Mouse.getXA();
++         this.flyMouseAnchorY = Mouse.getYA();
++         this.flyDragging = true;
++         this.flyActive = true;
++         this.flyDraggedPastDeadzone = false;
++         this.flyAutoReturning = false;
++      }
++
++      if (this.flyDragging && Mouse.isMiddleDown() && p != null) {
++         float dxScreen = Mouse.getXA() - this.flyMouseAnchorX;
++         float dyScreen = Mouse.getYA() - this.flyMouseAnchorY;
++         if (!this.flyDraggedPastDeadzone
++            && (Math.abs(dxScreen) > FLY_DEAD_ZONE || Math.abs(dyScreen) > FLY_DEAD_ZONE)) {
++            this.flyDraggedPastDeadzone = true;
++         }
++         float scale = 64.0F * Core.TileScale;
++         float wdx = (dxScreen + 2.0F * dyScreen) * zoom / scale;
++         float wdy = (dxScreen - 2.0F * dyScreen) * zoom / -scale;
++         this.flyAnchorX = this.flyAnchorBaseWX + wdx;
++         this.flyAnchorY = this.flyAnchorBaseWY + wdy;
++      }
++
++      if (Mouse.isMiddleReleased() && this.flyDragging) {
++         this.flyDragging = false;
++         if (!this.flyDraggedPastDeadzone) {
++            this.flyAutoReturning = true;
++         }
++      }
++
++      boolean inVehicle = p != null && p.getVehicle() != null;
++      if (this.flyActive && inVehicle && !this.flyWasInVehicle) {
++         this.flyAutoReturning = true;
++      }
++      this.flyWasInVehicle = inVehicle;
++
++      if (this.flyActive && p != null && this.flyAutoReturning && !this.flyDragging) {
++         this.flyAnchorX = PZMath.lerp(this.flyAnchorX, p.x, FLY_RETURN_LERP);
++         this.flyAnchorY = PZMath.lerp(this.flyAnchorY, p.y, FLY_RETURN_LERP);
++         float ax = this.flyAnchorX - p.x;
++         float ay = this.flyAnchorY - p.y;
++         if ((float)Math.sqrt(ax * ax + ay * ay) < 0.05F) {
++            this.flyActive = false;
++            this.flyAutoReturning = false;
++         }
++      }
++
++      if (this.flyActive && p != null && !this.flyDragging && !this.flyAutoReturning) {
++         float anchorSX = IsoUtils.XToScreen(this.flyAnchorX, this.flyAnchorY, p.z, 0);
++         float anchorSY = IsoUtils.YToScreen(this.flyAnchorX, this.flyAnchorY, p.z, 0);
++         float playerSX = IsoUtils.XToScreen(p.x, p.y, p.z, 0);
++         float playerSY = IsoUtils.YToScreen(p.x, p.y, p.z, 0);
++         float offX = anchorSX - playerSX;
++         float offY = anchorSY - playerSY;
++         float halfW = IsoCamera.getOffscreenWidth(0) / 2.0F;
++         float halfH = IsoCamera.getOffscreenHeight(0) / 2.0F;
++         float boundX = halfW * FLY_SCREEN_BUFFER;
++         float boundY = halfH * FLY_SCREEN_BUFFER;
++         float clampedOffX = PZMath.clamp(offX, -boundX, boundX);
++         float clampedOffY = PZMath.clamp(offY, -boundY, boundY);
++         float dSX = clampedOffX - offX;
++         float dSY = clampedOffY - offY;
++         if (dSX != 0.0F || dSY != 0.0F) {
++            float invScale = 1.0F / (64.0F * Core.TileScale);
++            float worldDX = (dSX + 2.0F * dSY) * invScale;
++            float worldDY = (dSX - 2.0F * dSY) * -invScale;
++            this.flyAnchorX += worldDX * FLY_KEEP_ON_SCREEN_LERP;
++            this.flyAnchorY += worldDY * FLY_KEEP_ON_SCREEN_LERP;
++         }
++      }
++
++      if (this.flyActive && p != null) {
++         float anchorScreenX = IsoUtils.XToScreen(this.flyAnchorX, this.flyAnchorY, p.z, 0);
++         float anchorScreenY = IsoUtils.YToScreen(this.flyAnchorX, this.flyAnchorY, p.z, 0);
++         float playerScreenX = IsoUtils.XToScreen(p.x + this.DeferedX, p.y + this.DeferedY, p.z, 0);
++         float playerScreenY = IsoUtils.YToScreen(p.x + this.DeferedX, p.y + this.DeferedY, p.z, 0);
++         playerScreenY -= p.getOffsetY() * 1.5F;
++         this.RightClickX_f = anchorScreenX - playerScreenX;
++         this.RightClickY_f = anchorScreenY - playerScreenY;
++         this.RightClickTargetX = this.RightClickX_f;
++         this.RightClickTargetY = this.RightClickY_f;
++         this.RightClickX = this.RightClickX_f;
++         this.RightClickY = this.RightClickY_f;
++         this.flyCamX = this.OffX + this.RightClickX_f;
++         this.flyCamY = this.OffY + this.RightClickY_f;
++         this.zoom = zoom;
++         p.dirtyRecalcGridStackTime = 2.0F;
++         IsoSprite.globalOffsetX = -1.0F;
++         return true;
++      }
++      return false;
++   }
++
+    private void returnToCenter(float var1) {
+       this.RightClickTargetX = 0.0F;
+       this.RightClickTargetY = 0.0F;
+@@ -248,28 +375,34 @@ public final class PlayerCamera {
+    }
+ 
+    public float getOffX() {
++      if (this.flyActive) return (int)this.flyCamX;
+       return (int)(this.OffX + this.RightClickX);
+    }
+ 
+    public float getOffY() {
++      if (this.flyActive) return (int)this.flyCamY;
+       return (int)(this.OffY + this.RightClickY);
+    }
+ 
+    public float getTOffX() {
++      if (this.flyActive) return (int)this.flyCamX;
+       float var1 = this.TOffX - this.OffX;
+       return (int)(this.OffX + this.RightClickX - var1);
+    }
+ 
+    public float getTOffY() {
++      if (this.flyActive) return (int)this.flyCamY;
+       float var1 = this.TOffY - this.OffY;
+       return (int)(this.OffY + this.RightClickY - var1);
+    }
+ 
+    public float getLastOffX() {
++      if (this.flyActive) return (int)this.flyCamX;
+       return (int)(this.lastOffX + this.RightClickX);
+    }
+ 
+    public float getLastOffY() {
++      if (this.flyActive) return (int)this.flyCamY;
+       return (int)(this.lastOffY + this.RightClickY);
+    }
+ 
+@@ -317,6 +450,9 @@ public final class PlayerCamera {
+       this.zoom = var1.zoom;
+       this.OffscreenWidth = var1.OffscreenWidth;
+       this.OffscreenHeight = var1.OffscreenHeight;
++      this.flyActive = var1.flyActive;
++      this.flyCamX = var1.flyCamX;
++      this.flyCamY = var1.flyCamY;
+    }
+ 
+    public void initFromIsoCamera(int var1) {
