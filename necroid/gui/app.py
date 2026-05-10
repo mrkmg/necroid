@@ -47,6 +47,7 @@ from ..errors import (
     ModDependencyCycle,
     ModDependencyMissing,
     ModIncompatibility,
+    NotInitialized,
     PzVersionDetectError,
     ToolMissing,
 )
@@ -130,7 +131,19 @@ class ModderApp:
 
         self.refresh_mods()
         self._update_primary_button()
-        self._set_status("idle", "Ready", progress=None)
+        try:
+            _startup_cfg = read_config(self.root, required=False)
+            _first_run = _startup_cfg is None or _startup_cfg.pz_install is None
+        except Exception:
+            _first_run = True
+        if _first_run:
+            self._set_status(
+                "idle",
+                "Welcome — click Set Up to choose your Project Zomboid install.",
+                progress=None,
+            )
+        else:
+            self._set_status("idle", "Ready", progress=None)
 
     # --- theme ---
 
@@ -529,9 +542,17 @@ class ModderApp:
             self._update_apply_button_state()
             return
         installed_stack: list[str] = []
+        workspace_unready = False
         if profile and profile.pz_necroid_dir is not None:
-            state = read_state(profile.state_file(self.install_to))
-            installed_stack = list(state.stack)
+            try:
+                state = read_state(profile.state_file(self.install_to))
+                installed_stack = list(state.stack)
+            except NotInitialized:
+                # Pointer present but workspace dir/state file unreadable —
+                # never crash the GUI; let the user reach Set Up.
+                workspace_unready = True
+        else:
+            workspace_unready = True
         self.installed_stack = installed_stack
         if reseed_checked:
             self.checked = set(installed_stack)
@@ -581,7 +602,13 @@ class ModderApp:
         self._rebuild_relation_maps(mods_dir, candidates)
 
         # Pull update-cache once per refresh — drives outdated badges.
-        cache_doc = read_update_cache(profile.update_cache_mods_file) if profile and profile.pz_necroid_dir else {}
+        cache_doc: dict = {}
+        if profile and profile.pz_necroid_dir:
+            try:
+                cache_doc = read_update_cache(profile.update_cache_mods_file)
+            except NotInitialized:
+                workspace_unready = True
+                cache_doc = {}
         update_cache = dict((cache_doc.get("mods") or {}))
         self._update_cache = update_cache
         self._mj_by_name = {}      # name -> ModJson, for context menu / origin reads
@@ -682,6 +709,9 @@ class ModderApp:
         self._outdated_count = outdated_count
         if mismatch_reason:
             self._log(mismatch_reason, tag="warn")
+        if workspace_unready:
+            self._log("workspace not initialized — click Set Up to begin.",
+                      tag="info")
         self._update_primary_button()
         self._update_apply_button_state()
         self._update_outdated_label()
