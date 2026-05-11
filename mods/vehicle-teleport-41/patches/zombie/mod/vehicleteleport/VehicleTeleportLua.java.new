@@ -1,0 +1,108 @@
+package zombie.mod.vehicleteleport;
+
+import se.krka.kahlua.integration.annotations.LuaMethod;
+import zombie.characters.IsoGameCharacter;
+import zombie.core.network.ByteBufferWriter;
+import zombie.core.physics.WorldSimulation;
+import zombie.core.physics.Transform;
+import zombie.core.raknet.UdpConnection;
+import zombie.debug.DebugLog;
+import zombie.iso.IsoGridSquare;
+import zombie.network.GameServer;
+import zombie.network.PacketTypes;
+import zombie.network.ServerMap;
+import zombie.vehicles.BaseVehicle;
+import zombie.vehicles.VehicleManager;
+
+public final class VehicleTeleportLua {
+   @LuaMethod(
+      name = "teleportVehicle",
+      global = true
+   )
+   public static boolean teleportVehicle(BaseVehicle v, int x, int y, int z) {
+      if (!GameServer.bServer) {
+         return false;
+      }
+      if (v == null) {
+         return false;
+      }
+      if (v.getVehicleTowing() != null || v.getVehicleTowedBy() != null) {
+         return false;
+      }
+      if (ServerMap.instance == null) {
+         return false;
+      }
+      int cx = Math.floorDiv(x, 50) - ServerMap.instance.getMinX();
+      int cy = Math.floorDiv(y, 50) - ServerMap.instance.getMinY();
+      if (!ServerMap.instance.isValidCell(cx, cy)) {
+         return false;
+      }
+      ServerMap.ServerCell cell = ServerMap.instance.getCell(cx, cy);
+      if (cell == null || !cell.bLoaded) {
+         return false;
+      }
+      IsoGridSquare sq = ServerMap.instance.getGridSquare(x, y, z);
+      if (sq == null) {
+         return false;
+      }
+
+      float fromX = v.x;
+      float fromY = v.y;
+      float fromZ = v.z;
+
+      for (int i = 0; i < v.getMaxPassengers(); i++) {
+         IsoGameCharacter ch = v.getCharacter(i);
+         if (ch != null) {
+            ch.sendObjectChange("exitVehicle");
+            VehicleManager.instance.sendExit(v, ch, i);
+            v.exit(ch);
+         }
+      }
+
+      v.setNetPlayerAuthorization(BaseVehicle.Authorization.Server, -1);
+      v.lockServerUpdate(0L);
+
+      v.jniLinearVelocity.set(0.0F, 0.0F, 0.0F);
+      v.engineSpeed = 0.0;
+      v.throttle = 0.0F;
+      v.shutOff();
+
+      Transform t = new Transform();
+      v.getWorldTransform(t);
+      t.origin.set((float)x - WorldSimulation.instance.offsetX, (float)z, (float)y - WorldSimulation.instance.offsetY);
+      v.setWorldTransform(t);
+
+      v.setX((float)x);
+      v.setY((float)y);
+      v.setZ((float)z);
+      v.setCurrent(sq);
+      v.square = sq;
+      if (sq.chunk != null && v.chunk != sq.chunk) {
+         if (v.chunk != null) {
+            v.chunk.vehicles.remove(v);
+         }
+         v.chunk = sq.chunk;
+         if (!v.chunk.vehicles.contains(v)) {
+            v.chunk.vehicles.add(v);
+         }
+      }
+      v.modVehicleTeleport_markFullDirty();
+
+      for (int ci = 0; ci < GameServer.udpEngine.connections.size(); ci++) {
+         UdpConnection conn = GameServer.udpEngine.connections.get(ci);
+         if (v.connectionState[conn.index] != null) {
+            ByteBufferWriter w = conn.startPacket();
+            PacketTypes.PacketType.Vehicles.doPacket(w);
+            w.bb.put((byte)8);
+            w.bb.putShort(v.getId());
+            PacketTypes.PacketType.Vehicles.send(conn);
+            v.connectionState[conn.index] = null;
+         }
+      }
+
+      DebugLog.log("VehicleTeleport: " + v.getScriptName()
+         + " from (" + fromX + "," + fromY + "," + fromZ + ")"
+         + " to (" + x + "," + y + "," + z + ")");
+      return true;
+   }
+}

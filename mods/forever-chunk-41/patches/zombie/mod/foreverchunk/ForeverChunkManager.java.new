@@ -1,0 +1,355 @@
+package zombie.mod.foreverchunk;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Set;
+import org.json.JSONObject;
+import zombie.Lua.LuaEventManager;
+import zombie.ZomboidFileSystem;
+import zombie.debug.DebugLog;
+import zombie.iso.IsoGridSquare;
+import zombie.network.ServerMap;
+
+public final class ForeverChunkManager {
+   private static final ForeverChunkManager INSTANCE = new ForeverChunkManager();
+
+   public static ForeverChunkManager getInstance() {
+      return INSTANCE;
+   }
+
+   private int minX;
+   private int minY;
+   private int maxX;
+   private int maxY;
+   private long gracePeriodMillis;
+   private String floorSprite;
+
+   private final Map<String, Slot> allocations = new HashMap<>();
+   private final Map<String, String> requests = new HashMap<>();
+   private final Map<String, Integer> refCount = new HashMap<>();
+   private final Map<String, Long> graceUntil = new HashMap<>();
+   private final Set<String> needsFloor = new HashSet<>();
+   private final Deque<PendingDispatch> pending = new ArrayDeque<>();
+   private final Set<Long> loadedCells = new HashSet<>();
+
+   private boolean initialized = false;
+
+   private ForeverChunkManager() {
+   }
+
+   private synchronized void maybeInit() {
+      if (this.initialized) {
+         return;
+      }
+      if (ServerMap.instance == null) {
+         return;
+      }
+      this.applyDefaults();
+      this.loadConfig();
+      this.loadState();
+      this.initialized = true;
+   }
+
+   public synchronized void request(String id, String key) {
+      this.maybeInit();
+      if (!this.initialized || id == null || key == null) {
+         return;
+      }
+      if (this.requests.containsKey(id)) {
+         return;
+      }
+      Slot slot = this.allocations.get(key);
+      if (slot == null) {
+         slot = this.allocate();
+         if (slot == null) {
+            return;
+         }
+         this.allocations.put(key, slot);
+         this.needsFloor.add(key);
+         this.saveState();
+      }
+      this.requests.put(id, key);
+      this.refCount.merge(key, 1, Integer::sum);
+      this.graceUntil.remove(key);
+      this.pending.add(new PendingDispatch(id, key));
+   }
+
+   public synchronized void release(String id) {
+      if (!this.initialized || id == null) {
+         return;
+      }
+      String key = this.requests.remove(id);
+      if (key == null) {
+         return;
+      }
+      int n = this.refCount.getOrDefault(key, 0) - 1;
+      if (n <= 0) {
+         this.refCount.remove(key);
+         this.graceUntil.put(key, System.currentTimeMillis() + this.gracePeriodMillis);
+      } else {
+         this.refCount.put(key, n);
+      }
+   }
+
+   public synchronized boolean destroy(String key) {
+      if (!this.initialized || key == null) {
+         return false;
+      }
+      if (this.refCount.getOrDefault(key, 0) > 0) {
+         return false;
+      }
+      Slot removed = this.allocations.remove(key);
+      this.graceUntil.remove(key);
+      this.needsFloor.remove(key);
+      if (removed != null) {
+         this.saveState();
+         return true;
+      }
+      return false;
+   }
+
+   public synchronized Slot getCoords(String key) {
+      if (!this.initialized || key == null) {
+         return null;
+      }
+      return this.allocations.get(key);
+   }
+
+   public synchronized void tick() {
+      this.maybeInit();
+      if (!this.initialized) {
+         return;
+      }
+      long now = System.currentTimeMillis();
+      this.graceUntil.entrySet().removeIf(e -> e.getValue() <= now);
+
+      Set<Long> seenCells = new HashSet<>();
+      for (String key : this.refCount.keySet()) {
+         this.keepCellRelevant(this.allocations.get(key), seenCells);
+      }
+      for (String key : this.graceUntil.keySet()) {
+         this.keepCellRelevant(this.allocations.get(key), seenCells);
+      }
+
+      Set<Long> currentlyLoaded = new HashSet<>();
+      for (Long packed : seenCells) {
+         int cwx = (int)(packed.longValue() >> 32);
+         int cwy = (int)(packed.longValue() & 0xFFFFFFFFL);
+         int cxLocal = cwx - ServerMap.instance.getMinX();
+         int cyLocal = cwy - ServerMap.instance.getMinY();
+         if (!ServerMap.instance.isValidCell(cxLocal, cyLocal)) {
+            continue;
+         }
+         ServerMap.ServerCell cell = ServerMap.instance.getCell(cxLocal, cyLocal);
+         if (cell != null && cell.bLoaded) {
+            currentlyLoaded.add(packed);
+            if (this.loadedCells.add(packed)) {
+               DebugLog.log("ForeverChunk: loaded cell (" + cwx + "," + cwy + ")");
+            }
+         }
+      }
+      Iterator<Long> prev = this.loadedCells.iterator();
+      while (prev.hasNext()) {
+         Long packed = prev.next();
+         if (!currentlyLoaded.contains(packed)) {
+            int cwx = (int)(packed.longValue() >> 32);
+            int cwy = (int)(packed.longValue() & 0xFFFFFFFFL);
+            DebugLog.log("ForeverChunk: unloaded cell (" + cwx + "," + cwy + ")");
+            prev.remove();
+         }
+      }
+
+      Iterator<PendingDispatch> it = this.pending.iterator();
+      while (it.hasNext()) {
+         PendingDispatch p = it.next();
+         Slot s = this.allocations.get(p.key);
+         if (s == null) {
+            it.remove();
+            continue;
+         }
+         int cwx = Math.floorDiv(s.x, 50);
+         int cwy = Math.floorDiv(s.y, 50);
+         int cxLocal = cwx - ServerMap.instance.getMinX();
+         int cyLocal = cwy - ServerMap.instance.getMinY();
+         boolean valid = ServerMap.instance.isValidCell(cxLocal, cyLocal);
+         ServerMap.ServerCell cell = valid ? ServerMap.instance.getCell(cxLocal, cyLocal) : null;
+         if (cell != null && cell.bLoaded) {
+            if (this.needsFloor.remove(p.key)) {
+               this.placeFloor(s);
+            }
+            LuaEventManager.triggerEvent("ForeverChunkLoaded", p.id, Integer.valueOf(s.x), Integer.valueOf(s.y), Integer.valueOf(s.z), p.key);
+            it.remove();
+         }
+      }
+   }
+
+   public synchronized void save() {
+      if (this.initialized) {
+         this.saveState();
+      }
+   }
+
+   private void keepCellRelevant(Slot s, Set<Long> seen) {
+      if (s == null) {
+         return;
+      }
+      int cwx = Math.floorDiv(s.x, 50);
+      int cwy = Math.floorDiv(s.y, 50);
+      long packed = ((long)cwx << 32) | ((long)cwy & 0xFFFFFFFFL);
+      if (!seen.add(packed)) {
+         return;
+      }
+      ServerMap.instance.loadMapChunk(s.x, s.y);
+   }
+
+   private boolean isCellLoaded(Slot s) {
+      int cx = Math.floorDiv(s.x, 50) - ServerMap.instance.getMinX();
+      int cy = Math.floorDiv(s.y, 50) - ServerMap.instance.getMinY();
+      ServerMap.ServerCell cell = ServerMap.instance.getCell(cx, cy);
+      return cell != null && cell.bLoaded;
+   }
+
+   private void placeFloor(Slot s) {
+      IsoGridSquare sq = ServerMap.instance.getGridSquare(s.x, s.y, s.z);
+      if (sq == null) {
+         return;
+      }
+      if (sq.getFloor() == null) {
+         sq.addFloor(this.floorSprite);
+      }
+   }
+
+   private Slot allocate() {
+      Set<Long> taken = new HashSet<>();
+      for (Slot s : this.allocations.values()) {
+         taken.add(packXY(s.x, s.y));
+      }
+      for (int yy = this.minY; yy <= this.maxY; yy++) {
+         for (int xx = this.minX; xx <= this.maxX; xx++) {
+            if (!taken.contains(packXY(xx, yy))) {
+               return new Slot(xx, yy, 0);
+            }
+         }
+      }
+      return null;
+   }
+
+   private static long packXY(int x, int y) {
+      return ((long)x << 32) | ((long)y & 0xFFFFFFFFL);
+   }
+
+   private File configFile() {
+      return new File(ZomboidFileSystem.instance.getCurrentSaveDir(), "forever-chunk.json");
+   }
+
+   private File stateFile() {
+      return new File(ZomboidFileSystem.instance.getCurrentSaveDir(), "forever-chunk-state.json");
+   }
+
+   private void applyDefaults() {
+      this.minX = 0;
+      this.minY = 0;
+      this.maxX = 50;
+      this.maxY = 50;
+      this.gracePeriodMillis = 30000L;
+      this.floorSprite = "floors_exterior_natural_01_0";
+   }
+
+   private void loadConfig() {
+      File f = this.configFile();
+      if (!f.exists()) {
+         this.writeDefaultConfig(f);
+         return;
+      }
+      try {
+         String text = new String(Files.readAllBytes(f.toPath()));
+         JSONObject j = new JSONObject(text);
+         this.minX = j.getInt("minX");
+         this.minY = j.getInt("minY");
+         this.maxX = j.getInt("maxX");
+         this.maxY = j.getInt("maxY");
+         this.gracePeriodMillis = j.optLong("gracePeriodSeconds", 30L) * 1000L;
+         this.floorSprite = j.optString("floorSprite", "floors_exterior_natural_01_0");
+      } catch (IOException e) {
+      }
+   }
+
+   private void writeDefaultConfig(File f) {
+      JSONObject j = new JSONObject();
+      j.put("minX", this.minX);
+      j.put("minY", this.minY);
+      j.put("maxX", this.maxX);
+      j.put("maxY", this.maxY);
+      j.put("gracePeriodSeconds", this.gracePeriodMillis / 1000L);
+      j.put("floorSprite", this.floorSprite);
+      try {
+         File parent = f.getParentFile();
+         if (parent != null) {
+            parent.mkdirs();
+         }
+         Files.write(f.toPath(), j.toString(2).getBytes());
+      } catch (IOException e) {
+      }
+   }
+
+   private void loadState() {
+      File f = this.stateFile();
+      if (!f.exists()) {
+         return;
+      }
+      try {
+         String text = new String(Files.readAllBytes(f.toPath()));
+         JSONObject j = new JSONObject(text);
+         JSONObject allocs = j.optJSONObject("allocations");
+         if (allocs == null) {
+            return;
+         }
+         for (Object keyObj : allocs.keySet()) {
+            String key = (String)keyObj;
+            JSONObject s = allocs.getJSONObject(key);
+            this.allocations.put(key, new Slot(s.getInt("x"), s.getInt("y"), s.optInt("z", 0)));
+         }
+      } catch (IOException e) {
+      }
+   }
+
+   private void saveState() {
+      File f = this.stateFile();
+      JSONObject j = new JSONObject();
+      j.put("version", 1);
+      JSONObject allocs = new JSONObject();
+      for (Map.Entry<String, Slot> e : this.allocations.entrySet()) {
+         JSONObject s = new JSONObject();
+         s.put("x", e.getValue().x);
+         s.put("y", e.getValue().y);
+         s.put("z", e.getValue().z);
+         allocs.put(e.getKey(), s);
+      }
+      j.put("allocations", allocs);
+      try {
+         File parent = f.getParentFile();
+         if (parent != null) {
+            parent.mkdirs();
+         }
+         Files.write(f.toPath(), j.toString(2).getBytes());
+      } catch (IOException e) {
+      }
+   }
+
+   private static final class PendingDispatch {
+      final String id;
+      final String key;
+
+      PendingDispatch(String id, String key) {
+         this.id = id;
+         this.key = key;
+      }
+   }
+}

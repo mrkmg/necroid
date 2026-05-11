@@ -1,0 +1,38 @@
+package zombie.mod.foreverchunk;
+
+import se.krka.kahlua.integration.annotations.LuaMethod;
+
+public final class ForeverChunkLua {
+   @LuaMethod(
+      name = "requestForeverChunk",
+      global = true
+   )
+   public static void requestForeverChunk(String id, String key) {
+      ForeverChunkManager.getInstance().request(id, key);
+   }
+
+   @LuaMethod(
+      name = "releaseForeverChunk",
+      global = true
+   )
+   public static void releaseForeverChunk(String id) {
+      ForeverChunkManager.getInstance().release(id);
+   }
+
+   @LuaMethod(
+      name = "destroyForeverChunk",
+      global = true
+   )
+   public static boolean destroyForeverChunk(String key) {
+      return ForeverChunkManager.getInstance().destroy(key);
+   }
+
+   @LuaMethod(
+      name = "getForeverChunkCoords",
+      global = true
+   )
+   public static int[] getForeverChunkCoords(String key) {
+      Slot s = ForeverChunkManager.getInstance().getCoords(key);
+      return s == null ? null : new int[]{s.x, s.y, s.z};
+   }
+}

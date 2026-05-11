@@ -1,0 +1,19 @@
+diff --git a/zombie/vehicles/BaseVehicle.java b/zombie/vehicles/BaseVehicle.java
+index d9c04c2..51b0411 100644
+--- a/zombie/vehicles/BaseVehicle.java
++++ b/zombie/vehicles/BaseVehicle.java
+@@ -3427,6 +3427,14 @@ public final class BaseVehicle extends IsoMovingObject implements Thumpable, IFM
+       return var1;
+    }
+ 
++   public void modVehicleTeleport_markPositionOrientationDirty() {
++      this.updateFlags = (short)(this.updateFlags | 2);
++   }
++
++   public void modVehicleTeleport_markFullDirty() {
++      this.updateFlags = (short)(this.updateFlags | 1 | 2);
++   }
++
+    public void setWorldTransform(Transform var1) {
+       this.jniTransform.set(var1);
+       Quaternionf var2 = this.tempQuat4f;

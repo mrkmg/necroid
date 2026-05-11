@@ -1,5 +1,5 @@
 diff --git a/zombie/iso/PlayerCamera.java b/zombie/iso/PlayerCamera.java
-index 80f0a73..13adb36 100644
+index 80f0a73..44b6488 100644
 --- a/zombie/iso/PlayerCamera.java
 +++ b/zombie/iso/PlayerCamera.java
 @@ -37,6 +37,23 @@ public final class PlayerCamera {
@@ -37,7 +37,7 @@ index 80f0a73..13adb36 100644
        long var3 = System.currentTimeMillis();
        PAN_SPEED = 110.0F;
        float var5 = this.panTime < 0L ? 1.0F : (float)(var3 - this.panTime) / 1000.0F * PAN_SPEED;
-@@ -224,6 +245,112 @@ public final class PlayerCamera {
+@@ -224,6 +245,113 @@ public final class PlayerCamera {
        this.zoom = Core.getInstance().getZoom(this.playerIndex);
     }
  
@@ -71,8 +71,8 @@ index 80f0a73..13adb36 100644
 +            this.flyDraggedPastDeadzone = true;
 +         }
 +         float scale = 64.0F * Core.TileScale;
-+         float wdx = (dxScreen + 2.0F * dyScreen) * zoom / scale;
-+         float wdy = (dxScreen - 2.0F * dyScreen) * zoom / -scale;
++         float wdx = (dxScreen + 2.0F * dyScreen) * zoom / -scale;
++         float wdy = (dxScreen - 2.0F * dyScreen) * zoom / scale;
 +         this.flyAnchorX = this.flyAnchorBaseWX + wdx;
 +         this.flyAnchorY = this.flyAnchorBaseWY + wdy;
 +      }
@@ -101,7 +101,8 @@ index 80f0a73..13adb36 100644
 +         }
 +      }
 +
-+      if (this.flyActive && p != null && !this.flyDragging && !this.flyAutoReturning) {
++      boolean flyUnrestricted = Core.bDebug || (p != null && !p.isAccessLevel("None"));
++      if (this.flyActive && p != null && !this.flyDragging && !this.flyAutoReturning && !flyUnrestricted) {
 +         float anchorSX = IsoUtils.XToScreen(this.flyAnchorX, this.flyAnchorY, p.z, 0);
 +         float anchorSY = IsoUtils.YToScreen(this.flyAnchorX, this.flyAnchorY, p.z, 0);
 +         float playerSX = IsoUtils.XToScreen(p.x, p.y, p.z, 0);
@@ -150,7 +151,7 @@ index 80f0a73..13adb36 100644
     private void returnToCenter(float var1) {
        this.RightClickTargetX = 0.0F;
        this.RightClickTargetY = 0.0F;
-@@ -248,28 +375,34 @@ public final class PlayerCamera {
+@@ -248,28 +376,34 @@ public final class PlayerCamera {
     }
  
     public float getOffX() {
@@ -185,7 +186,7 @@ index 80f0a73..13adb36 100644
        return (int)(this.lastOffY + this.RightClickY);
     }
  
-@@ -317,6 +450,9 @@ public final class PlayerCamera {
+@@ -317,6 +451,9 @@ public final class PlayerCamera {
        this.zoom = var1.zoom;
        this.OffscreenWidth = var1.OffscreenWidth;
        this.OffscreenHeight = var1.OffscreenHeight;

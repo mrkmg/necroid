@@ -92,7 +92,9 @@ Each mod ships with its own README — click through for behaviour notes, in-gam
 
 | Mod | Client-only? | What it does |
 |---|---|---|
+| [forever-chunk](mods/forever-chunk-41/README.md) | no | Server-side Lua API for keeping a chunk loaded indefinitely. Allocates persistent staging slots from a configurable pool; refcounted, save-persistent. |
 | [no-zombie-cull](mods/no-zombie-cull-41/README.md) | no | Disables the 500-zombie client cull so zombies in loaded chunks stay alive instead of silently despawning. |
+| [vehicle-teleport](mods/vehicle-teleport-41/README.md) | no | Server-side Lua API for teleporting a vehicle to arbitrary coords. Ejects passengers, flips authority, force-resyncs all clients. |
 
 ### UI
 

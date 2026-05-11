@@ -1,0 +1,13 @@
+{
+  "name": "forever-chunk-41",
+  "clientOnly": false,
+  "description": "Allows server runners to denote a chunk to always be loaded on server",
+  "category": "",
+  "version": "0.1.0",
+  "expectedVersion": "41.78.19",
+  "createdAt": "2026-05-10T19:27:41.465249Z",
+  "updatedAt": "2026-05-11T16:05:14.326999Z",
+  "pristineSnapshot": "85bdb7b5a9895ff1afae2e74e82b8f316912a360556647c47179031e69d87fdf",
+  "dependencies": [],
+  "incompatibleWith": []
+}

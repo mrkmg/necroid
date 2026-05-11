@@ -1,0 +1,12 @@
+diff --git a/zombie/network/ServerMap.java b/zombie/network/ServerMap.java
+index f2cb7f5..ae3c7c0 100644
+--- a/zombie/network/ServerMap.java
++++ b/zombie/network/ServerMap.java
+@@ -452,6 +452,7 @@ public class ServerMap {
+       }
+ 
+       this.ReleventNow.clear();
++      zombie.mod.foreverchunk.ForeverChunkManager.getInstance().tick();
+       this.bUpdateLOSThisFrame = LOSTick.Check();
+       if (TimeTick.Check()) {
+          ServerMap.ServerCell.chunkLoader.saveLater(zombie.GameTime.instance);

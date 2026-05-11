@@ -1,0 +1,13 @@
+package zombie.mod.foreverchunk;
+
+public final class Slot {
+   public final int x;
+   public final int y;
+   public final int z;
+
+   public Slot(int x, int y, int z) {
+      this.x = x;
+      this.y = y;
+      this.z = z;
+   }
+}

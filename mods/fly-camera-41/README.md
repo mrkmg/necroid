@@ -1,6 +1,6 @@
 # fly-camera
 
-Detach the camera from the player. Hold middle-mouse + drag to pan to a free world position; release to leave the camera anchored there. Click middle-mouse (no drag) to smoothly recenter on the player. The camera keeps the player on screen automatically — when the player walks toward the edge of the view, the anchor lerps along just enough to hold them inside a buffered region.
+Detach the camera from the player. Hold middle-mouse + drag to pan to a free world position; release to leave the camera anchored there. Click middle-mouse (no drag) to smoothly recenter on the player. The camera keeps the player on screen automatically — when the player walks toward the edge of the view, the anchor lerps along just enough to hold them inside a buffered region. Staff (any access level other than `None`) and debug-mode (`-debug`) players are exempt from the keep-on-screen clamp and can roam the camera freely.
 
 ## What it changes
 
@@ -12,10 +12,10 @@ The fly anchor is stored in **world coordinates**, so player movement does not s
 
 | Input | Effect |
 |---|---|
-| Hold middle-mouse + drag | Pan the camera; the world drags under the cursor (zoom-scaled). |
+| Hold middle-mouse + drag | Pan the camera in the drag direction (zoom-scaled). |
 | Release after dragging | Camera stays anchored at the panned world position. |
 | Click middle-mouse (no drag) | Camera smoothly transitions back to the player. |
-| Walk toward the screen edge | Anchor proportionally follows so the player stays inside the buffered region. |
+| Walk toward the screen edge | Anchor proportionally follows so the player stays inside the buffered region (skipped for staff / `-debug`). |
 | Get into a vehicle | Camera smoothly transitions back; lead-cam takes over. |
 
 While fly is active it overrides aim-pan and vehicle lead-cam. Once disengaged (smooth recenter complete), those modes resume normally.

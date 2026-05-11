@@ -1,0 +1,13 @@
+diff --git a/zombie/Lua/LuaEventManager.java b/zombie/Lua/LuaEventManager.java
+index bbe5b13..842c304 100644
+--- a/zombie/Lua/LuaEventManager.java
++++ b/zombie/Lua/LuaEventManager.java
+@@ -497,6 +497,8 @@ public final class LuaEventManager implements JavaFunction {
+       AddEvent("SendCustomModData");
+       AddEvent("ServerPinged");
+       AddEvent("OnServerStarted");
++      AddEvent("ForeverChunkLoaded");
++      LuaManager.exposer.exposeGlobalFunctions(new zombie.mod.foreverchunk.ForeverChunkLua());
+       AddEvent("OnLoadedTileDefinitions");
+       AddEvent("OnPostRender");
+       AddEvent("DoSpecialTooltip");

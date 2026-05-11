@@ -1,0 +1,12 @@
+diff --git a/zombie/Lua/LuaEventManager.java b/zombie/Lua/LuaEventManager.java
+index bbe5b13..9c1050f 100644
+--- a/zombie/Lua/LuaEventManager.java
++++ b/zombie/Lua/LuaEventManager.java
+@@ -565,6 +565,7 @@ public final class LuaEventManager implements JavaFunction {
+       AddEvent("OnInitRecordedMedia");
+       AddEvent("onUpdateIcon");
+       AddEvent("preAddForageDefs");
++      LuaManager.exposer.exposeGlobalFunctions(new zombie.mod.vehicleteleport.VehicleTeleportLua());
+       AddEvent("preAddSkillDefs");
+       AddEvent("preAddZoneDefs");
+       AddEvent("preAddCatDefs");
