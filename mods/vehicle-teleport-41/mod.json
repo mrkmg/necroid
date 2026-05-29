@@ -3,10 +3,10 @@
   "clientOnly": false,
   "description": "Allows vehicles to be teleported far distances",
   "category": "",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "expectedVersion": "41.78.19",
   "createdAt": "2026-05-11T12:31:56.473680Z",
-  "updatedAt": "2026-05-11T15:50:50.638453Z",
+  "updatedAt": "2026-05-22T14:40:47.146109Z",
   "pristineSnapshot": "2900ce7088fb101b03097921ef5eb133360f2a8abccdc1e7db2cf99e7c70bf5a",
   "dependencies": [],
   "incompatibleWith": []

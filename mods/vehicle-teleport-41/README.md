@@ -20,8 +20,10 @@ Server-only — calling from a client returns false. Rejected if:
 
 - vehicle is nil,
 - the vehicle is towing or being towed,
+- `WorldSimulation` or `GameServer.udpEngine` is unavailable,
 - target cell is invalid or not loaded server-side,
-- target grid square doesn't resolve.
+- target grid square doesn't resolve,
+- target grid square's `IsoChunk` is null (cell is loaded but the specific chunk hasn't been instantiated yet — would orphan the vehicle).
 
 On success the function:
 
@@ -30,6 +32,12 @@ On success the function:
 3. Zeroes velocity / throttle and shuts the engine off.
 4. Writes the world transform, updates `x/y/z`, re-parents the chunk pointer, and adds the vehicle to the destination chunk's vehicle list.
 5. Marks per-client state dirty and emits a `Vehicles` packet (op `8`, "remove from client") so every receiver discards its cached copy and re-fetches a fresh full snapshot.
+
+## Durability
+
+Chunk-list mutation is serialized (single static lock per server) and the vehicle is added to the destination chunk's list **before** being removed from the source chunk's list, so no concurrent save snapshot can see the vehicle missing from every chunk. Each chunk-list mutation also synchronizes on the chunk object itself.
+
+Known limitation: there is **no forced disk flush** after teleport — the vehicle's new chunk is written on the next regular world-save cycle. If the server crashes within that window, the vehicle reloads from whichever chunk file was most recently saved (typically the source chunk's last save, i.e. its previous location). The vehicle is not lost, but the teleport may not have persisted.
 
 ## Compatibility
 

@@ -7,6 +7,7 @@ import zombie.core.physics.WorldSimulation;
 import zombie.core.physics.Transform;
 import zombie.core.raknet.UdpConnection;
 import zombie.debug.DebugLog;
+import zombie.iso.IsoChunk;
 import zombie.iso.IsoGridSquare;
 import zombie.network.GameServer;
 import zombie.network.PacketTypes;
@@ -15,6 +16,8 @@ import zombie.vehicles.BaseVehicle;
 import zombie.vehicles.VehicleManager;
 
 public final class VehicleTeleportLua {
+   private static final Object TELEPORT_LOCK = new Object();
+
    @LuaMethod(
       name = "teleportVehicle",
       global = true
@@ -32,6 +35,12 @@ public final class VehicleTeleportLua {
       if (ServerMap.instance == null) {
          return false;
       }
+      if (WorldSimulation.instance == null) {
+         return false;
+      }
+      if (GameServer.udpEngine == null || GameServer.udpEngine.connections == null) {
+         return false;
+      }
       int cx = Math.floorDiv(x, 50) - ServerMap.instance.getMinX();
       int cy = Math.floorDiv(y, 50) - ServerMap.instance.getMinY();
       if (!ServerMap.instance.isValidCell(cx, cy)) {
@@ -45,64 +54,93 @@ public final class VehicleTeleportLua {
       if (sq == null) {
          return false;
       }
-
-      float fromX = v.x;
-      float fromY = v.y;
-      float fromZ = v.z;
-
-      for (int i = 0; i < v.getMaxPassengers(); i++) {
-         IsoGameCharacter ch = v.getCharacter(i);
-         if (ch != null) {
-            ch.sendObjectChange("exitVehicle");
-            VehicleManager.instance.sendExit(v, ch, i);
-            v.exit(ch);
-         }
+      IsoChunk newChunk = sq.chunk;
+      if (newChunk == null) {
+         return false;
       }
 
-      v.setNetPlayerAuthorization(BaseVehicle.Authorization.Server, -1);
-      v.lockServerUpdate(0L);
+      synchronized (TELEPORT_LOCK) {
+         float fromX = v.x;
+         float fromY = v.y;
+         float fromZ = v.z;
 
-      v.jniLinearVelocity.set(0.0F, 0.0F, 0.0F);
-      v.engineSpeed = 0.0;
-      v.throttle = 0.0F;
-      v.shutOff();
-
-      Transform t = new Transform();
-      v.getWorldTransform(t);
-      t.origin.set((float)x - WorldSimulation.instance.offsetX, (float)z, (float)y - WorldSimulation.instance.offsetY);
-      v.setWorldTransform(t);
-
-      v.setX((float)x);
-      v.setY((float)y);
-      v.setZ((float)z);
-      v.setCurrent(sq);
-      v.square = sq;
-      if (sq.chunk != null && v.chunk != sq.chunk) {
-         if (v.chunk != null) {
-            v.chunk.vehicles.remove(v);
+         for (int i = 0; i < v.getMaxPassengers(); i++) {
+            IsoGameCharacter ch = v.getCharacter(i);
+            if (ch != null) {
+               ch.sendObjectChange("exitVehicle");
+               VehicleManager.instance.sendExit(v, ch, i);
+               v.exit(ch);
+            }
          }
-         v.chunk = sq.chunk;
-         if (!v.chunk.vehicles.contains(v)) {
-            v.chunk.vehicles.add(v);
+
+         v.setNetPlayerAuthorization(BaseVehicle.Authorization.Server, -1);
+         v.lockServerUpdate(0L);
+
+         v.jniLinearVelocity.set(0.0F, 0.0F, 0.0F);
+         v.engineSpeed = 0.0;
+         v.throttle = 0.0F;
+         v.shutOff();
+
+         Transform t = new Transform();
+         v.getWorldTransform(t);
+         t.origin.set((float)x - WorldSimulation.instance.offsetX, (float)z, (float)y - WorldSimulation.instance.offsetY);
+         v.setWorldTransform(t);
+
+         v.setX((float)x);
+         v.setY((float)y);
+         v.setZ((float)z);
+         v.setCurrent(sq);
+         v.square = sq;
+
+         IsoChunk oldChunk = v.chunk;
+         if (oldChunk != newChunk) {
+            // Add to new BEFORE removing from old so the vehicle is never absent
+            // from every chunk list if a save snapshot runs mid-swap.
+            synchronized (newChunk) {
+               if (!newChunk.vehicles.contains(v)) {
+                  newChunk.vehicles.add(v);
+               }
+            }
+            v.chunk = newChunk;
+            if (oldChunk != null) {
+               synchronized (oldChunk) {
+                  oldChunk.vehicles.remove(v);
+               }
+            }
+         } else {
+            synchronized (newChunk) {
+               if (!newChunk.vehicles.contains(v)) {
+                  newChunk.vehicles.add(v);
+               }
+            }
          }
+
+         v.modVehicleTeleport_markFullDirty();
+
+         for (int ci = 0; ci < GameServer.udpEngine.connections.size(); ci++) {
+            UdpConnection conn = GameServer.udpEngine.connections.get(ci);
+            if (v.connectionState[conn.index] != null) {
+               ByteBufferWriter w = conn.startPacket();
+               PacketTypes.PacketType.Vehicles.doPacket(w);
+               w.bb.put((byte)8);
+               w.bb.putShort(v.getId());
+               PacketTypes.PacketType.Vehicles.send(conn);
+               v.connectionState[conn.index] = null;
+            }
+         }
+
+         boolean consistent = v.chunk == newChunk && newChunk.vehicles.contains(v);
+         if (!consistent) {
+            DebugLog.log("VehicleTeleport: WARNING post-teleport state inconsistent for "
+               + v.getScriptName() + " id=" + v.getId()
+               + " v.chunk==newChunk=" + (v.chunk == newChunk)
+               + " inList=" + newChunk.vehicles.contains(v));
+         }
+
+         DebugLog.log("VehicleTeleport: " + v.getScriptName()
+            + " from (" + fromX + "," + fromY + "," + fromZ + ")"
+            + " to (" + x + "," + y + "," + z + ")");
+         return true;
       }
-      v.modVehicleTeleport_markFullDirty();
-
-      for (int ci = 0; ci < GameServer.udpEngine.connections.size(); ci++) {
-         UdpConnection conn = GameServer.udpEngine.connections.get(ci);
-         if (v.connectionState[conn.index] != null) {
-            ByteBufferWriter w = conn.startPacket();
-            PacketTypes.PacketType.Vehicles.doPacket(w);
-            w.bb.put((byte)8);
-            w.bb.putShort(v.getId());
-            PacketTypes.PacketType.Vehicles.send(conn);
-            v.connectionState[conn.index] = null;
-         }
-      }
-
-      DebugLog.log("VehicleTeleport: " + v.getScriptName()
-         + " from (" + fromX + "," + fromY + "," + fromZ + ")"
-         + " to (" + x + "," + y + "," + z + ")");
-      return true;
    }
 }
