@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import requests
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -109,18 +110,23 @@ def _http_get_json(url: str, *, timeout: float) -> dict:
     """Like updater._http_get_json but raises ModImportError so callers can
     surface a uniform error class to the user. Kept tiny + deduplicated from
     the updater because the error type matters."""
-    req = urllib.request.Request(url, headers={
-        "User-Agent": _USER_AGENT,
-        "Accept": "application/vnd.github+json",
-    })
+    #req = urllib.request.Request(url, headers={
+    #    "User-Agent": _USER_AGENT,
+    #    "Accept": "application/vnd.github+json",
+    #})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = resp.read()
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
+        with requests.get(url, timeout=timeout, headers={
+            "User-Agent": _USER_AGENT,
+            "Accept": "application/vnd.github+json"
+        }) as response:
+            data = response.json()
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code is None:
+            raise ModImportError(f"Github did not respond: {url}")
+        elif e.response.status_code == 404:
             raise ModImportError(f"GitHub says no such repo or ref (HTTP 404): {url}")
         raise ModImportError(f"GitHub API error: HTTP {e.code} for {url}")
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
+    except (requests.exceptions.InvalidURL, TimeoutError, OSError) as e:
         raise ModImportError(f"cannot reach GitHub: {e}")
     try:
         return json.loads(data.decode("utf-8"))
