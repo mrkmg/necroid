@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+import requests
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -138,16 +139,19 @@ def _api_url(host: str, project_path: str, suffix: str) -> str:
 def _http_get_json(url: str, *, timeout: float) -> dict | list:
     """Like the github variant but raises ModImportError and drops the
     GitHub-specific Accept header. GitLab returns JSON by default."""
-    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = resp.read()
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            raise ModImportError(f"GitLab says no such project or ref (HTTP 404): {url}")
-        raise ModImportError(f"GitLab API error: HTTP {e.code} for {url}")
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
-        raise ModImportError(f"cannot reach GitLab: {e}")
+        with requests.get(url, headers={"User-Agent": _USER_AGENT}) as response:
+            data = response.json()
+    except requests.exceptions.HTTPError as e:
+        if e.response is None:
+            #Theoretically should only happen if the host has an outage or is otherwise malfunctioning
+            raise ModImportError(f"Gitlab did not respond to the request: {url}")
+        elif e.response.status_code == 404:
+            raise ModImportError(f"Gitlab could not find project or reference (Error 404): {url}")
+        else:
+            raise ModImportError(f"Gitlab responded with error {e.response.status_code}: {url}")
+    except (requests.exceptions.HTTPError, TimeoutError, OSError) as e:
+        raise ModImportError(f"Error occurred when attempting to contact Gitlab: {e}")
     try:
         return json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as e:
@@ -220,10 +224,12 @@ def download_repo_zip(host: str, project_path: str, ref: str, *,
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
         _http_download(url, dest, timeout=timeout)
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code is None:
+            raise ModImportError(f"Gitlab did not respond! {url}")
+        elif e.response.status_code == 404:
             raise ModImportError(f"GitLab archive not found (HTTP 404): {url}")
         raise ModImportError(f"GitLab archive fetch failed: HTTP {e.code} for {url}")
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
+    except (requests.exceptions.InvalidURL, TimeoutError, OSError) as e:
         raise ModImportError(f"cannot reach GitLab: {e}")
     return url

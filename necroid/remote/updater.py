@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import requests
 import urllib.error
 import urllib.request
 import zipfile
@@ -193,24 +194,23 @@ class ReleaseInfo:
 
 
 def _http_get_json(url: str, *, timeout: float) -> dict:
-    req = urllib.request.Request(url, headers={
+    with requests.get(url, headers={
         "User-Agent": _USER_AGENT,
-        "Accept": "application/vnd.github+json",
-    })
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = resp.read()
+        "Accept": "application/vnd.github+json"}) as response:
+        data = response.json()
     try:
         return json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as e:
         raise UpdateError(f"GitHub returned an unparseable response: {e}")
 
-
 def _http_download(url: str, dest: Path, *, timeout: float) -> None:
-    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     tmp = dest.with_suffix(dest.suffix + ".part")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp, tmp.open("wb") as fp:
-            shutil.copyfileobj(resp, fp)
+        with requests.get(url, headers={"User-Agent": _USER_AGENT}, timeout=timeout) as response:
+            response.raise_for_status()
+            with tmp.open("wb") as file:
+                for chunk in response.iter_content(chunk_size=8192):
+                    file.write(chunk)
         tmp.replace(dest)
     except Exception:
         if tmp.exists():
@@ -220,14 +220,13 @@ def _http_download(url: str, dest: Path, *, timeout: float) -> None:
                 pass
         raise
 
-
 def fetch_latest_release(timeout: float = 5.0) -> ReleaseInfo:
     """Hit the GitHub API. Raises UpdateError on network / schema failures."""
     try:
         payload = _http_get_json(_api_url(), timeout=timeout)
-    except urllib.error.HTTPError as e:
-        raise UpdateError(f"GitHub API error: HTTP {e.code} for {_api_url()}")
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
+    except requests.exceptions.HTTPError as e:
+        raise UpdateError(f"GitHub API error: HTTP {e.response.status_code} for {_api_url()}")
+    except (requests.exceptions.InvalidURL, TimeoutError, OSError) as e:
         raise UpdateError(f"cannot reach GitHub: {e}")
 
     tag = str(payload.get("tag_name") or "")

@@ -251,7 +251,19 @@ def discover_pz_install_candidates(app_id: str, dir_name: str) -> list[PzCandida
             mf = _read_appmanifest(lib, app_id)
             if mf is not None:
                 installdir, last_played = mf
-                cand_path = (lib / "steamapps" / "common" / installdir)
+                if sys.platform == "win32" or sys.platform == "darwin":
+                    cand_path = (lib / "steamapps" / "common" / installdir)
+                else:
+                    #TODO: Clean up detection between proton/native installs on Linux
+                    #Non-proton (native) Zomboid installs have a nested folder in the app folder for game files
+                    cand_path = (lib / "steamapps" / "common" / installdir / "projectzomboid")
+                    try:
+                        cand_path = cand_path.resolve()
+                    except (OSError, RuntimeError):
+                        pass
+                    #If the nested folder does not exist this is a Proton install
+                    if not os.path.isdir(cand_path):
+                        cand_path = (lib / "steamapps" / "common" / installdir)
                 try:
                     cand_path = cand_path.resolve()
                 except (OSError, RuntimeError):
@@ -275,7 +287,19 @@ def discover_pz_install_candidates(app_id: str, dir_name: str) -> list[PzCandida
     if not found_any_manifest:
         for root in discover_steam_roots():
             for lib in parse_library_folders(root):
-                cand_path = lib / "steamapps" / "common" / dir_name
+                if sys.platform == "win32" or sys.platform == "darwin":
+                    cand_path = (lib / "steamapps" / "common" / installdir)
+                else:
+                    # TODO: Clean up detection between proton/native installs on Linux
+                    # Non-proton (native) Zomboid installs have a nested folder in the app folder for game files
+                    cand_path = (lib / "steamapps" / "common" / installdir / "projectzomboid")
+                    try:
+                        cand_path = cand_path.resolve()
+                    except (OSError, RuntimeError):
+                        pass
+                    # If the nested folder does not exist this is a Proton install
+                    if not os.path.isdir(cand_path):
+                        cand_path = (lib / "steamapps" / "common" / installdir)
                 if not cand_path.exists():
                     continue
                 try:
