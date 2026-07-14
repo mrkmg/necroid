@@ -204,7 +204,6 @@ def _http_get_json(url: str, *, timeout: float) -> dict:
         raise UpdateError(f"GitHub returned an unparseable response: {e}")
 
 def _http_download(url: str, dest: Path, *, timeout: float) -> None:
-    #req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     tmp = dest.with_suffix(dest.suffix + ".part")
     try:
         with requests.get(url, headers={"User-Agent": _USER_AGENT}, timeout=timeout) as response:

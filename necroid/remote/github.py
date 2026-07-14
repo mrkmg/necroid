@@ -110,10 +110,6 @@ def _http_get_json(url: str, *, timeout: float) -> dict:
     """Like updater._http_get_json but raises ModImportError so callers can
     surface a uniform error class to the user. Kept tiny + deduplicated from
     the updater because the error type matters."""
-    #req = urllib.request.Request(url, headers={
-    #    "User-Agent": _USER_AGENT,
-    #    "Accept": "application/vnd.github+json",
-    #})
     try:
         with requests.get(url, timeout=timeout, headers={
             "User-Agent": _USER_AGENT,
